@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="transfer_import_button">Import structure</string>
+    <string name="transfer_export_button">Export structure</string>
+    <string name="transfer_export_title">Export Flow structure</string>
+    <string name="transfer_export_warning">“%1$s” will be exported as a structure only. Step settings, credentials, variables, notes, and frozen data are not included. Names and Stream labels remain and may contain private information. Review before sharing. This is not a complete backup.</string>
+    <string name="transfer_choose_file">Choose file</string>
+    <string name="transfer_import_title">Review Flow structure</string>
+    <string name="transfer_import_summary">%1$s\n\n%2$d Steps · %3$d Streams\nStep types (first 12): %4$s\nUnsupported types (first 12): %5$s\n\nAll Steps will be switched off. Settings and credentials are not included. Review and configure everything before enabling a Spark. No Runs will start during import.</string>
+    <string name="transfer_import_confirm">Import disabled copy</string>
+    <string name="transfer_cancel">Cancel</string>
+    <string name="transfer_ok">OK</string>
+    <string name="transfer_result_title">Flow transfer</string>
+    <string name="transfer_none">None</string>
+    <string name="transfer_missing_flow">This Flow could not be found.</string>
+    <string name="transfer_file_open_error">The selected file could not be opened.</string>
+    <string name="transfer_too_large">The selected file exceeds the 2 MB limit.</string>
+    <string name="transfer_generic_error">The transfer could not be completed.</string>
+    <string name="transfer_export_success">Flow structure saved. Review the file before sharing.</string>
+    <string name="transfer_default_filename">KaivoFlow-structure.json</string>
+</resources>

@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!--
+      Only the launch window is themed here; every painted pixel after that comes from Compose and
+      KaivoTheme. canvasVoid (#09080E) matches KaivoColors so there is no white flash on cold start.
+    -->
+    <style name="Theme.KaivoFlow" parent="android:Theme.Material.NoActionBar">
+        <item name="android:windowBackground">@color/canvas_void</item>
+        <item name="android:statusBarColor">@android:color/transparent</item>
+        <item name="android:navigationBarColor">@android:color/transparent</item>
+        <item name="android:windowLightStatusBar">false</item>
+        <item name="android:windowLightNavigationBar">false</item>
+        <item name="android:windowLayoutInDisplayCutoutMode">shortEdges</item>
+    </style>
+</resources>

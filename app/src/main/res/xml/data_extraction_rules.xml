@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Backup policy (pillar 4): Flows, Runs and files are user data and may be backed up; the credential
+  vault is excluded outright because its Keystore key never leaves the device, so a restored copy
+  would be unreadable anyway — better to not ship it at all.
+-->
+<data-extraction-rules>
+    <cloud-backup>
+        <include domain="database" path="kaivo.db" />
+        <include domain="file" path="flows/" />
+        <exclude domain="sharedpref" path="kaivo_secrets.xml" />
+        <exclude domain="file" path="kaivo_keys/" />
+    </cloud-backup>
+    <device-transfer>
+        <include domain="database" path="kaivo.db" />
+        <include domain="file" path="flows/" />
+        <exclude domain="sharedpref" path="kaivo_secrets.xml" />
+        <exclude domain="file" path="kaivo_keys/" />
+    </device-transfer>
+</data-extraction-rules>

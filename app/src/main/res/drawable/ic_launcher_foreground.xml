@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- KaivoFlow mark: a Golden Current orb with two Stream arcs, drawn with vectors only. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <path
+        android:pathData="M54,30 m-17,0 a17,17 0 1,0 34,0 a17,17 0 1,0 -34,0"
+        android:fillColor="#F3C677" />
+    <path
+        android:pathData="M37,66 C37,80 71,80 71,66"
+        android:strokeColor="#F28BA8"
+        android:strokeWidth="4"
+        android:strokeLineCap="round" />
+    <path
+        android:pathData="M30,74 C30,92 78,92 78,74"
+        android:strokeColor="#9D7BFF"
+        android:strokeWidth="3"
+        android:strokeLineCap="round" />
+</vector>
