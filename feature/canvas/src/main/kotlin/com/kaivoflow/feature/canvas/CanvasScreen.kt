@@ -3,6 +3,7 @@ package com.kaivoflow.feature.canvas
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.gestures.detectTransformGestures
@@ -122,7 +123,7 @@ fun CanvasScreen(
     // First paint: fit the Flow to the screen.
     LaunchedEffect(layouts.isEmpty(), viewportSize) {
         if (layouts.isNotEmpty() && viewportSize.width > 0) {
-            val bounds = CanvasGeometry.contentBounds(layouts.values)
+            val bounds = CanvasGeometry.contentBounds(layouts.values, state.notes)
             val fit = CanvasGeometry.fitToScreen(
                 bounds,
                 viewportSize.width.toFloat(),
@@ -335,117 +336,101 @@ fun CanvasScreen(
                 .statusBarsPadding()
                 .padding(horizontal = 10.dp, vertical = 6.dp),
             verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
         ) {
             // 1. Back button
-            GlassPill(Modifier.padding(end = 6.dp)) {
-                Box(
-                    Modifier
-                        .size(42.dp)
-                        .clip(CircleShape)
-                        .semantics { contentDescription = "Back to Flows" },
-                    contentAlignment = Alignment.Center,
-                ) {
-                    androidx.compose.material3.IconButton(onClick = onBack) {
-                        Icon(KaivoIcons.icon("back"), "Back to Flows", tint = colors.inkPrimary, modifier = Modifier.size(20.dp))
-                    }
-                }
+            Box(
+                Modifier
+                    .size(48.dp)
+                    .clip(KaivoShapes.pill)
+                    .background(colors.surfaceGlass)
+                    .border(1.dp, colors.hairline, KaivoShapes.pill)
+                    .clickable(onClick = onBack)
+                    .semantics { contentDescription = "Back to Flows" },
+                contentAlignment = Alignment.Center,
+            ) {
+                Icon(KaivoIcons.icon("back"), "Back to Flows", tint = colors.inkPrimary, modifier = Modifier.size(20.dp))
             }
 
             // 2. Flow Title & Status (Click title to rename, click info icon for details)
-            GlassPill(Modifier.weight(1f)) {
+            Box(
+                Modifier
+                    .weight(1f)
+                    .height(48.dp)
+                    .clip(KaivoShapes.pill)
+                    .background(colors.surfaceGlass)
+                    .border(1.dp, colors.hairline, KaivoShapes.pill)
+                    .clickable(onClick = viewModel::openRenameDialog)
+                    .padding(horizontal = 12.dp),
+                contentAlignment = Alignment.CenterStart,
+            ) {
                 Row(
-                    Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 10.dp, vertical = 6.dp),
+                    Modifier.fillMaxWidth(),
                     verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.SpaceBetween,
                 ) {
-                    Column(
-                        Modifier
-                            .weight(1f)
-                            .clickable(onClick = viewModel::openRenameDialog),
-                    ) {
+                    Column(Modifier.weight(1f)) {
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             Text(
                                 state.flowName.ifBlank { "Flow" },
-                                style = androidx.compose.material3.MaterialTheme.typography.titleMedium,
+                                style = androidx.compose.material3.MaterialTheme.typography.titleSmall,
                                 color = colors.inkPrimary,
                                 maxLines = 1,
                                 overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+                                softWrap = false,
                             )
-                            Spacer(Modifier.width(6.dp))
+                            Spacer(Modifier.width(4.dp))
                             Icon(
                                 KaivoIcons.icon("edit"),
                                 contentDescription = "Rename Flow",
                                 tint = colors.inkMuted,
-                                modifier = Modifier.size(13.dp),
+                                modifier = Modifier.size(11.dp),
                             )
                         }
                         Row(verticalAlignment = Alignment.CenterVertically) {
-                            // Auto-Save Status Pill
-                            if (state.isSaving) {
-                                Box(
-                                    Modifier
-                                        .size(6.dp)
-                                        .clip(CircleShape)
-                                        .background(colors.royalGold),
-                                )
-                                Spacer(Modifier.width(4.dp))
-                                Text(
-                                    "Saving…",
-                                    style = androidx.compose.material3.MaterialTheme.typography.labelSmall,
-                                    color = colors.royalGold,
-                                )
-                            } else {
-                                Box(
-                                    Modifier
-                                        .size(6.dp)
-                                        .clip(CircleShape)
-                                        .background(colors.statusSuccess),
-                                )
-                                Spacer(Modifier.width(4.dp))
-                                Text(
-                                    "Saved",
-                                    style = androidx.compose.material3.MaterialTheme.typography.labelSmall,
-                                    color = colors.inkMuted,
-                                )
-                            }
-                            Spacer(Modifier.width(6.dp))
+                            Box(
+                                Modifier
+                                    .size(5.dp)
+                                    .clip(CircleShape)
+                                    .background(if (state.isSaving) colors.royalGold else colors.statusSuccess),
+                            )
+                            Spacer(Modifier.width(4.dp))
                             Text(
-                                text = "• ${state.steps.size} Steps",
+                                if (state.isSaving) "Saving…" else "Saved • ${state.steps.size} Steps",
                                 style = androidx.compose.material3.MaterialTheme.typography.labelSmall,
                                 color = colors.inkMuted,
+                                maxLines = 1,
+                                softWrap = false,
                             )
                         }
                     }
-
-                    // "i" info button
                     Box(
                         Modifier
                             .clip(CircleShape)
                             .clickable(onClick = viewModel::openInfoDialog)
-                            .padding(6.dp),
+                            .padding(4.dp),
                     ) {
                         Icon(
                             KaivoIcons.icon("info"),
                             contentDescription = "Flow Details",
                             tint = colors.inkSecondary,
-                            modifier = Modifier.size(18.dp),
+                            modifier = Modifier.size(16.dp),
                         )
                     }
                 }
             }
 
-            Spacer(Modifier.width(6.dp))
-
             // 3. 24/7 Deployment / Active Toggle Pill
-            GlassPill {
-                Row(
-                    Modifier
-                        .clickable(onClick = viewModel::toggleFlowActive)
-                        .padding(horizontal = 8.dp, vertical = 8.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
+            Box(
+                Modifier
+                    .height(48.dp)
+                    .clip(KaivoShapes.pill)
+                    .background(colors.surfaceGlass)
+                    .border(1.dp, colors.hairline, KaivoShapes.pill)
+                    .clickable(onClick = viewModel::toggleFlowActive)
+                    .padding(horizontal = 10.dp),
+                contentAlignment = Alignment.Center,
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
                     Box(
                         Modifier
                             .size(7.dp)
@@ -461,20 +446,23 @@ fun CanvasScreen(
                 }
             }
 
-            Spacer(Modifier.width(6.dp))
-
             // 4. Quick Actions: + Note, + Group, and Layout Mode
-            GlassPill {
-                Row(
-                    Modifier.padding(horizontal = 2.dp, vertical = 2.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    // Add Note
+            Box(
+                Modifier
+                    .height(48.dp)
+                    .clip(KaivoShapes.pill)
+                    .background(colors.surfaceGlass)
+                    .border(1.dp, colors.hairline, KaivoShapes.pill)
+                    .padding(horizontal = 4.dp),
+                contentAlignment = Alignment.Center,
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
                     Box(
                         Modifier
+                            .size(36.dp)
                             .clip(CircleShape)
-                            .clickable { viewModel.addStickyNote() }
-                            .padding(7.dp),
+                            .clickable { viewModel.addStickyNote() },
+                        contentAlignment = Alignment.Center,
                     ) {
                         Icon(
                             KaivoIcons.icon("bookmark"),
@@ -483,13 +471,12 @@ fun CanvasScreen(
                             modifier = Modifier.size(16.dp),
                         )
                     }
-
-                    // Create Group
                     Box(
                         Modifier
+                            .size(36.dp)
                             .clip(CircleShape)
-                            .clickable { viewModel.openCreateGroupDialog() }
-                            .padding(7.dp),
+                            .clickable { viewModel.openCreateGroupDialog() },
+                        contentAlignment = Alignment.Center,
                     ) {
                         Icon(
                             KaivoIcons.icon("grid"),
@@ -498,13 +485,12 @@ fun CanvasScreen(
                             modifier = Modifier.size(16.dp),
                         )
                     }
-
-                    // Toggle Layout
                     Box(
                         Modifier
+                            .size(36.dp)
                             .clip(CircleShape)
-                            .clickable { viewModel.toggleLayoutMode() }
-                            .padding(7.dp),
+                            .clickable { viewModel.toggleLayoutMode() },
+                        contentAlignment = Alignment.Center,
                     ) {
                         Icon(
                             KaivoIcons.icon(if (state.layoutMode == LayoutMode.GuidedPath) "bolt" else "globe"),
@@ -532,28 +518,65 @@ fun CanvasScreen(
             )
         }
 
-        // ---------------- minimap ----------------
-        if (state.layoutMode == LayoutMode.Freeform && layouts.isNotEmpty()) {
-            Minimap(
-                layouts = layouts.values,
-                activeStepId = state.run.currentStepId,
-                visible = transform.visibleRect(
-                    viewportSize.width.toFloat().coerceAtLeast(1f),
-                    viewportSize.height.toFloat().coerceAtLeast(1f),
-                    pixelScale = pixelScale,
-                ),
-                onJump = { x, y ->
-                    transform.jumpTo(
-                        transform.zoom,
-                        -x * transform.zoom * pixelScale,
-                        -y * transform.zoom * pixelScale,
-                    )
-                },
-                modifier = Modifier
+        // ---------------- minimap & floating navigation dock ----------------
+        if (layouts.isNotEmpty()) {
+            Column(
+                Modifier
                     .align(Alignment.BottomEnd)
                     .navigationBarsPadding()
-                    .padding(16.dp),
-            )
+                    .padding(end = 12.dp, bottom = 84.dp),
+                horizontalAlignment = Alignment.End,
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                // Floating Zoom / Fit Controls
+                CanvasControlsDock(
+                    currentZoom = transform.zoom,
+                    onZoomIn = {
+                        val center = Point(viewportSize.width / 2f, viewportSize.height / 2f)
+                        transform.onZoom(1.25f, center)
+                    },
+                    onZoomOut = {
+                        val center = Point(viewportSize.width / 2f, viewportSize.height / 2f)
+                        transform.onZoom(0.8f, center)
+                    },
+                    onResetZoom = {
+                        val center = Point(viewportSize.width / 2f, viewportSize.height / 2f)
+                        transform.onZoom(1f / transform.zoom, center)
+                    },
+                    onFitToScreen = {
+                        val bounds = CanvasGeometry.contentBounds(layouts.values, state.notes)
+                        if (bounds.width > 0f) {
+                            transform.fit(
+                                bounds,
+                                viewportSize.width.toFloat(),
+                                viewportSize.height.toFloat(),
+                                pixelScale = pixelScale,
+                            )
+                        }
+                    },
+                )
+
+                // Interactive Minimap Radar
+                if (state.layoutMode == LayoutMode.Freeform) {
+                    Minimap(
+                        layouts = layouts.values,
+                        notes = state.notes,
+                        activeStepId = state.run.currentStepId,
+                        visible = transform.visibleRect(
+                            viewportSize.width.toFloat().coerceAtLeast(1f),
+                            viewportSize.height.toFloat().coerceAtLeast(1f),
+                            pixelScale = pixelScale,
+                        ),
+                        onJump = { x, y ->
+                            transform.jumpTo(
+                                transform.zoom,
+                                -x * transform.zoom * pixelScale + viewportSize.width / 2f,
+                                -y * transform.zoom * pixelScale + viewportSize.height / 2f,
+                            )
+                        },
+                    )
+                }
+            }
         }
 
         // ---------------- HUD + primary action ----------------
@@ -603,7 +626,7 @@ fun CanvasScreen(
                                     .size(sizes.touchTarget)
                                     .clip(CircleShape)
                                     .androidClickable {
-                                        val bounds = CanvasGeometry.contentBounds(layouts.values)
+                                        val bounds = CanvasGeometry.contentBounds(layouts.values, state.notes)
                                         if (bounds.width > 0f) {
                                             transform.fit(
                                                 bounds,

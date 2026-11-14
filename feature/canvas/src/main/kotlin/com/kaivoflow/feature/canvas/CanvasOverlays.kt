@@ -5,6 +5,7 @@ import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -34,6 +35,10 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.kaivoflow.core.design.BadgeKind
@@ -138,41 +143,61 @@ private fun statusText(run: RunUiState): String = when (run.status) {
 }
 
 /**
- * Translucent minimap. Drawn in one Canvas from the same layout data as the canvas, so it can never
- * disagree with what the user sees. Tap-to-jump.
+ * Translucent interactive minimap radar. Drawn in one Canvas from the same layout data as the canvas.
+ * Direct tap-to-jump navigates precisely to the tapped canvas location.
  */
 @Composable
 fun Minimap(
     layouts: Collection<StepLayout>,
+    notes: Collection<StickyNote> = emptyList(),
     activeStepId: String?,
     visible: Rect2,
     onJump: (Float, Float) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val colors = KaivoTheme.colors
-    if (layouts.isEmpty()) return
-    val bounds = com.kaivoflow.feature.canvas.layout.CanvasGeometry.contentBounds(layouts)
+    if (layouts.isEmpty() && notes.isEmpty()) return
+    val bounds = com.kaivoflow.feature.canvas.layout.CanvasGeometry.contentBounds(layouts, notes)
     if (bounds.width <= 0f || bounds.height <= 0f) return
 
+    val density = LocalDensity.current.density
     Box(
         modifier
-            .size(width = 96.dp, height = 128.dp)
+            .size(width = 100.dp, height = 132.dp)
             .clip(KaivoShapes.chip)
             .background(colors.surfaceGlass)
             .border(1.dp, colors.hairline, KaivoShapes.chip)
-            .clickable { onJump(bounds.left + bounds.width / 2f, bounds.top + bounds.height / 2f) },
+            .pointerInput(bounds) {
+                detectTapGestures { offset ->
+                    val pad = 6f * density
+                    val effectiveW = (size.width - pad * 2).coerceAtLeast(1f)
+                    val effectiveH = (size.height - pad * 2).coerceAtLeast(1f)
+                    val scale = minOf(effectiveW / bounds.width, effectiveH / bounds.height)
+                    val worldX = bounds.left + (offset.x - pad) / scale
+                    val worldY = bounds.top + (offset.y - pad) / scale
+                    onJump(worldX, worldY)
+                }
+            },
     ) {
         Canvas(Modifier.padding(6.dp)) {
             val scale = minOf(size.width / bounds.width, size.height / bounds.height)
             fun mapX(x: Float) = (x - bounds.left) * scale
             fun mapY(y: Float) = (y - bounds.top) * scale
 
-            drawRect(
-                color = colors.royalGold.copy(alpha = 0.35f),
-                topLeft = Offset(mapX(visible.left), mapY(visible.top)),
-                size = Size(visible.width * scale, visible.height * scale),
-                style = androidx.compose.ui.graphics.drawscope.Stroke(width = 1.5f * density),
-            )
+            // Draw notes on radar
+            notes.forEach { note ->
+                drawRoundRect(
+                    color = colors.royalGold.copy(alpha = 0.35f),
+                    topLeft = Offset(mapX(note.x), mapY(note.y)),
+                    size = Size(
+                        (note.width * scale).coerceAtLeast(3f),
+                        (note.height * scale).coerceAtLeast(3f),
+                    ),
+                    cornerRadius = androidx.compose.ui.geometry.CornerRadius(1.5f * density),
+                )
+            }
+
+            // Draw steps on radar
             layouts.forEach { layout ->
                 drawRoundRect(
                     color = if (layout.id == activeStepId) colors.royalGold else colors.inkMuted.copy(alpha = 0.6f),
@@ -183,6 +208,89 @@ fun Minimap(
                     ),
                     cornerRadius = androidx.compose.ui.geometry.CornerRadius(2f * density),
                 )
+            }
+
+            // Draw viewport rectangle
+            drawRect(
+                color = colors.royalGold.copy(alpha = 0.75f),
+                topLeft = Offset(mapX(visible.left), mapY(visible.top)),
+                size = Size(visible.width * scale, visible.height * scale),
+                style = androidx.compose.ui.graphics.drawscope.Stroke(width = 1.5f * density),
+            )
+        }
+    }
+}
+
+/**
+ * Sleek floating vertical glass dock providing quick zoom in, zoom out, 100% zoom reset,
+ * and fit-to-screen actions for comfortable one-handed canvas navigation.
+ */
+@Composable
+fun CanvasControlsDock(
+    currentZoom: Float,
+    onZoomIn: () -> Unit,
+    onZoomOut: () -> Unit,
+    onResetZoom: () -> Unit,
+    onFitToScreen: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val colors = KaivoTheme.colors
+    GlassPill(modifier) {
+        Column(
+            Modifier.padding(vertical = 4.dp, horizontal = 2.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(2.dp),
+        ) {
+            // Zoom In (+)
+            Box(
+                Modifier
+                    .size(36.dp)
+                    .clip(CircleShape)
+                    .clickable(onClick = onZoomIn)
+                    .semantics { contentDescription = "Zoom In" },
+                contentAlignment = Alignment.Center,
+            ) {
+                Icon(KaivoIcons.icon("add"), contentDescription = "Zoom In", tint = colors.inkPrimary, modifier = Modifier.size(18.dp))
+            }
+
+            // Zoom percent / 100% reset pill
+            Box(
+                Modifier
+                    .clip(KaivoShapes.chip)
+                    .clickable(onClick = onResetZoom)
+                    .padding(horizontal = 4.dp, vertical = 2.dp)
+                    .semantics { contentDescription = "Reset Zoom to 100%" },
+                contentAlignment = Alignment.Center,
+            ) {
+                Text(
+                    text = "${(currentZoom * 100).toInt()}%",
+                    style = androidx.compose.material3.MaterialTheme.typography.labelSmall,
+                    color = colors.royalGold,
+                )
+            }
+
+            // Zoom Out (-)
+            Box(
+                Modifier
+                    .size(36.dp)
+                    .clip(CircleShape)
+                    .clickable(onClick = onZoomOut)
+                    .semantics { contentDescription = "Zoom Out" },
+                contentAlignment = Alignment.Center,
+            ) {
+                Icon(KaivoIcons.icon("remove"), contentDescription = "Zoom Out", tint = colors.inkPrimary, modifier = Modifier.size(18.dp))
+            }
+
+            // Center / Fit to screen
+            Box(
+                Modifier
+                    .size(36.dp)
+                    .clip(CircleShape)
+                    .clickable(onClick = onFitToScreen)
+                    .semantics { contentDescription = "Fit to Screen" },
+                contentAlignment = Alignment.Center,
+            ) {
+                Icon(KaivoIcons.icon("center"), contentDescription = "Fit to Screen", tint = colors.inkSecondary, modifier = Modifier.size(18.dp))
             }
         }
     }

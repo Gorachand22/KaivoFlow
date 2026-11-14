@@ -199,8 +199,11 @@ object CanvasGeometry {
     }
 
     /** Content bounds of the whole Flow, used by "fit to screen" and the minimap. */
-    fun contentBounds(layouts: Collection<StepLayout>): Rect2 {
-        if (layouts.isEmpty()) return Rect2(0f, 0f, 0f, 0f)
+    fun contentBounds(
+        layouts: Collection<StepLayout>,
+        notes: Collection<com.kaivoflow.core.model.StickyNote> = emptyList(),
+    ): Rect2 {
+        if (layouts.isEmpty() && notes.isEmpty()) return Rect2(0f, 0f, 0f, 0f)
         var left = Float.MAX_VALUE
         var top = Float.MAX_VALUE
         var right = -Float.MAX_VALUE
@@ -211,6 +214,12 @@ object CanvasGeometry {
             top = min(top, bounds.top)
             right = max(right, bounds.right)
             bottom = max(bottom, bounds.bottom)
+        }
+        notes.forEach { note ->
+            left = min(left, note.x)
+            top = min(top, note.y)
+            right = max(right, note.x + note.width)
+            bottom = max(bottom, note.y + note.height)
         }
         return Rect2(left, top, right, bottom)
     }

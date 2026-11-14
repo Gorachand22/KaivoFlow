@@ -43,6 +43,8 @@ import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Public
 import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.Remove
+import androidx.compose.material.icons.filled.CenterFocusStrong
 import androidx.compose.material.icons.filled.Route
 import androidx.compose.material.icons.filled.Save
 import androidx.compose.material.icons.filled.Schedule
@@ -158,6 +160,8 @@ object KaivoIcons {
         "vibrate" to Icons.Filled.Vibration,
         "file" to Icons.Filled.Folder,
         "add" to Icons.Filled.Add,
+        "remove" to Icons.Filled.Remove,
+        "center" to Icons.Filled.CenterFocusStrong,
         "play" to Icons.Filled.PlayArrow,
         "pause" to Icons.Filled.Pause,
         "stopRun" to Icons.Filled.Stop,
