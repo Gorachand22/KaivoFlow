@@ -19,6 +19,9 @@ java -cp "$OUTPUT:$CP" org.junit.runner.JUnitCore \
   com.kaivoflow.core.nodes.IntegrationFlowTest \
   com.kaivoflow.core.nodes.TriggerReliabilityTest \
   com.kaivoflow.core.nodes.AiSafetyTest \
+  com.kaivoflow.core.nodes.MobileTriggerTest \
+  com.kaivoflow.core.nodes.ExtendedNodeTest \
+  com.kaivoflow.core.engine.OAuth2TokenManagerTest \
   com.kaivoflow.core.engine.FlowRunnerTest \
   com.kaivoflow.core.engine.FlowValidatorTest \
   com.kaivoflow.core.engine.ValuesTest \

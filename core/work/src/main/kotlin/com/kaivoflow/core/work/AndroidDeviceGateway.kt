@@ -224,11 +224,14 @@ class AndroidDeviceGateway @Inject constructor(
             val support = com.kaivoflow.core.nodes.BinarySupport
             val bytes = support.decode(base64) ?: return@withContext null
             val safe = support.safeFileName(fileName)
+            // A unique prefix prevents two Runs (or two attachments in one item) overwriting
+            // each other when they happen to share a file name.
+            val storedName = java.util.UUID.randomUUID().toString().take(8) + "_" + safe
             val dir = File(context.filesDir, "binary").apply { mkdirs() }
-            val file = File(dir, safe)
+            val file = File(dir, storedName)
             file.writeBytes(bytes)
             mapOf(
-                "uri" to "kaivo://files/$safe",
+                "uri" to "kaivo://files/$storedName",
                 "mimeType" to mimeType.ifBlank { "application/octet-stream" },
                 "fileName" to safe,
                 "sizeBytes" to bytes.size.toLong(),
@@ -304,7 +307,8 @@ class AndroidDeviceGateway @Inject constructor(
         runCatching {
             val audio = context.getSystemService(android.media.AudioManager::class.java)
             val max = audio.getStreamMaxVolume(android.media.AudioManager.STREAM_MUSIC)
-            audio.setStreamVolume(android.media.AudioManager.STREAM_MUSIC, level.coerceIn(0, max), 0)
+            val scaled = (level / 100.0 * max).toInt().coerceIn(0, max)
+            audio.setStreamVolume(android.media.AudioManager.STREAM_MUSIC, scaled, 0)
             true
         }.getOrDefault(false)
     }
