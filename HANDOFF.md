@@ -13,6 +13,19 @@
 * **Unit Tests:** ❌ Not run here — five JVM suites authored/updated, ready for local Gradle.
 * **Device Run:** ❌ Not run here — see step-by-step checklist below.
 * **Architecture Docs:** See `docs/ARCHITECTURE.md`, `PARITY.md` and `DEVELOPER_HANDOFF.md`.
+* **Git Status:** Clean working tree. All work is committed in small logical commits and pushed to `origin/arena/bfa021c7-kaivoflow` (active Arena work branch). Pull this branch for local verification; the legacy instruction referring to `main` is stale.
+
+---
+
+## Summary of Changes
+1. **Engine/model:** First-class `BinaryDataRef` attachments with wrapped/legacy JSON codec, bounded HTTP multipart/base64 transport and device binary storage; immutable `Flow` remains the single source of truth.
+2. **Portable Flows:** `.kaivoflow` full backup with secret redaction, ID remap, graph validation, disabled imported Sparks and an explicit re-bind/save UI; `.structure` skeleton sharing still works.
+3. **Mobile Sparks:** Geofence, Bluetooth, Wi-Fi, headset and boot triggers with fail-closed matchers, scheduler/receiver wiring and boot re-arming.
+4. **Expanded catalog:** 36 original Steps for math, text, formats, binary, JWT/TOTP, RSS/GraphQL/WebDAV/TCP, and Android hardware; Date & Time gained explicit parse and IANA time-zone conversion actions; the catalog now has 84 executors.
+5. **Connected accounts:** Pure-Kotlin OAuth2 refresh manager with per-credential mutexes, encrypted rotated-token persistence, DI wiring, a connected-account form, and `accessToken` preference in HTTP/AI/SaaS Steps.
+6. **Canvas:** Per-declared-output port drags, dashed bezier preview, magnetic input snapping, success-only haptics, branch-aware Step chaining, cycle rejection, and one `pixelScale` at every dp↔px boundary.
+7. **Polish:** Status/navigation/IME insets and 48 dp targets across Flow List, Run History, Credentials and Canvas.
+8. **Tests/docs:** Five JVM test suites and three helper scripts; `AGENTS.md`, `BACKLOG.md`, `PARITY.md`, `README.md`, `DEVELOPER_HANDOFF.md` and `docs/ARCHITECTURE.md` now match the implementation.
 
 ---
 
@@ -48,7 +61,7 @@ If a pure JVM toolchain is available instead, the existing helper scripts target
 | 6 | Canvas scale | Pinch to 0.35x and 2x, pan, drag a card and a port | Cards, beziers, minimap and drop positions stay aligned; `Fit` centres the graph | PENDING |
 | 7 | Typography | Set system font scale to 1.3x and 2.0x; visit all screens | No clipping; IME does not cover form fields; all controls remain tappable | PENDING |
 | 8 | Binary HTTP | Download a small image, inspect it with Binary Tools, gzip it, upload via multipart | MIME, size, checksum and server response are correct; size caps are enforced | PENDING |
-| 9 | Formats | Feed CSV, XML, HTML, Markdown and iCal samples through new Steps | Round-trip output is valid; malformed input gives a friendly error | PENDING |
+| 9 | Formats & Date | Feed CSV, XML, HTML, Markdown and iCal samples through new Steps; parse `2026-01-01`, shift one day, then convert an instant to `Asia/Kolkata` | Round-trip output is valid; malformed input gives a friendly error; parse/shift/zone results are correct | PENDING |
 | 10 | JWT / TOTP | Sign/verify an HS256 token; generate a 6-digit TOTP from a Base32 secret | Verification passes only with the right secret; TOTP matches an authenticator app | PENDING |
 | 11 | Native backup | Export a Flow as `.kaivoflow`, inspect the text, import on a second install | Non-secret params survive; secrets are redacted; IDs remap; Sparks are disabled; explicit save required | PENDING |
 | 12 | Connected account | Add a provider via the Credentials screen and run a refresh-token grant | Rotated token is encrypted in the vault; HTTP/Sheets/AI Step uses the refreshed token | PENDING |
@@ -64,6 +77,15 @@ If a pure JVM toolchain is available instead, the existing helper scripts target
 * For binary uploads, use a loopback/mock server and files under 25 MB. WebDAV/TCP Steps are bounded and must not be pointed at untrusted hosts.
 * Check Android 12+ `PendingIntent` mutability, exported receiver security, background-location limits and notification permission.
 * If compilation reports API mismatches, prefer small local fixes over reverting a feature; report the exact compiler diagnostics to the cloud agent.
+
+---
+
+## Git Status
+* **Branch:** `arena/bfa021c7-kaivoflow` (based on `b1dfe74` of `main`).
+* **Remote:** `origin/arena/bfa021c7-kaivoflow` contains the complete commit series, ending with the Date & Time enhancement, handoff updates and test-namespace cleanup.
+* **Working tree:** Clean; no uncommitted or untracked source files.
+* **Local pull:** `git fetch origin arena/bfa021c7-kaivoflow && git switch arena/bfa021c7-kaivoflow && git pull --ff-only`.
+* **Note:** The active Arena work branch is fixed by the workspace; do not expect these commits on `main` until the owner merges them.
 
 ---
 

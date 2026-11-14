@@ -6,7 +6,6 @@ import com.kaivoflow.core.engine.Values
 import com.kaivoflow.core.model.FlowData
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
-import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -37,6 +36,29 @@ class ExtendedNodeTest {
         runCatching {
             run(math, mapOf("operation" to "divide", "a" to 8, "b" to 0))
         }.also { assertTrue("division by zero must fail clearly", it.exceptionOrNull() != null) }
+    }
+
+    @Test
+    fun `date parses shifts and converts time zones without a script`() {
+        val date = DateNode()
+        val parsed = run(date, mapOf("action" to "parse", "source" to "2026-01-01", "outputField" to "iso"))
+        assertTrue(Values.asString(parsed.single()["iso"]).startsWith("2025-12-31T18:30"))
+        val shifted = run(
+            date,
+            mapOf("action" to "shift", "source" to "2026-01-01T00:00:00Z", "amount" to 1, "unit" to "days", "outputField" to "iso"),
+        )
+        assertEquals("2026-01-02T00:00:00Z", Values.asString(shifted.single()["iso"]))
+        val converted = run(
+            date,
+            mapOf(
+                "action" to "timezone",
+                "source" to "2026-01-01T00:00:00Z",
+                "pattern" to "yyyy-MM-dd HH:mm",
+                "targetZone" to "Asia/Kolkata",
+                "outputField" to "local",
+            ),
+        )
+        assertEquals("2026-01-01 05:30", Values.asString(converted.single()["local"]))
     }
 
     @Test
@@ -256,6 +278,10 @@ class ExtendedNodeTest {
         assertTrue(ids.contains("transform.math"))
         assertTrue(ids.contains("saas.graphql"))
         assertTrue(ids.contains("device.torch"))
-        assertFalse(ids.contains("n8n"))
+        val namespaces = setOf("trigger", "logic", "transform", "ai", "saas", "device")
+        assertTrue(
+            "every Step must use a KaivoFlow namespace: ${ids.filter { it.substringBefore('.') !in namespaces }}",
+            ids.all { it.substringBefore('.') in namespaces },
+        )
     }
 }

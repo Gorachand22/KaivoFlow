@@ -83,7 +83,7 @@ Step parameters can interpolate dynamic variables using `{{ expression }}`:
 
 * **Sparks (12):** Manual, schedule, webhook, notification, SMS, battery, share, geofence, Bluetooth, Wi-Fi, headset and boot. Device Sparks use strict, fail-closed filters and OS broadcast/scheduler wiring.
 * **Logic (15):** Original `if`, `switch`, `merge`, `filter`, `dedupe`, `loop`, `wait`, `stop` and `onError`, plus `sort`, `limit`, `compare`, `table`, `run_info` and `noop`.
-* **Transformations (25):** Original `set`, `fields`, `json`, `template`, `date`, `aggregate`, `code` and `crypto`, plus `math`, `text`, `stats`, `split`, `url`, `csv`, `xml`, `html`, `markdown`, `ical`, `binary`, `binary_upload`, `chart`, `random`, `token`, `totp` and `pdf`.
+* **Transformations (25):** Original `set`, `fields`, `json`, `template`, `date` (parse/format/shift/diff/zone conversion), `aggregate`, `code` and `crypto`, plus `math`, `text`, `stats`, `split`, `url`, `csv`, `xml`, `html`, `markdown`, `ical`, `binary`, `binary_upload`, `chart`, `random`, `token`, `totp` and `pdf`.
 * **AI & Machine Learning (3):** `ai.chat`, `ai.extract`, `ai.classify`. Compatible with Google Gemini, local Ollama, and OpenAI-compatible endpoints with structured JSON schemas.
 * **Device Hardware (18):** Notification, SMS, clipboard read/write, app/URL launcher, Text-to-Speech, haptics, file persistence, battery/network status, toast, share sheet, torch, volume, location, Wi-Fi info, contact lookup and calendar events.
 * **SaaS / Protocols (11):** Universal REST client, Google Sheets, Notion, Telegram, Slack, Discord, Weather, RSS/Atom, GraphQL, WebDAV-style file requests and bounded TCP/TLS messages.

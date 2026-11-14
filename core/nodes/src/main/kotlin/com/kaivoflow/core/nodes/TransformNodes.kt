@@ -209,7 +209,7 @@ class DateNode : StepExecutor {
         id = "transform.date",
         title = "Date & time",
         category = StepCategory.Transform,
-        subtitle = "Format, shift or compare dates",
+        subtitle = "Parse, format, shift, compare or convert dates",
         iconKey = "calendar",
         params = persistentListOf(
             ParamSpec(
@@ -218,13 +218,18 @@ class DateNode : StepExecutor {
                 type = ParamType.Select,
                 default = "format",
                 options = persistentListOf(
+                    ParamOption("parse", "Read a date"),
                     ParamOption("format", "Format a date"),
                     ParamOption("shift", "Add or subtract time"),
                     ParamOption("diff", "Difference between two dates"),
+                    ParamOption("timezone", "Convert time zone"),
                 ),
             ),
             ParamSpec("source", "Date", ParamType.Text, default = "{{ ${'$'}json.date }}"),
-            ParamSpec("pattern", "Format", ParamType.Text, default = "dd MMM yyyy", showWhen = mapOf("action" to listOf("format"))),
+            ParamSpec(
+                "pattern", "Format", ParamType.Text, default = "dd MMM yyyy",
+                showWhen = mapOf("action" to listOf("format", "timezone")),
+            ),
             ParamSpec("amount", "Amount", ParamType.Number, default = 1, showWhen = mapOf("action" to listOf("shift"))),
             ParamSpec(
                 key = "unit", label = "Unit", type = ParamType.Select, default = "days",
@@ -235,9 +240,14 @@ class DateNode : StepExecutor {
                 showWhen = mapOf("action" to listOf("shift", "diff")),
             ),
             ParamSpec("other", "Other date", ParamType.Text, placeholder = "{{ ${'$'}now }}", showWhen = mapOf("action" to listOf("diff"))),
+            ParamSpec(
+                "targetZone", "Time zone", ParamType.Text, default = "UTC",
+                hint = "An IANA time zone such as Asia/Kolkata or Europe/Berlin.",
+                showWhen = mapOf("action" to listOf("timezone")),
+            ),
             ParamSpec("outputField", "Put the result in", ParamType.Text, default = "date"),
         ),
-        keywords = persistentListOf("date", "time", "format", "add days", "difference"),
+        keywords = persistentListOf("date", "time", "parse", "format", "add days", "difference", "timezone", "convert"),
     )
 
     override suspend fun execute(ctx: StepContext): StepResult {
@@ -252,6 +262,7 @@ class DateNode : StepExecutor {
             val base = parseInstant(rawDate, zone)
 
             val result: Any? = when (action) {
+                "parse" -> base.toString()
                 "shift" -> {
                     val amount = (Values.asDouble(params["amount"]) ?: 1.0).toLong()
                     val unit = Values.asString(params["unit"], "days")
@@ -262,11 +273,14 @@ class DateNode : StepExecutor {
                     val other = parseInstant(otherRaw, zone)
                     diff(base, other, Values.asString(params["unit"], "days"))
                 }
-                else -> {
-                    val pattern = Values.asString(params["pattern"], "dd MMM yyyy")
-                    runCatching { DateTimeFormatter.ofPattern(pattern).withZone(zone).format(base) }
-                        .getOrElse { throw StepExecutionException(ctx.step.id, ctx.step.name, "\"$pattern\" is not a valid date format") }
+                "timezone" -> {
+                    val rawZone = Values.asString(resolver.resolveValue(params["targetZone"], scope)).ifBlank { "UTC" }
+                    val targetZone = runCatching { ZoneId.of(rawZone) }.getOrElse {
+                        throw StepExecutionException(ctx.step.id, ctx.step.name, "\"$rawZone\" is not a time zone KaivoFlow understands")
+                    }
+                    render(base, Values.asString(params["pattern"], "dd MMM yyyy"), targetZone, ctx)
                 }
+                else -> render(base, Values.asString(params["pattern"], "dd MMM yyyy"), zone, ctx)
             }
             item.copy(json = item.json + (field to result))
         }
@@ -275,6 +289,10 @@ class DateNode : StepExecutor {
 
     private fun values(scope: Map<String, Any?>, path: String): String =
         Values.asString(Values.deepGet(scope, path)).ifBlank { "UTC" }
+
+    private fun render(base: Instant, pattern: String, zone: ZoneId, ctx: StepContext): String =
+        runCatching { DateTimeFormatter.ofPattern(pattern).withZone(zone).format(base) }
+            .getOrElse { throw StepExecutionException(ctx.step.id, ctx.step.name, "\"$pattern\" is not a valid date format") }
 
     private fun parseInstant(text: String, zone: ZoneId): Instant {
         val trimmed = text.trim()

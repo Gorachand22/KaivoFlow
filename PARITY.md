@@ -30,7 +30,7 @@
 | **Transform** | `transform.fields` | Rename/Remove | Full | Bulk rename and drop fields |
 | **Transform** | `transform.json` | JSON Parse/Build | Full | Sandboxed non-throwing JSON parser |
 | **Transform** | `transform.template` | Write Text | Full | Multi-line text interpolator |
-| **Transform** | `transform.date` | Date & Time | Full | Formatting, shifting, and difference calculator |
+| **Transform** | `transform.date` | Date & Time | Full | Parse, format, shift, difference and IANA time-zone conversion |
 | **Transform** | `transform.aggregate`| Group & Total | Full | Group by field, sum, average, and count |
 | **Transform** | `transform.code` | Run JavaScript | Full | Sandboxed QuickJS / Kotlin fallback evaluator |
 | **Transform** | `transform.crypto` | Crypto & Hash | Full | Native SHA-256, MD5, SHA-1, HMAC, Base64, UUID |
