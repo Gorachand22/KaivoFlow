@@ -2,6 +2,7 @@ package com.kaivoflow.core.nodes
 
 import com.kaivoflow.core.engine.CredentialProvider
 import com.kaivoflow.core.engine.ExpressionEvaluator
+import com.kaivoflow.core.engine.FlowInvoker
 import com.kaivoflow.core.engine.HttpGateway
 import com.kaivoflow.core.engine.HttpRequestSpec
 import com.kaivoflow.core.engine.HttpResponseSpec
@@ -88,6 +89,8 @@ fun ctx(
     flow: Flow = Flow(id = "f", name = "Flow"),
     stepOutputs: Map<String, List<FlowData>> = emptyMap(),
     evaluator: ExpressionEvaluator = TestEvaluator(),
+    flowInvoker: FlowInvoker? = null,
+    subFlowDepth: Int = 0,
 ): StepContext = StepContext(
     step = step,
     flow = flow,
@@ -102,6 +105,8 @@ fun ctx(
     timezone = "Asia/Kolkata",
     stepOutputs = stepOutputs,
     logger = { _, _ -> },
+    flowInvoker = flowInvoker,
+    subFlowDepth = subFlowDepth,
 )
 
 fun item(vararg pairs: Pair<String, Any?>) = FlowData(mapOf(*pairs))

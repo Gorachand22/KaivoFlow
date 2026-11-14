@@ -1,5 +1,6 @@
 package com.kaivoflow.core.nodes
 
+import com.kaivoflow.core.engine.FlowInvoker
 import com.kaivoflow.core.engine.HttpRequestSpec
 import com.kaivoflow.core.engine.HttpResponseSpec
 import com.kaivoflow.core.engine.Values
@@ -20,8 +21,11 @@ class ExtendedNodeTest {
         input: List<FlowData> = listOf(item("value" to 1.0)),
         http: RecordingHttp = RecordingHttp(),
         devices: RecordingDevices = RecordingDevices(),
+        flowInvoker: FlowInvoker? = null,
     ) = runBlocking {
-        executor.execute(ctx(stepOf(executor.spec.id, params = params), input, http = http, devices = devices)).primary
+        executor.execute(
+            ctx(stepOf(executor.spec.id, params = params), input, http = http, devices = devices, flowInvoker = flowInvoker)
+        ).primary
     }
 
     @Test

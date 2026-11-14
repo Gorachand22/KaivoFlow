@@ -6,14 +6,19 @@ import com.kaivoflow.core.data.FlowRepository
 import com.kaivoflow.core.data.RunRepository
 import com.kaivoflow.core.engine.ActiveRunRegistry
 import com.kaivoflow.core.engine.ExecutionMode
+import com.kaivoflow.core.engine.FlowInvoker
 import com.kaivoflow.core.engine.FlowRunner
+import com.kaivoflow.core.engine.KaivoException
 import com.kaivoflow.core.engine.NodeRegistry
 import com.kaivoflow.core.engine.RunOptions
 import com.kaivoflow.core.engine.ValidationReport
 import com.kaivoflow.core.expressions.FallbackExpressionEvaluator
 import com.kaivoflow.core.expressions.QuickJsExpressionEvaluator
 import com.kaivoflow.core.model.Flow
+import com.kaivoflow.core.model.FlowData
 import com.kaivoflow.core.model.RunEvent
+import com.kaivoflow.core.model.RunStatus
+import com.kaivoflow.core.model.StepRunStatus
 import com.kaivoflow.core.model.RunRecord
 import com.kaivoflow.core.model.RunTrigger
 import com.kaivoflow.core.model.StepRun
@@ -25,6 +30,7 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.collections.immutable.toImmutableList
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import javax.inject.Inject
@@ -56,12 +62,42 @@ class FlowEngine @Inject constructor(
 
     private val registry: NodeRegistry by lazy { NodeCatalog.registry(deviceGateway) }
 
+    /**
+     * Original Sub-Flow composition: a Step can run another saved Flow and receive its terminal
+     * items. Nested Runs are deliberately not persisted as top-level history or notifications.
+     */
+    private val subFlowInvoker: FlowInvoker = object : FlowInvoker {
+        private val maxDepth = 8
+
+        override suspend fun invoke(flowId: String, items: List<FlowData>, depth: Int): List<FlowData> {
+            if (depth > maxDepth) {
+                throw KaivoException("Sub-Flows are nested too deeply. Break the loop before running again.")
+            }
+            val flow = flowRepository.flow(flowId)
+                ?: throw KaivoException("The Flow this Step points to no longer exists ($flowId).")
+            val record = runner.run(
+                flow = flow,
+                trigger = RunTrigger(kind = "subflow", items = items.toImmutableList()),
+                options = RunOptions(mode = ExecutionMode.Production, ignoreFrozen = true, subFlowDepth = depth),
+            )
+            if (record.status == RunStatus.Failed || record.status == RunStatus.Canceled) {
+                throw KaivoException("Sub-Flow \"${flow.name}\" failed: ${record.error ?: "the Run was stopped"}")
+            }
+            return record.stepRuns
+                .lastOrNull { it.status == StepRunStatus.Succeeded && it.output.isNotEmpty() }
+                ?.output
+                ?.toList()
+                ?: emptyList()
+        }
+    }
+
     val runner: FlowRunner by lazy {
         FlowRunner(
             registry = registry,
             evaluator = expressionEvaluator,
             http = http,
             credentials = credentials,
+            flowInvoker = subFlowInvoker,
         )
     }
 

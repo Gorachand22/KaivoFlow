@@ -37,6 +37,8 @@ data class RunOptions(
     /** Re-run Steps whose output was Frozen. */
     val ignoreFrozen: Boolean = false,
     val itemLimit: Int? = null,
+    /** Nested composition depth; 0 for a top-level Run. */
+    val subFlowDepth: Int = 0,
 )
 
 /**
@@ -58,6 +60,8 @@ class FlowRunner(
     private val credentials: CredentialProvider,
     private val clock: () -> Long = System::currentTimeMillis,
     private val newId: () -> String = { java.util.UUID.randomUUID().toString() },
+    /** Supplied by the app so a Step can compose another Flow without importing Android/Room. */
+    private val flowInvoker: FlowInvoker? = null,
 ) {
     private val validator = FlowValidator(registry)
     val compiler = FlowCompiler(validator)
@@ -159,7 +163,8 @@ class FlowRunner(
             val requested = trigger.startAtStepId
             val kind = trigger.kind.lowercase()
             val expectedType = when (kind) {
-                "manual", "test" -> null // manual testing can start an automatic Spark
+                // Manual testing and Sub-Flow composition may use whichever Spark is enabled.
+                "manual", "test", "subflow" -> null
                 "schedule", "scheduled" -> "trigger.schedule"
                 else -> if (kind.startsWith("trigger.")) kind else "trigger.$kind"
             }
@@ -320,7 +325,7 @@ class FlowRunner(
 
         private fun collectInput(step: StepNode, upstream: List<Pair<com.kaivoflow.core.model.StreamEdge, NodeResult>>): List<FlowData> {
             val raw = if (step.isTrigger) {
-                if (trigger.items.isEmpty() && trigger.kind.lowercase() in setOf("manual", "schedule", "scheduled")) {
+                if (trigger.items.isEmpty() && trigger.kind.lowercase() in setOf("manual", "schedule", "scheduled", "subflow")) {
                     listOf(
                         FlowData(
                             json = mapOf(
@@ -408,6 +413,8 @@ class FlowRunner(
                         timezone = flow.settings.timezone,
                         stepOutputs = snapshotOutputs(),
                         logger = { message, level -> onEvent(RunEvent.Log(runId, message, level)) },
+                        flowInvoker = flowInvoker,
+                        subFlowDepth = options.subFlowDepth,
                     )
                     val timeout = step.timeoutMs
                     val result = if (timeout != null) {
@@ -541,6 +548,8 @@ class FlowRunner(
                         timezone = flow.settings.timezone,
                         stepOutputs = snapshotOutputs(),
                         logger = { message, level -> onEvent(RunEvent.Log(runId, message, level)) },
+                        flowInvoker = flowInvoker,
+                        subFlowDepth = options.subFlowDepth,
                     )
                 )
                 val finished = clock()

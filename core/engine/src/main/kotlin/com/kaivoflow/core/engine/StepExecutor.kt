@@ -37,6 +37,10 @@ data class StepContext(
     /** Outputs of Steps that already finished in this Run, keyed by Step id. */
     val stepOutputs: Map<String, List<FlowData>>,
     val logger: (message: String, level: LogLevel) -> Unit,
+    /** Optional composition hook: runs another Flow and returns its terminal items. */
+    val flowInvoker: FlowInvoker? = null,
+    /** How many Sub-Flows are already below this Run; used to stop recursive composition. */
+    val subFlowDepth: Int = 0,
 ) {
     /** Resolves params with expressions applied. Executors call this instead of touching raw maps. */
     fun params(): Map<String, Any?> =
