@@ -126,6 +126,8 @@ object KaivoIcons {
         "battery" to Icons.Filled.BatteryAlert,
         "if" to Icons.Filled.CallSplit,
         "switch" to Icons.Filled.Route,
+        "flow" to Icons.Filled.Route,
+        "plug" to Icons.Filled.Api,
         "merge" to Icons.Filled.Merge,
         "filter" to Icons.Filled.FilterAlt,
         "unique" to Icons.Filled.ContentCut,

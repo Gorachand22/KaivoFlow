@@ -41,6 +41,8 @@ object NodeCatalog {
         TableNode(devices),
         RunInfoNode(),
         NoopNode(),
+        SubFlowNode(),
+        PollChangesNode(devices),
         // Transform
         SetFieldsNode(),
         FieldsNode(),
@@ -83,6 +85,7 @@ object NodeCatalog {
         GraphQlNode(),
         WebDavNode(devices),
         TcpNode(),
+        ServiceConnectorNode(),
         // Device
         NotificationSendNode(devices),
         SmsSendNode(devices),
