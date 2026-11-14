@@ -91,6 +91,7 @@ class CanvasViewModel @Inject constructor(
             return
         }
         val insertAfter = _state.value.pickerInsertAfterStepId
+        val insertPort = _state.value.pickerInsertAfterPort.coerceAtLeast(0)
         val step = StepNode(
             id = UUID.randomUUID().toString(),
             type = type,
@@ -102,7 +103,9 @@ class CanvasViewModel @Inject constructor(
         )
         flow = flow.plusStep(step)
         if (insertAfter != null) {
-            flow = flow.plusStream(StreamEdge(UUID.randomUUID().toString(), insertAfter, step.id))
+            flow = flow.plusStream(
+                StreamEdge(UUID.randomUUID().toString(), insertAfter, step.id, fromPort = insertPort)
+            )
             // Re-link the downstream Steps of the Step we inserted after, so the Flow still flows.
             flow.outgoing(insertAfter)
                 .filter { it.toStepId != step.id }
@@ -117,16 +120,35 @@ class CanvasViewModel @Inject constructor(
             }
         }
         commit()
-        _state.update { it.copy(isStepPickerOpen = false, pickerInsertAfterStepId = null, selectedStepId = step.id) }
+        _state.update {
+            it.copy(
+                isStepPickerOpen = false,
+                pickerInsertAfterStepId = null,
+                pickerInsertAfterPort = 0,
+                selectedStepId = step.id,
+            )
+        }
         openInspector(step.id)
     }
 
-    fun openStepPicker(afterStepId: String? = null) {
-        _state.update { it.copy(isStepPickerOpen = true, pickerInsertAfterStepId = afterStepId) }
+    fun openStepPicker(afterStepId: String? = null, fromPort: Int = 0) {
+        _state.update {
+            it.copy(
+                isStepPickerOpen = true,
+                pickerInsertAfterStepId = afterStepId,
+                pickerInsertAfterPort = fromPort.coerceAtLeast(0),
+            )
+        }
     }
 
     fun closeStepPicker() {
-        _state.update { it.copy(isStepPickerOpen = false, pickerInsertAfterStepId = null) }
+        _state.update {
+            it.copy(
+                isStepPickerOpen = false,
+                pickerInsertAfterStepId = null,
+                pickerInsertAfterPort = 0,
+            )
+        }
     }
 
     fun selectStep(stepId: String?) {
@@ -190,8 +212,9 @@ class CanvasViewModel @Inject constructor(
         commit()
     }
 
-    fun connectStream(fromStepId: String, fromPort: Int, toStepId: String) {
-        if (fromStepId == toStepId) return
+    /** Returns true only when a Stream was actually added, so the canvas can celebrate success. */
+    fun connectStream(fromStepId: String, fromPort: Int, toStepId: String): Boolean {
+        if (fromStepId == toStepId) return false
         // Reject cycles before they exist: a user dragging a loop gets a clear message.
         val candidate = flow.plusStream(
             StreamEdge(UUID.randomUUID().toString(), fromStepId, toStepId, fromPort = fromPort)
@@ -199,10 +222,11 @@ class CanvasViewModel @Inject constructor(
         val cycle = com.kaivoflow.core.engine.FlowValidator(registry).detectCycle(candidate)
         if (cycle != null) {
             toast("That would create a loop. Use the Loop Step instead.", LogLevel.Warn)
-            return
+            return false
         }
         flow = candidate
         commit()
+        return true
     }
 
     fun disconnectStream(streamId: String) {
@@ -221,7 +245,10 @@ class CanvasViewModel @Inject constructor(
         val next = if (_state.value.layoutMode == LayoutMode.GuidedPath) LayoutMode.Freeform else LayoutMode.GuidedPath
         if (next == LayoutMode.Freeform) {
             // Seed freeform positions from the guided layout so switching modes does not scatter cards.
-            val layouts = CanvasGeometry.guidedLayout(flow)
+            val declaredPorts = flow.steps.associate { step ->
+                step.id to (registry.spec(step.type)?.outputs ?: 1)
+            }
+            val layouts = CanvasGeometry.guidedLayout(flow, outputPortCounts = declaredPorts)
             flow = flow.copy(steps = flow.steps.map { step ->
                 val layout = layouts[step.id] ?: return@map step
                 step.copy(x = layout.topLeft.x, y = layout.topLeft.y)

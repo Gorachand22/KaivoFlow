@@ -229,16 +229,16 @@ fun MagicPromptCard(
             trailingIcon = {
                 Box(
                     Modifier
-                        .size(40.dp)
+                        .size(48.dp)
                         .clip(CircleShape)
                         .background(Brush.linearGradient(listOf(colors.velvetRose, colors.royalGold)))
                         .clickable(enabled = !isGenerating && text.isNotBlank()) { onGenerate(text) },
                     contentAlignment = Alignment.Center,
                 ) {
                     if (isGenerating) {
-                        CircularProgressIndicator(color = Color.White, strokeWidth = 2.dp, modifier = Modifier.size(18.dp))
+                        CircularProgressIndicator(color = Color.White, strokeWidth = 2.dp, modifier = Modifier.size(22.dp))
                     } else {
-                        Icon(KaivoIcons.icon("sparkles"), "Build my Flow", tint = colors.canvasVoid, modifier = Modifier.size(20.dp))
+                        Icon(KaivoIcons.icon("sparkles"), "Build my Flow", tint = colors.canvasVoid, modifier = Modifier.size(24.dp))
                     }
                 }
             },

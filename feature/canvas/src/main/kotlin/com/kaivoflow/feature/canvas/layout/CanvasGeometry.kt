@@ -75,6 +75,8 @@ object CanvasGeometry {
         flow: Flow,
         cardHeights: Map<String, Float> = emptyMap(),
         columnGap: Float = 24f,
+        /** Declared output ports from the catalog; used even before the first Stream exists. */
+        outputPortCounts: Map<String, Int> = emptyMap(),
     ): Map<String, StepLayout> {
         val depths = computeDepths(flow)
         val rows = flow.steps.groupBy { depths[it.id] ?: 0 }.toSortedMap()
@@ -89,7 +91,10 @@ object CanvasGeometry {
             ordered.forEach { step ->
                 val height = cardHeights[step.id] ?: CARD_APPROX_HEIGHT
                 rowHeight = max(rowHeight, height)
-                layouts[step.id] = buildLayout(step, flow, Point(x, y), Size2(CARD_WIDTH, height))
+                layouts[step.id] = buildLayout(
+                    step, flow, Point(x, y), Size2(CARD_WIDTH, height),
+                    outputPortCounts[step.id] ?: 1,
+                )
                 x += CARD_WIDTH + columnGap
             }
             y += rowHeight + GUIDED_GAP
@@ -101,9 +106,13 @@ object CanvasGeometry {
     fun freeformLayout(
         flow: Flow,
         cardHeights: Map<String, Float> = emptyMap(),
+        outputPortCounts: Map<String, Int> = emptyMap(),
     ): Map<String, StepLayout> = flow.steps.associate { step ->
         val height = cardHeights[step.id] ?: CARD_APPROX_HEIGHT
-        step.id to buildLayout(step, flow, Point(snap(step.x), snap(step.y)), Size2(CARD_WIDTH, height))
+        step.id to buildLayout(
+            step, flow, Point(snap(step.x), snap(step.y)), Size2(CARD_WIDTH, height),
+            outputPortCounts[step.id] ?: 1,
+        )
     }
 
     /**
@@ -138,8 +147,15 @@ object CanvasGeometry {
         return depths
     }
 
-    private fun buildLayout(step: StepNode, flow: Flow, topLeft: Point, size: Size2): StepLayout {
-        val outputPortCount = (flow.streams.filter { it.fromStepId == step.id }.map { it.fromPort }.maxOrNull() ?: 0) + 1
+    private fun buildLayout(
+        step: StepNode,
+        flow: Flow,
+        topLeft: Point,
+        size: Size2,
+        declaredOutputs: Int = 1,
+    ): StepLayout {
+        val used = (flow.streams.filter { it.fromStepId == step.id }.map { it.fromPort }.maxOrNull() ?: 0) + 1
+        val outputPortCount = maxOf(used, declaredOutputs.coerceAtLeast(1))
         val outputs = (0 until outputPortCount).map { port ->
             Point(
                 x = topLeft.x + size.width * if (outputPortCount == 1) 0.5f else (port + 1f) / (outputPortCount + 1f),
@@ -161,10 +177,11 @@ object CanvasGeometry {
      * Cubic Bézier between two ports. The control points push vertically, which reads as a
      * "stream" rather than a wire, and stays smooth when branches sit side by side.
      */
-    fun bezier(start: Point, end: Point): List<Point> {
+    fun bezier(start: Point, end: Point, pixelScale: Float = 1f): List<Point> {
         val dy = abs(end.y - start.y)
         val dx = abs(end.x - start.x)
-        val lift = max(28f, min(120f, dy * 0.45f + dx * 0.15f))
+        // Points arrive in screen pixels; keep the lift density-independent.
+        val lift = max(28f * pixelScale, min(120f * pixelScale, dy * 0.45f + dx * 0.15f))
         return listOf(
             start,
             Point(start.x, start.y + lift),
@@ -254,16 +271,20 @@ object CanvasGeometry {
         viewportWidth: Float,
         viewportHeight: Float,
         padding: Float = 56f,
+        /** Pixels per dp. Layout coordinates are dp; pan returned here is in screen pixels. */
+        pixelScale: Float = 1f,
     ): Triple<Float, Float, Float> {
         if (bounds.width <= 0f || bounds.height <= 0f) return Triple(1f, 0f, 0f)
+        val widthDp = viewportWidth / pixelScale
+        val heightDp = viewportHeight / pixelScale
         val zoom = clampZoom(
             min(
-                (viewportWidth - padding * 2) / bounds.width,
-                (viewportHeight - padding * 2) / bounds.height,
+                (widthDp - padding * 2) / bounds.width,
+                (heightDp - padding * 2) / bounds.height,
             )
         )
-        val panX = viewportWidth / 2f - (bounds.left + bounds.width / 2f) * zoom
-        val panY = viewportHeight / 2f - (bounds.top + bounds.height / 2f) * zoom
+        val panX = viewportWidth / 2f - (bounds.left + bounds.width / 2f) * zoom * pixelScale
+        val panY = viewportHeight / 2f - (bounds.top + bounds.height / 2f) * zoom * pixelScale
         return Triple(zoom, panX, panY)
     }
 }

@@ -34,9 +34,11 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
@@ -84,6 +86,8 @@ fun CanvasScreen(
     val sizes = KaivoTheme.sizes
     val motion = KaivoTheme.motion
     val density = LocalDensity.current
+    val pixelScale = density.density
+    val haptics = LocalHapticFeedback.current
 
     val transform = rememberCanvasTransformState()
     var viewportSize by remember { mutableStateOf(androidx.compose.ui.unit.IntSize.Zero) }
@@ -91,19 +95,24 @@ fun CanvasScreen(
     var dragStart by remember { mutableStateOf<Point?>(null) }
     var dragEnd by remember { mutableStateOf<Point?>(null) }
     var dragSourcePort by remember { mutableStateOf(0) }
+    var draggedFromStepId by remember { mutableStateOf<String?>(null) }
+    var cardDrag by remember { mutableStateOf<Triple<String, Float, Float>?>(null) }
     var snappedTarget by remember { mutableStateOf<Pair<String, Int>?>(null) }
     val snackbar = remember { SnackbarHostState() }
 
     val registry = remember { NodeCatalog.registry() }
     val specs: List<NodeSpec> = remember { registry.specs }
+    val outputPortCounts = remember(state.steps) {
+        state.steps.associate { it.id to it.outputPorts.coerceAtLeast(1) }
+    }
 
     // Layout is recomputed only when the Flow structure changes — never during a gesture.
     val layouts: Map<String, StepLayout> = remember(state.steps, state.streams, state.layoutMode, cardHeights) {
         val flow = FakeFlow.from(state)
         if (state.layoutMode == LayoutMode.GuidedPath) {
-            CanvasGeometry.guidedLayout(flow, cardHeights)
+            CanvasGeometry.guidedLayout(flow, cardHeights, outputPortCounts = outputPortCounts)
         } else {
-            CanvasGeometry.freeformLayout(flow, cardHeights)
+            CanvasGeometry.freeformLayout(flow, cardHeights, outputPortCounts = outputPortCounts)
         }
     }
 
@@ -115,6 +124,7 @@ fun CanvasScreen(
                 bounds,
                 viewportSize.width.toFloat(),
                 viewportSize.height.toFloat(),
+                pixelScale = density.density,
             )
             transform.jumpTo(fit.first, fit.second, fit.third)
         }
@@ -163,6 +173,7 @@ fun CanvasScreen(
                 streams = state.streams,
                 transform = transform,
                 reduceMotion = motion.reduceMotion,
+                pixelScale = pixelScale,
                 modifier = Modifier.fillMaxSize(),
             )
 
@@ -170,6 +181,7 @@ fun CanvasScreen(
             val visible = transform.visibleRect(
                 viewportSize.width.toFloat().coerceAtLeast(1f),
                 viewportSize.height.toFloat().coerceAtLeast(1f),
+                pixelScale = pixelScale,
             )
             layouts.values.forEach { layout ->
                 if (!CanvasGeometry.isVisible(layout, visible)) return@forEach
@@ -186,16 +198,18 @@ fun CanvasScreen(
                 Box(
                     Modifier
                         .graphicsLayer {
-                            translationX = layout.topLeft.x
-                            translationY = layout.topLeft.y
+                            // StepLayout is in world dp; graphicsLayer works in screen pixels.
+                            translationX = layout.topLeft.x * pixelScale
+                            translationY = layout.topLeft.y * pixelScale
                             alpha = entrance.value
                             scaleX = 0.92f + 0.08f * entrance.value
                             scaleY = 0.92f + 0.08f * entrance.value
                         }
                         .onSizeChanged { size ->
-                            val height = with(density) { size.height.toDp().value }
-                            if (cardHeights[step.id] != null && kotlin.math.abs(cardHeights[step.id]!! - size.height.toFloat()) > 2f) {
-                                cardHeights = cardHeights + (step.id to size.height.toFloat())
+                            val heightDp = with(density) { size.height.toDp().value }
+                            val previous = cardHeights[step.id]
+                            if (previous == null || kotlin.math.abs(previous - heightDp) > 2f) {
+                                cardHeights = cardHeights + (step.id to heightDp)
                             }
                         },
                 ) {
@@ -205,21 +219,27 @@ fun CanvasScreen(
                         onTap = { viewModel.openInspector(step.id) },
                         onLongPress = { viewModel.selectStep(step.id) },
                         draggable = state.layoutMode == LayoutMode.Freeform,
-                        onOutputDragStart = { offset ->
-                            dragStart = Point(layout.topLeft.x + offset.x, layout.topLeft.y + offset.y)
-                            dragSourcePort = 0
+                        onOutputDragStart = { port, offset ->
+                            val origin = Point(layout.topLeft.x + offset.x, layout.topLeft.y + offset.y)
+                            draggedFromStepId = step.id
+                            dragSourcePort = port
+                            dragStart = origin
+                            dragEnd = origin
+                            snappedTarget = null
                         },
                         onOutputDrag = { amount ->
                             val base = dragEnd ?: dragStart
-                            dragEnd = if (base != null) Point(
-                                base.x + amount.x / transform.zoom,
-                                base.y + amount.y / transform.zoom,
-                            ) else null
-                            dragEnd?.let { point ->
+                            if (base != null) {
+                                // Pointer deltas are screen pixels; world-dp delta = screen px / (density * zoom).
+                                val dx = with(density) { amount.x.toDp().value / transform.zoom }
+                                val dy = with(density) { amount.y.toDp().value / transform.zoom }
+                                val point = Point(base.x + dx, base.y + dy)
+                                dragEnd = point
                                 snappedTarget = CanvasGeometry.nearestPort(
                                     point,
                                     layouts.values,
                                     excludeStepId = step.id,
+                                    allowOutputs = false,
                                 )
                             }
                         },
@@ -227,20 +247,41 @@ fun CanvasScreen(
                             val target = snappedTarget
                             val end = dragEnd
                             if (target != null) {
-                                viewModel.connectStream(step.id, dragSourcePort, target.first)
+                                val connected = viewModel.connectStream(step.id, dragSourcePort, target.first)
+                                if (connected) {
+                                    haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+                                }
                             } else if (end != null) {
-                                // Dropped on empty canvas: offer the next Step and chain it to this one.
-                                viewModel.openStepPicker(afterStepId = step.id)
+                                // Dropped on empty canvas: offer the next Step on the chosen branch.
+                                viewModel.openStepPicker(afterStepId = step.id, fromPort = dragSourcePort)
                             }
                             dragStart = null
                             dragEnd = null
                             snappedTarget = null
+                            draggedFromStepId = null
                         },
                         onOutputDragCancel = {
                             dragStart = null
                             dragEnd = null
                             snappedTarget = null
+                            draggedFromStepId = null
                         },
+                        onCardDragStart = {
+                            cardDrag = Triple(step.id, layout.topLeft.x, layout.topLeft.y)
+                        },
+                        onCardDrag = { amount ->
+                            val current = cardDrag
+                            if (current != null && current.first == step.id) {
+                                val dx = with(density) { amount.x.toDp().value / transform.zoom }
+                                val dy = with(density) { amount.y.toDp().value / transform.zoom }
+                                val x = current.second + dx
+                                val y = current.third + dy
+                                cardDrag = Triple(step.id, x, y)
+                                viewModel.moveStep(step.id, x, y)
+                            }
+                        },
+                        onCardDragEnd = { cardDrag = null },
+                        onCardDragCancel = { cardDrag = null },
                     )
                 }
             }
@@ -250,6 +291,7 @@ fun CanvasScreen(
                     start = dragStart,
                     end = dragEnd,
                     isSnapped = snappedTarget != null,
+                    pixelScale = pixelScale,
                     modifier = Modifier.fillMaxSize(),
                 )
             }
@@ -266,12 +308,12 @@ fun CanvasScreen(
             GlassPill(Modifier.padding(end = 8.dp)) {
                 Box(
                     Modifier
-                        .size(32.dp)
+                        .size(48.dp)
                         .clip(CircleShape)
                         .semantics { contentDescription = "Back to Flows" },
                 ) {
                     androidx.compose.material3.IconButton(onClick = onBack) {
-                        Icon(KaivoIcons.icon("back"), "Back to Flows", tint = colors.inkPrimary, modifier = Modifier.size(20.dp))
+                        Icon(KaivoIcons.icon("back"), "Back to Flows", tint = colors.inkPrimary, modifier = Modifier.size(24.dp))
                     }
                 }
             }
@@ -342,8 +384,15 @@ fun CanvasScreen(
                 visible = transform.visibleRect(
                     viewportSize.width.toFloat().coerceAtLeast(1f),
                     viewportSize.height.toFloat().coerceAtLeast(1f),
+                    pixelScale = pixelScale,
                 ),
-                onJump = { x, y -> transform.jumpTo(transform.zoom, -x * transform.zoom, -y * transform.zoom) },
+                onJump = { x, y ->
+                    transform.jumpTo(
+                        transform.zoom,
+                        -x * transform.zoom * pixelScale,
+                        -y * transform.zoom * pixelScale,
+                    )
+                },
                 modifier = Modifier
                     .align(Alignment.BottomEnd)
                     .navigationBarsPadding()
@@ -400,7 +449,12 @@ fun CanvasScreen(
                                     .androidClickable {
                                         val bounds = CanvasGeometry.contentBounds(layouts.values)
                                         if (bounds.width > 0f) {
-                                            transform.fit(bounds, viewportSize.width.toFloat(), viewportSize.height.toFloat())
+                                            transform.fit(
+                                                bounds,
+                                                viewportSize.width.toFloat(),
+                                                viewportSize.height.toFloat(),
+                                                pixelScale = pixelScale,
+                                            )
                                         }
                                     }
                                     .semantics { contentDescription = "Fit the Flow on screen" },

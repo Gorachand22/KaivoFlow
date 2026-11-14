@@ -305,7 +305,7 @@ fun SegmentedPill(
             Box(
                 modifier = Modifier
                     .weight(1f)
-                    .defaultMinSize(minHeight = 40.dp)
+                    .defaultMinSize(minHeight = 48.dp)
                     .clip(KaivoShapes.pill)
                     .background(if (selected) colors.royalGold.copy(alpha = 0.18f) else Color.Transparent)
                     .border(

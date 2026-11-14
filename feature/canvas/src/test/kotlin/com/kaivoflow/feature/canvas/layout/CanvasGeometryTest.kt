@@ -92,6 +92,26 @@ class CanvasGeometryTest {
     }
 
     @Test
+    fun `declared branch ports exist before the first stream is drawn`() {
+        val f = flow(step("t", trigger = true))
+        val t = CanvasGeometry.guidedLayout(f, outputPortCounts = mapOf("t" to 3)).getValue("t")
+        assertEquals(3, t.ports.outputs.size)
+        assertTrue(t.ports.outputs[0].x < t.ports.outputs[1].x)
+        assertTrue(t.ports.outputs[1].x < t.ports.outputs[2].x)
+        assertEquals(t.centerX, t.ports.outputs[1].x, 0.01f)
+    }
+
+    @Test
+    fun `fit to screen converts dp content into pixel pan at density 2`() {
+        val bounds = Rect2(0f, 0f, 1000f, 500f)
+        val (zoom, panX, panY) = CanvasGeometry.fitToScreen(
+            bounds, viewportWidth = 1080f, viewportHeight = 1920f, pixelScale = 2f,
+        )
+        assertEquals(540f, 500f * zoom * 2f + panX, 1f)
+        assertEquals(960f, 250f * zoom * 2f + panY, 1f)
+    }
+
+    @Test
     fun `bezier control points push vertically and stay inside a sane lift`() {
         val control = CanvasGeometry.bezier(Point(0f, 0f), Point(0f, 200f))
         assertEquals(4, control.size)

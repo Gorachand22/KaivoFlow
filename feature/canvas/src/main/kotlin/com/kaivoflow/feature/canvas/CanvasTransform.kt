@@ -58,11 +58,19 @@ class CanvasTransformState(
     fun beginInteraction() { isInteracting = true }
     fun endInteraction() { isInteracting = false }
 
-    fun visibleRect(viewportWidth: Float, viewportHeight: Float): Rect2 =
-        CanvasGeometry.visibleRect(panX, panY, zoom, viewportWidth, viewportHeight)
+    /** Viewport is in screen pixels; the returned rectangle is in world dp, like StepLayout. */
+    fun visibleRect(viewportWidth: Float, viewportHeight: Float, pixelScale: Float = 1f): Rect2 =
+        CanvasGeometry.visibleRect(
+            panX / pixelScale,
+            panY / pixelScale,
+            zoom,
+            viewportWidth / pixelScale,
+            viewportHeight / pixelScale,
+        )
 
-    /** Converts a screen-space point (from a pointer event) into canvas coordinates. */
-    fun toCanvas(screenX: Float, screenY: Float): Point = Point((screenX - panX) / zoom, (screenY - panY) / zoom)
+    /** Converts a screen-space point (from a pointer event) into world-dp canvas coordinates. */
+    fun toCanvas(screenX: Float, screenY: Float, pixelScale: Float = 1f): Point =
+        Point((screenX - panX) / (zoom * pixelScale), (screenY - panY) / (zoom * pixelScale))
 
     suspend fun animateTo(zoom: Float, panX: Float, panY: Float, durationMs: Int = 320) {
         val animator = Animatable(1f)
@@ -83,8 +91,10 @@ class CanvasTransformState(
         this.panY = panY
     }
 
-    fun fit(bounds: Rect2, viewportWidth: Float, viewportHeight: Float) {
-        val (zoom, panX, panY) = CanvasGeometry.fitToScreen(bounds, viewportWidth, viewportHeight)
+    fun fit(bounds: Rect2, viewportWidth: Float, viewportHeight: Float, pixelScale: Float = 1f) {
+        val (zoom, panX, panY) = CanvasGeometry.fitToScreen(
+            bounds, viewportWidth, viewportHeight, pixelScale = pixelScale,
+        )
         jumpTo(zoom, panX, panY)
     }
 }
@@ -94,10 +104,12 @@ fun rememberCanvasTransformState(): CanvasTransformState = remember { CanvasTran
 
 /** Helper for the "fit to screen" button, which needs a coroutine for the animation. */
 @Composable
-fun rememberFitToScreen(transform: CanvasTransformState): (Rect2, Float, Float) -> Unit {
+fun rememberFitToScreen(transform: CanvasTransformState): (Rect2, Float, Float, Float) -> Unit {
     val scope = rememberCoroutineScope()
-    return { bounds, width, height ->
-        val (zoom, panX, panY) = CanvasGeometry.fitToScreen(bounds, width, height)
+    return { bounds, width, height, pixelScale ->
+        val (zoom, panX, panY) = CanvasGeometry.fitToScreen(
+            bounds, width, height, pixelScale = pixelScale,
+        )
         scope.launch { transform.animateTo(zoom, panX, panY) }
     }
 }

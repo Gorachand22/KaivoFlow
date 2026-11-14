@@ -35,8 +35,9 @@ import kotlinx.collections.immutable.ImmutableList
  * Deliberately not one Composable per connection (AGENTS.md §6.1): a 1,000-Step Flow has ~1,000
  * Streams, and a Composable each would flood the composition with layout nodes.
  *
- * Everything is drawn in canvas space and transformed by the single graphicsLayer on the parent,
- * so pan/zoom never rebuilds paths.
+ * StepLayout coordinates are world dp; drawing happens in screen pixels, so every point is
+ * multiplied once by [pixelScale] before a Path is built. The parent graphicsLayer still owns
+ * pan/zoom, so dragging never rebuilds paths.
  */
 @Composable
 fun StreamCanvasLayer(
@@ -44,24 +45,30 @@ fun StreamCanvasLayer(
     streams: ImmutableList<StreamEdgeUiModel>,
     transform: CanvasTransformState,
     reduceMotion: Boolean,
+    pixelScale: Float = 1f,
     modifier: Modifier = Modifier,
 ) {
     val colors = KaivoTheme.colors
     val motion = KaivoTheme.motion
 
-    // Cached once per layout/stream change — never inside onDraw.
-    val geometry = remember(layouts, streams) {
+    // Cached once per layout/stream/density change — never inside onDraw.
+    val geometry = remember(layouts, streams, pixelScale) {
         streams.mapNotNull { stream ->
             val from = layouts[stream.fromStepId] ?: return@mapNotNull null
             val to = layouts[stream.toStepId] ?: return@mapNotNull null
-            val start = from.ports.outputs.getOrNull(stream.fromPort) ?: from.bottomCenter
-            val end = to.ports.input
+            val startDp = from.ports.outputs.getOrNull(stream.fromPort) ?: from.bottomCenter
+            val endDp = to.ports.input
+            val start = startDp * pixelScale
+            val end = endDp * pixelScale
+            val control = CanvasGeometry.bezier(start, end, pixelScale = pixelScale)
             StreamGeometry(
                 stream = stream,
+                startDp = startDp,
+                endDp = endDp,
                 start = start,
                 end = end,
-                control = CanvasGeometry.bezier(start, end),
-                path = buildPath(start, end),
+                control = control,
+                path = buildPath(start, end, control),
             )
         }
     }
@@ -91,12 +98,19 @@ fun StreamCanvasLayer(
         val zoom = transform.zoom
         val panX = transform.panX
         val panY = transform.panY
-        val viewport = CanvasGeometry.visibleRect(panX, panY, zoom, size.width, size.height)
+        // visibleRect works in world dp; pan and viewport arrive in screen pixels.
+        val viewport = CanvasGeometry.visibleRect(
+            panX / pixelScale,
+            panY / pixelScale,
+            zoom,
+            size.width / pixelScale,
+            size.height / pixelScale,
+        )
 
-        drawDotGrid(viewport, colors.inkMuted)
+        drawDotGrid(viewport, colors.inkMuted, pixelScale)
 
         geometry.forEach { geo ->
-            if (!CanvasGeometry.isStreamVisible(geo.start, geo.end, viewport)) return@forEach
+            if (!CanvasGeometry.isStreamVisible(geo.startDp, geo.endDp, viewport)) return@forEach
             val active = geo.stream.isActive
             val complete = geo.stream.isComplete
             val dimmed = geo.stream.isDimmed
@@ -131,9 +145,8 @@ fun StreamCanvasLayer(
                 path = geo.path,
                 brush = brush,
                 style = Stroke(
-                    width = if (active) 3f else 2f * density,
+                    width = if (active) 3f * density else 2f * density,
                     cap = StrokeCap.Round,
-                    pathEffect = if (complete) null else null,
                 ),
             )
 
@@ -142,7 +155,7 @@ fun StreamCanvasLayer(
                 drawPath(
                     path = geo.path,
                     color = colors.royalGold.copy(alpha = 0.14f),
-                    style = Stroke(width = 12f, cap = StrokeCap.Round),
+                    style = Stroke(width = 12f * density, cap = StrokeCap.Round),
                 )
             }
 
@@ -156,33 +169,39 @@ fun StreamCanvasLayer(
     }
 }
 
+private operator fun Point.times(scale: Float): Point = Point(x * scale, y * scale)
+
 private class StreamGeometry(
     val stream: StreamEdgeUiModel,
+    val startDp: Point,
+    val endDp: Point,
     val start: Point,
     val end: Point,
     val control: List<Point>,
     val path: Path,
 )
 
-private fun buildPath(start: Point, end: Point): Path {
-    val control = CanvasGeometry.bezier(start, end)
-    return Path().apply {
+private fun buildPath(start: Point, end: Point, control: List<Point> = CanvasGeometry.bezier(start, end)): Path =
+    Path().apply {
         moveTo(start.x, start.y)
         cubicTo(control[1].x, control[1].y, control[2].x, control[2].y, end.x, end.y)
     }
-}
 
 /** Ambient dot grid, drawn only inside the visible rect. */
-private fun DrawScope.drawDotGrid(viewport: com.kaivoflow.feature.canvas.layout.Rect2, color: Color) {
+private fun DrawScope.drawDotGrid(
+    viewport: com.kaivoflow.feature.canvas.layout.Rect2,
+    color: Color,
+    pixelScale: Float,
+) {
     val spacing = 24f
-    val radius = 1.2f * density
+    val radius = 1.2f * pixelScale
     val startX = kotlin.math.floor(viewport.left / spacing) * spacing
     val startY = kotlin.math.floor(viewport.top / spacing) * spacing
     var x = startX
     while (x <= viewport.right) {
         var y = startY
         while (y <= viewport.bottom) {
-            drawCircle(color.copy(alpha = 0.28f), radius = radius, center = Offset(x, y))
+            drawCircle(color.copy(alpha = 0.28f), radius = radius, center = Offset(x * pixelScale, y * pixelScale))
             y += spacing
         }
         x += spacing
@@ -239,32 +258,37 @@ private fun DrawScope.drawPortPearl(point: Point, tint: Color, active: Boolean) 
     drawCircle(color = Color.White.copy(alpha = 0.7f), radius = radius * 0.42f, center = Offset(point.x, point.y))
 }
 
-/** Dashed preview line while the user drags a new Stream. */
+/** Dashed bezier preview while the user drags a new Stream from an output port. */
 @Composable
 fun StreamDragPreview(
     start: Point?,
     end: Point?,
     modifier: Modifier = Modifier,
     isSnapped: Boolean = false,
+    pixelScale: Float = 1f,
 ) {
     if (start == null || end == null) return
     val colors = KaivoTheme.colors
     Canvas(modifier) {
-        val path = buildPath(start, end)
+        val from = start * pixelScale
+        val to = end * pixelScale
+        val control = CanvasGeometry.bezier(from, to, pixelScale = pixelScale)
+        val path = buildPath(from, to, control)
+        val line = if (isSnapped) colors.statusSuccess else colors.royalGold
         drawPath(
             path = path,
-            color = (if (isSnapped) colors.statusSuccess else colors.royalGold).copy(alpha = 0.75f),
+            color = line.copy(alpha = 0.78f),
             style = Stroke(
                 width = 2.5f * density,
                 cap = StrokeCap.Round,
-                pathEffect = PathEffect.dashPathEffect(floatArrayOf(14f, 10f)),
+                pathEffect = PathEffect.dashPathEffect(
+                    floatArrayOf(14f * density, 10f * density),
+                ),
             ),
         )
-        drawCircle(
-            color = colors.royalGold,
-            radius = 7f * density,
-            center = Offset(end.x, end.y),
-        )
+        drawCircle(color = colors.royalGold, radius = 6f * density, center = Offset(from.x, from.y))
+        drawCircle(color = line, radius = 7f * density, center = Offset(to.x, to.y))
+        drawCircle(color = Color.White.copy(alpha = 0.8f), radius = 2.5f * density, center = Offset(to.x, to.y))
     }
 }
 

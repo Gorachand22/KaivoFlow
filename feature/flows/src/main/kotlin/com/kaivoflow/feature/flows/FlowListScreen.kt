@@ -11,8 +11,11 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.imePadding
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -132,7 +135,14 @@ fun FlowListScreen(
     val colors = KaivoTheme.colors
 
     FlowTransferHost(onImported = onOpenFlow) { onImport, onExport, onBackup ->
-    Box(Modifier.fillMaxSize().background(colors.canvasVoid)) {
+    Box(
+        Modifier
+            .fillMaxSize()
+            .background(colors.canvasVoid)
+            .statusBarsPadding()
+            .navigationBarsPadding()
+            .imePadding(),
+    ) {
         Column(Modifier.fillMaxSize()) {
             Row(
                 Modifier
@@ -211,7 +221,7 @@ private fun IconPill(icon: String, description: String, onClick: () -> Unit) {
     val colors = KaivoTheme.colors
     Box(
         Modifier
-            .size(40.dp)
+            .size(48.dp)
             .clip(CircleShape)
             .background(colors.surfaceCard)
             .border(1.dp, colors.hairline, CircleShape)
@@ -219,7 +229,7 @@ private fun IconPill(icon: String, description: String, onClick: () -> Unit) {
             .semantics { contentDescription = description },
         contentAlignment = Alignment.Center,
     ) {
-        Icon(KaivoIcons.icon(icon), description, tint = colors.inkSecondary, modifier = Modifier.size(20.dp))
+        Icon(KaivoIcons.icon(icon), description, tint = colors.inkSecondary, modifier = Modifier.size(24.dp))
     }
 }
 

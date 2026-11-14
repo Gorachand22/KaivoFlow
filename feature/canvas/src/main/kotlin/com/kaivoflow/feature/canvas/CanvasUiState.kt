@@ -109,6 +109,8 @@ data class CanvasUiState(
     val inspector: InspectorUiState? = null,
     val isStepPickerOpen: Boolean = false,
     val pickerInsertAfterStepId: String? = null,
+    /** Output port the new Step should be chained from after a port drag. */
+    val pickerInsertAfterPort: Int = 0,
     val isSaving: Boolean = false,
     val lastSavedAt: Long? = null,
     val toasts: ImmutableList<ToastMessage> = persistentListOf(),
