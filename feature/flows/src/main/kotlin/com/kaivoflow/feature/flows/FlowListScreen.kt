@@ -26,6 +26,9 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -196,17 +199,25 @@ fun FlowListScreen(
                 IconPill("settings", "Settings", onOpenSettings)
             }
 
-            GhostButton(
-                text = stringResource(R.string.transfer_import_button),
-                onClick = onImport,
-                modifier = Modifier.padding(horizontal = KaivoTheme.spacing.md),
-            )
-            GhostButton(
-                text = "Start from a template",
-                icon = "sparkles",
-                onClick = { viewModel.showTemplates() },
-                modifier = Modifier.padding(horizontal = KaivoTheme.spacing.md, vertical = 8.dp),
-            )
+            Row(
+                Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = KaivoTheme.spacing.md, vertical = 4.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                GhostButton(
+                    text = stringResource(R.string.transfer_import_button),
+                    icon = "download",
+                    onClick = onImport,
+                    modifier = Modifier.weight(1f),
+                )
+                GhostButton(
+                    text = "Templates",
+                    icon = "sparkles",
+                    onClick = { viewModel.showTemplates() },
+                    modifier = Modifier.weight(1f),
+                )
+            }
             if (state.flows.isEmpty()) {
                 EmptyFlows(
                     isCreating = creating,
@@ -332,6 +343,7 @@ private fun FlowRowCard(
     onToggleFavorite: () -> Unit,
 ) {
     val colors = KaivoTheme.colors
+    var showDeleteConfirm by remember { mutableStateOf(false) }
     Column(
         Modifier
             .fillMaxWidth()
@@ -367,11 +379,27 @@ private fun FlowRowCard(
                     color = colors.inkSecondary,
                 )
             }
-            Box(Modifier.clip(CircleShape).clickable(onClick = onToggleFavorite).padding(8.dp)) {
+            Box(Modifier.clip(CircleShape).clickable(onClick = onToggleFavorite).padding(6.dp)) {
                 Icon(
                     KaivoIcons.icon("bookmark"),
                     if (flow.isFavorite) "Remove from favourites" else "Add to favourites",
                     tint = if (flow.isFavorite) colors.royalGold else colors.inkMuted,
+                    modifier = Modifier.size(18.dp),
+                )
+            }
+            Box(Modifier.clip(CircleShape).clickable(onClick = onDuplicate).padding(6.dp)) {
+                Icon(
+                    KaivoIcons.icon("clipboard"),
+                    "Duplicate Flow",
+                    tint = colors.inkMuted,
+                    modifier = Modifier.size(18.dp),
+                )
+            }
+            Box(Modifier.clip(CircleShape).clickable(onClick = { showDeleteConfirm = true }).padding(6.dp)) {
+                Icon(
+                    KaivoIcons.icon("delete"),
+                    "Delete Flow",
+                    tint = colors.statusError.copy(alpha = 0.8f),
                     modifier = Modifier.size(18.dp),
                 )
             }
@@ -415,6 +443,27 @@ private fun FlowRowCard(
                 )
             }
         }
+    }
+    if (showDeleteConfirm) {
+        AlertDialog(
+            onDismissRequest = { showDeleteConfirm = false },
+            title = { Text("Delete Flow?", style = androidx.compose.material3.MaterialTheme.typography.titleMedium, color = colors.inkPrimary) },
+            text = { Text("This will permanently remove \"${flow.name}\".", style = androidx.compose.material3.MaterialTheme.typography.bodyMedium, color = colors.inkSecondary) },
+            confirmButton = {
+                TextButton(onClick = {
+                    showDeleteConfirm = false
+                    onDelete()
+                }) {
+                    Text("Delete", color = colors.statusError)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showDeleteConfirm = false }) {
+                    Text("Cancel", color = colors.inkSecondary)
+                }
+            },
+            containerColor = colors.surfaceAtelier,
+        )
     }
 }
 
