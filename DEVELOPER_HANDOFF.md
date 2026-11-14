@@ -1,22 +1,22 @@
 # KaivoFlow — Cloud IDE & Arena AI Developer Handoff Guide
 
-> **Project:** KaivoFlow (Independent Mobile Visual Automation Platform)  
-> **Repository:** `https://github.com/Gorachand22/KaivoFlow.git`  
-> **Target OS:** Android 8.0+ (API 26 → 34/35)  
-> **UI Architecture:** Jetpack Compose (Velvet Obsidian & Champagne Gold Theme)  
-> **Current Build Status:** ✅ **COMPILE DEBUG & UNIT TESTS VERIFIED (JDK 21 + Gradle 8.5 + SDK 34)**  
-> **Real Device Verification:** Tested on physical Realme 9 5G (Android 13 / API 33) via ADB.
+> **Project:** KaivoFlow (Independent Mobile Visual Automation Platform)
+> **Repository:** `https://github.com/Gorachand22/KaivoFlow.git`
+> **Target OS:** Android 8.0+ (API 26 → 34/35)
+> **UI Architecture:** Jetpack Compose (Velvet Obsidian & Champagne Gold Theme)
+> **Cloud Build Status:** ⚠️ Pure Kotlin/Compose authoring complete; **no JDK/Kotlin/Gradle/Android SDK in this environment**, so compilation and device runs are intentionally local.
+> **Static Checks:** 102 Kotlin files passed delimiter/string checks; `git diff --check` and XML parse checks are clean.
 
 ---
 
 ## 1. Project Overview & Author Vision
 
-KaivoFlow is an independent, sovereign, mobile-first visual automation system designed to run **100% on-device** without needing cloud servers, virtual machines, or external Docker deployments. Users design automation workflows (**Flows**) consisting of nodes (**Steps**) linked by directed edges (**Streams**). 
+KaivoFlow is an independent, sovereign, mobile-first visual automation system designed to run **100% on-device** without needing cloud servers, virtual machines, or external Docker deployments. Users design automation workflows (**Flows**) of nodes (**Steps**) linked by directed edges (**Streams**).
 
 The app includes:
-* **Rich Trigger System:** Sparks (triggers) powered by Manual taps, Cron schedules, Webhooks, SMS events, Notification listeners, Battery state, and Android Share Sheet.
-* **38+ Built-in Node Catalog:** Transforming JSON items, running logic (If/Switch/Merge/Loop/Wait/Filter), cryptographic hashing/encoding, HTTP REST requests, AI model completions (Gemini, Ollama, OpenAI-compatible), and local device hardware controls (Vibration, Text-to-Speech, Notifications, Clipboard, Battery, Network).
-* **Pure Local Execution:** Flows run via Android `WorkManager`, Foreground Services, and `AlarmManager`.
+* **Rich Trigger System:** Manual taps, Cron schedules, webhooks, SMS, notification listener, battery state, Share Sheet, geofence, Bluetooth, Wi-Fi, headset and boot events.
+* **84 Original Built-in Steps:** Logic, transforms, AI, device hardware, SaaS/protocol connectors, structured formats, binary attachments, token tools and local table state.
+* **Pure Local Execution:** Flows run via Android `WorkManager`, Foreground Services, receivers and `AlarmManager`.
 * **Zero External Dependencies:** Self-contained, fair, independent, and designed strictly for mobile thumbs.
 
 ---
@@ -27,50 +27,51 @@ The app includes:
 KaivoFlow/
 ├── app/                  # Main Android Application, Application class, MainActivity, Navigation
 ├── core/
-│   ├── model/            # Pure Kotlin data classes (Flow, StepNode, StreamEdge, FlowData, RunRecord)
-│   ├── engine/           # FlowRunner execution engine, DAG topological sort, lifecycle events
-│   ├── expressions/      # Sandboxed Expression Evaluator (supports {{ $json.field }}, {{ $now }}, math)
-│   ├── nodes/            # 38+ StepExecutors & NodeCatalog registry (Sparks, Transforms, Logic, SaaS, Device, AI)
-│   ├── network/          # Ktor/OkHttp network gateway for HTTP, Webhooks, and AI calls
-│   ├── data/             # Room Database, DAOs, Repositories, JSON Codecs, Native .structure import/export
-│   ├── design/           # Theme, Colors, Typography, Jewel Cards, Canvas tokens
-│   └── work/             # WorkManager workers (FlowRunWorker), FlowScheduler, BootReceiver, AndroidDeviceGateway
+│   ├── model/            # Pure Kotlin data classes (Flow, StepNode, StreamEdge, FlowData, BinaryDataRef, RunRecord)
+│   ├── engine/           # FlowRunner, DAG validation, lifecycle events, OAuth2TokenManager
+│   ├── expressions/      # Sandboxed Expression Evaluator ({{ $json.field }}, {{ $now }}, math)
+│   ├── nodes/            # 84 StepExecutors, bounded pure-JVM parsers/formatters, NodeCatalog
+│   ├── network/          # Ktor/OkHttp gateway for HTTP, binary transport, webhooks, AI calls
+│   ├── data/             # Room Database, DAOs, Repositories, JSON codecs, .structure & .kaivoflow bundles
+│   ├── design/           # Theme, colors, typography, shared components, Canvas tokens
+│   └── work/             # WorkManager workers, FlowScheduler, event/boot receivers, AndroidDeviceGateway
 └── feature/
-    ├── canvas/           # Visual canvas editor, Stream bezier connections, Step Inspector sheet
-    ├── flows/            # Flow list screen, Flow cards, Run history, Import/Export UI
+    ├── canvas/           # Touch-first canvas editor, per-port bezier Streams, Step Inspector
+    ├── flows/            # Flow list, Run history, dual-format import/export UI
     ├── permissions/      # Android permission center (SMS, Notification Listener, Exact Alarms)
-    └── settings/         # App settings, Privacy Center, Credential Vault UI
+    └── settings/         # App settings, Privacy Center, Credential Vault + connected accounts
 ```
 
 ---
 
-## 3. What Has Already Been Fixed & Verified
+## 3. Work Authored in the Cloud Session
 
-The local engineering session resolved all build blockers, completed extensive unit tests, and verified physical device execution:
+### Foundation already in the branch
+1. **Pinned toolchain:** AGP `8.3.2`, Kotlin `2.0.21`, KSP `2.0.21-1.0.28`, Compose BOM `2024.10.01`, `jvmToolchain(21)`, `compileSdk = 34`.
+2. **P0 trigger reliability:** Manual/scheduled Sparks emit real payloads; recurring work re-enqueues itself; `BootReceiver` handles boot, package replacement and time changes; `EventTriggerMatcher` enforces fail-closed filters.
+3. **First-class binary data:** `BinaryDataRef` carries URI, MIME, file name, size and checksum. `FlowData.binary` is preserved by a wrapped/legacy JSON codec. HTTP supports bounded binary downloads, base64 JSON bodies and hand-built multipart uploads. `DeviceGateway` stores/loads binary attachments with a 25 MB cap.
+4. **Native full backup:** `.kaivoflow` (`kaivoflow.flow` v1) validates the graph, redacts declared secrets and secret-shaped values, remaps IDs, strips binary frozen output, disables imported Sparks and rebinds credentials on import. The dual-format UI still supports `.structure` skeleton sharing.
+5. **Mobile-native Sparks:** Geofence, Bluetooth, Wi-Fi, headset and boot triggers with OS broadcast/scheduler wiring and fail-closed event matching.
 
-1. **Build Toolchain Alignment:**
-   * Pinned Gradle Version Catalog (`gradle/libs.versions.toml`) to stable versions: AGP `8.3.2`, Kotlin `2.0.21`, KSP `2.0.21-1.0.28`, Compose BOM `2024.10.01`.
-   * Set `jvmToolchain(21)` and `compileSdk = 34`.
-2. **Trigger Execution Engine Fix (P0):**
-   * Fixed `FlowRunner.kt` and `TriggerNodes.kt`. Previously, manual and scheduled triggers emitted empty lists, causing `executeStep()` to skip all subsequent action steps. Triggers now emit a rich initial payload containing timestamp, executionId, and trigger metadata.
-3. **Auto-Rescheduling Loop (P0):**
-   * In `FlowRunWorker.kt`, recurring schedules (daily, weekly, monthly) now calculate the next occurrence and enqueue the subsequent work request upon completion.
-   * `BootReceiver.kt` now handles `ACTION_BOOT_COMPLETED`, `ACTION_MY_PACKAGE_REPLACED`, `ACTION_TIMEZONE_CHANGED`, and `ACTION_TIME_CHANGED`.
-4. **Event Filter Validation:**
-   * `EventTriggerMatcher.kt` enforces fine-grained filtering for incoming SMS (sender pattern, body contents), Notifications (package allowlist, title/text filters, ongoing filter), and Battery level thresholds.
-5. **New Developer-Grade Nodes Added:**
-   * `transform.crypto`: SHA-256, MD5, SHA-1, HMAC-SHA256, Base64 Encode/Decode, UUID generation.
-   * `device.battery_status`: Real-time battery percentage, charging state, health, and temperature query.
-   * `device.network_status`: Real-time connectivity check (WiFi / Cellular / Offline) and metered status.
+### Latest cloud-authored additions
+6. **36 original Steps:** math/text/stats/split/url, CSV/XML/HTML/Markdown/iCal, binary tools/upload, sort/limit/compare/table/run-info/noop/chart/random, JWT/TOTP/PDF text, RSS/GraphQL/WebDAV/TCP, and clipboard/toast/share/torch/volume/location/Wi-Fi/contact/calendar device tools. A strict pure-JVM `MiniJson` parser backs protocol/format nodes with size and depth caps.
+7. **Connected accounts:** `OAuth2TokenManager` supports per-credential mutexes, 60-second expiry skew, `refresh_token` and `client_credentials` grants, Basic/body auth styles, rotated-token persistence and typed/JSON-text responses. `RoomOAuth2TokenStore` encrypts rotated fields through `CryptoBox`; Hilt provides the manager and injects it into `EncryptedCredentialRepository`. HTTP/AI/SaaS Steps prefer `accessToken` and fall back to `apiKey`.
+8. **Canvas gestures:** Declared output ports are individually draggable 48 dp targets; a dashed bezier preview snaps to input ports; success haptics fire only when a Stream is actually added; the Step picker chains from the selected output port; `connectStream` rejects cycles.
+9. **Canvas coordinate contract:** A single `pixelScale` converts dp↔px for card heights, port centres, bezier lift, visible rect, fit-to-screen, minimap jumps, graphics layers and drag deltas. `worldDelta = screenDelta.toDp() / zoomScale`.
+10. **Mobile polish:** Status/navigation/IME insets on Flow List, Run History and Credentials; 48 dp touch targets on pills, segmented controls, back button and ports.
+
+### JVM tests authored (not executed here)
+`ExtendedNodeTest.kt`, `OAuth2TokenManagerTest.kt`, `MobileTriggerTest.kt`, `NativeFlowBundleTest.kt`, `CanvasGeometryTest.kt`. Helper scripts exist for pure-JVM execution where a Kotlin toolchain is available:
+`scripts/run-core-reliability-tests.sh`, `scripts/run-transfer-tests.sh`, `scripts/run-canvas-tests.sh`.
 
 ---
 
-## 4. How to Build & Test in the Cloud IDE
+## 4. How to Build & Test Locally
 
 ### Prerequisites:
 * **JDK:** Java 21 or Java 17.
-* **Android SDK:** Platforms 34 or 35 installed with `build-tools;34.0.0`.
-* **Gradle:** 8.5+ (or use installed system Gradle).
+* **Android SDK:** Platforms 34 or 35 with `build-tools;34.0.0`.
+* **Gradle:** 8.5+.
 
 ### Commands:
 ```bash
@@ -78,9 +79,7 @@ The local engineering session resolved all build blockers, completed extensive u
 echo "sdk.dir=/path/to/android-sdk" > local.properties
 
 # 2. Run unit tests across modules
-gradle :core:nodes:test
-gradle :core:model:test
-gradle :core:data:test
+gradle :core:nodes:test :core:engine:test :core:data:test
 
 # 3. Assemble debug APK
 gradle :app:assembleDebug
@@ -89,35 +88,27 @@ gradle :app:assembleDebug
 adb install -r app/build/outputs/apk/debug/app-debug.apk
 ```
 
+Resolve compiler diagnostics locally first; report exact errors to the cloud agent rather than reverting whole features. Important local checks: serialization imports, `ParamType.Secret`, new `DeviceGateway` methods, Hilt providers, Compose gesture imports, `rememberFitToScreen` call sites, Android 12+ `PendingIntent.FLAG_MUTABLE`, exported receiver security and background-location limits.
+
 ---
 
-## 5. Priority Roadmap for Cloud IDE Arena AI
+## 5. NEEDS DEVICE VERIFICATION
 
-When continuing development on this repository, focus on the following high-value architectural improvements:
+See the 15-step table in [HANDOFF.md](HANDOFF.md). Highest-priority checks:
+1. `assembleDebug` and all five new JVM test suites.
+2. Native `.kaivoflow` export → import between two installs, with a credential re-bind preview.
+3. Binary download → ZIP/gzip → multipart upload and a real `content://` document.
+4. Refreshed connected-account token used by HTTP, Sheets and AI Steps.
+5. Per-output port drag, branch chaining, cycle rejection and haptics at 0.35x/2x zoom.
+6. Real geofence/Bluetooth/Wi-Fi/headset/boot broadcasts plus runtime permissions.
+7. 1.3x/2.0x font-scale screenshots of every screen.
 
-### Priority 1: First-Class Binary Data & Android SAF Integration
-* **Current state:** `FlowData` carries `json: Map<String, Any?>`.
-* **Target:** Add `binary: Map<String, BinaryItem>` to `FlowData` in `core:model`:
-  ```kotlin
-  data class BinaryItem(
-      val uri: String,      // Android content:// URI or internal file path
-      val mimeType: String, // e.g. "image/png", "application/pdf"
-      val fileName: String,
-      val sizeBytes: Long
-  )
-  ```
-* Wire `saas.http` to support binary downloads (saving to SAF) and multipart form-data uploads.
-* Expand `device.file` to pick documents via Android Storage Access Framework (`ActivityResultContracts.OpenDocument`).
+---
 
-### Priority 2: Canvas Stream Drag & Drop Ergonomics
-* Enhance touch-based stream connecting in `CanvasScreen.kt`:
-  * Allow dragging from node output port circle directly onto an input port circle.
-  * Provide haptic feedback (`HapticFeedbackType.LongPress`) on successful link connection.
+## 6. Next Development Milestones
 
-### Priority 3: Native Flow Export/Import with Parameter Preservation
-* `FlowStructureBundle.kt` currently strips all step parameters for skeleton sharing.
-* Add a full Native Flow export (`.kaivoflow` bundle) that preserves non-sensitive parameters (URLs, condition rules, prompts, templates) while redacting credentials/API keys.
-* On import, prompt the user with a Credential Re-bind sheet if any step requires an API key.
-
-### Priority 4: OAuth2 Authorization Code Token Vault
-* Expand `core:network` / `core:data` with a lightweight in-app Custom Tabs receiver for OAuth2 services (e.g. Google Drive, Slack, Notion) with automatic refresh token rotation stored securely in Android `EncryptedSharedPreferences`.
+* Add a Storage Access Framework document-picker UI for binary attachment selection.
+* Add an OAuth2 authorization-code Custom Tabs receiver on top of the existing refresh-token manager.
+* Add undo/redo history to the Canvas ViewModel using the existing immutable `Flow` model.
+* Add per-node fixture snapshots and a visual run debugger for skipped/retried branches.
+* Add exported-receiver permission hardening tests and an automated Compose screenshot suite.

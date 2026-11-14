@@ -22,7 +22,8 @@
 ## 2. Canvas Performance Contract
 * **World Coordinates:** Step positions `(x, y)` live strictly in Canvas (World) coordinates.
 * **Single Transform Layer:** Pan and zoom are rendered on ONE `graphicsLayer` applying `translationX/Y` and `scaleX/Y`. Never recompose cards during pan or zoom.
-* **Drag Math:** When dragging a node or port, convert screen delta to world delta: `worldDelta = screenDelta / zoomScale`.
+* **Drag Math:** StepLayout is in world dp; screen pixels are converted once with `pixelScale`. Dragging a card or port uses `worldDelta = screenDelta.toDp() / zoomScale`.
+* **Port Gestures:** Every declared output port is a 48 dp draggable target. A drag starts a dashed bezier Stream preview, snaps to the nearest input port, and fires a success haptic only after the Stream is actually added.
 * **Culling:** Only compose and render cards that intersect the current viewport + 120 dp buffer.
 
 ---

@@ -22,9 +22,9 @@ KaivoFlow/
 │   ├── model/         # Value classes: Flow, StepNode, StreamEdge, FlowData, RunRecord, ScheduleMath
 │   ├── engine/        # Topological DAG runner (FlowRunner), StepContext, DAG validation, events
 │   ├── expressions/   # Sandboxed evaluation: {{ $json.field }}, {{ $now }}, math, string helpers
-│   ├── nodes/         # 38+ StepExecutors & NodeCatalog registry (Sparks, Transforms, Logic, Device, AI, SaaS)
+│   ├── nodes/         # 84 StepExecutors, bounded pure-JVM parsers/formatters & NodeCatalog registry
 │   ├── network/       # Ktor/OkHttp gateway for HTTP Request, Webhooks, and AI APIs
-│   ├── data/          # Room DB, DAOs, FlowRepository, JSON codec, structure import/export
+│   ├── data/          # Room DB, DAOs, FlowRepository, JSON codec, .structure & .kaivoflow bundles, encrypted token store
 │   ├── design/        # Design tokens, typography, Jewel Cards, Canvas layout math
 │   └── work/          # WorkManager workers (FlowRunWorker), FlowScheduler, BootReceiver, AndroidDeviceGateway
 ├── feature/
@@ -47,8 +47,8 @@ Flow ── steps: ImmutableList<StepNode>
 ```
 
 * **`Flow` is an Immutable Value:** Editing any node, property, or link produces a new `Flow`. Nothing is mutated in place. This guarantees trivial undo/redo, deterministic canvas diffing, debounced autosave, and safe Room database persistence.
-* **Dynamic Parameters:** `StepNode.params` is a typed `Map<String, Any?>` validated against `NodeSpec.params` (`ParamSpec`). This eliminates the need for 38+ separate database migration tables and allows declarative UI generation in the Step Inspector.
-* **Items Model:** Data flows as `List<FlowData>`, where each `FlowData(val json: Map<String, Any?>)` represents an individual payload item passing through output ports to downstream steps.
+* **Dynamic Parameters:** `StepNode.params` is a typed `Map<String, Any?>` validated against `NodeSpec.params` (`ParamSpec`). This eliminates the need for 84 separate database migration tables and allows declarative UI generation in the Step Inspector. Secret params are read raw and are never expression-expanded.
+* **Items Model:** Data flows as `List<FlowData>`, where each `FlowData(val json: Map<String, Any?>, val binary: Map<String, BinaryDataRef>)` represents one payload item passing through output ports to downstream steps. A `BinaryDataRef` records internal URI, MIME type, file name, byte size and SHA-256. The codec supports both wrapped and legacy JSON shapes and caps binary payloads at 25 MB.
 
 ---
 
@@ -79,14 +79,15 @@ Step parameters can interpolate dynamic variables using `{{ expression }}`:
 
 ---
 
-## 6. Built-in Step Catalog (38+ Nodes)
+## 6. Built-in Step Catalog (84 Nodes)
 
-* **Sparks (Triggers):** `trigger.manual`, `trigger.schedule`, `trigger.webhook`, `trigger.notification`, `trigger.sms`, `trigger.share`, `trigger.battery`.
-* **Logic:** `logic.if` (2-port boolean split), `logic.switch` (5-port value router), `logic.merge`, `logic.filter`, `logic.dedupe`, `logic.loop` (batch splitter), `logic.wait`, `logic.stop`, `logic.onError`.
-* **Transformations:** `transform.set` (visual field mapper), `transform.fields` (rename/delete), `transform.json` (parse/stringify), `transform.template` (text templating), `transform.date` (arithmetic & formatting), `transform.aggregate` (group & sum), `transform.code` (JavaScript execution), `transform.crypto` (SHA-256, MD5, SHA-1, HMAC-SHA256, Base64 encode/decode, UUID generation).
-* **AI & Machine Learning:** `ai.chat` (Ask AI), `ai.extract` (structured data extraction), `ai.classify` (text categorization). Compatible with Google Gemini, local Ollama, and OpenAI-compatible endpoints with structured JSON schemas.
-* **Device Hardware:** `device.notify` (status bar notification), `device.sms` (send text), `device.clipboard`, `device.open` (URL/App launcher), `device.speak` (Text-to-Speech), `device.vibrate` (haptic patterns), `device.file` (local state persistence), `device.battery_status` (battery level & temperature), `device.network_status` (Wi-Fi, cellular, metered status).
-* **SaaS Connectors:** `saas.http` (Universal REST client), Google Sheets, Notion, Telegram, Slack, Discord, Weather.
+* **Sparks (12):** Manual, schedule, webhook, notification, SMS, battery, share, geofence, Bluetooth, Wi-Fi, headset and boot. Device Sparks use strict, fail-closed filters and OS broadcast/scheduler wiring.
+* **Logic (15):** Original `if`, `switch`, `merge`, `filter`, `dedupe`, `loop`, `wait`, `stop` and `onError`, plus `sort`, `limit`, `compare`, `table`, `run_info` and `noop`.
+* **Transformations (25):** Original `set`, `fields`, `json`, `template`, `date`, `aggregate`, `code` and `crypto`, plus `math`, `text`, `stats`, `split`, `url`, `csv`, `xml`, `html`, `markdown`, `ical`, `binary`, `binary_upload`, `chart`, `random`, `token`, `totp` and `pdf`.
+* **AI & Machine Learning (3):** `ai.chat`, `ai.extract`, `ai.classify`. Compatible with Google Gemini, local Ollama, and OpenAI-compatible endpoints with structured JSON schemas.
+* **Device Hardware (18):** Notification, SMS, clipboard read/write, app/URL launcher, Text-to-Speech, haptics, file persistence, battery/network status, toast, share sheet, torch, volume, location, Wi-Fi info, contact lookup and calendar events.
+* **SaaS / Protocols (11):** Universal REST client, Google Sheets, Notion, Telegram, Slack, Discord, Weather, RSS/Atom, GraphQL, WebDAV-style file requests and bounded TCP/TLS messages.
+* Bounded pure-JVM parsers/formatters (`MiniJson`, CSV, XML, HTML, Markdown, iCal, JWT, TOTP and best-effort PDF text) have explicit size/depth caps and return typed errors. See `PARITY.md` for the complete matrix.
 
 ---
 
@@ -104,6 +105,8 @@ Step parameters can interpolate dynamic variables using `{{ expression }}`:
   * **Guided Path (Default):** Centered rows grouped by topological distance from the trigger; reads top-to-bottom like a clear document.
   * **Freeform Atelier:** Spatial canvas with snap-to-grid (16 dp), pinch-to-zoom (0.35x–2.0x), and glass minimap.
 * **Performance Contract:** Single hardware-accelerated Compose layer; stream lines rendered via cached cubic Beziers; off-screen nodes culled outside viewport buffer. Zero per-frame allocations during drag and pinch gestures.
+* **Touch-Linking:** `NodeSpec.outputs` declares the number of output ports; `CanvasGeometry.guidedLayout`/`freeformLayout` and `JewelStepCard` use that count. Each port is a 48 dp drag target with a dashed bezier preview and magnetic input snapping. A haptic marks a successful Stream only; empty-canvas drops chain a new Step from the chosen output port. `connectStream` rejects cycles.
+* **Coordinate Units:** StepLayout is world dp; screen pixels are converted once with `pixelScale` at card height, bezier lift, visible rect, fit, minimap and drag-delta boundaries. `worldDelta = screenDelta.toDp() / zoomScale` keeps cards, ports and paths aligned while panning and pinching.
 
 ---
 
@@ -111,4 +114,7 @@ Step parameters can interpolate dynamic variables using `{{ expression }}`:
 
 * **Zero Backend:** No KaivoFlow account, tracking, or cloud relay server.
 * **Hardware-Backed Credential Vault:** API keys and credentials are encrypted using AES-GCM via the Android Keystore and excluded from system backups.
-* **Fine-Grained Permissions:** Sensitive capabilities (SMS, Notification Listener) are encapsulated in separate modules requested only when a specific flow requires them.
+* **Portable-Flow Redaction:** `.kaivoflow` backup excludes declared secret params, secret-shaped key/value names, credential-store references and binary frozen output. Imported Sparks are disabled until the owner explicitly enables them.
+* **Connected Accounts:** `OAuth2TokenManager` refreshes tokens with per-credential mutexes and a 60-second expiry skew. Rotated `accessToken`/`refreshToken` values are encrypted by `RoomOAuth2TokenStore` through `CryptoBox`. Secret params are never expression-expanded.
+* **Fine-Grained Permissions:** Sensitive capabilities (SMS, Notification Listener, location, torch, contacts and calendar) are encapsulated in platform adapters requested only when a specific Flow requires them.
+* **Verification Boundary:** Cloud agents author pure Kotlin/Compose and static checks only. Gradle compilation, JVM tests, APK assembly, permission prompts and physical-device behaviour are local-engineer responsibilities; see `HANDOFF.md`.

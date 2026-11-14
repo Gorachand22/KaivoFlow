@@ -1,8 +1,12 @@
 # KaivoFlow — Capability & Node Parity Matrix
 
 > **Tracking node availability, mobile implementation status, and mobile-native improvements.**
+> Current `NodeCatalog`: **84 runnable executors** — 12 Sparks, 15 Logic, 25 Transform, 3 AI, 11 SaaS, 18 Device.
+> Every expanded Step is an original KaivoFlow implementation; no external node code, descriptions, icons or schemas were copied.
 
 ---
+
+## Original catalog
 
 | Category | Node ID | Title | KaivoFlow Status | Mobile Improvement over Traditional Systems |
 |---|---|---|---|---|
@@ -17,6 +21,7 @@
 | **Logic** | `logic.switch` | Switch Router | Full | 5-way value routing |
 | **Logic** | `logic.merge` | Merge | Full | Re-combines branches (append, zip, multiply, combine) |
 | **Logic** | `logic.filter` | Filter | Full | In-memory stream filtering |
+| **Logic** | `logic.dedupe` | Deduplicate | Full | Stable fingerprint-based dedupe |
 | **Logic** | `logic.loop` | Loop / Batch | Full | Item-by-item chunking for rate limits |
 | **Logic** | `logic.wait` | Wait / Delay | Full | Non-blocking coroutine sleep with optional jitter |
 | **Logic** | `logic.stop` | Stop | Full | Early termination with status reporting |
@@ -41,9 +46,79 @@
 | **Device** | `device.file` | Save to File | Full | Sandboxed app-internal file storage |
 | **Device** | `device.battery_status`| Battery Status | Full | Real-time level, charging, and temperature query |
 | **Device** | `device.network_status`| Network Status | Full | Wi-Fi, cellular, and metered connectivity query |
-| **SaaS** | `saas.http` | HTTP Request | Full | Universal REST client (GET, POST, PUT, DELETE) |
-| **SaaS** | `saas.sheets` | Google Sheets | Partial | Static Bearer token supported; OAuth2 vault pending |
+| **SaaS** | `saas.http` | HTTP Request | Full | Universal REST client (GET, POST, PUT, PATCH, DELETE) |
+| **SaaS** | `saas.sheets` | Google Sheets | Full | Static keys and refreshed connected-account access tokens |
 | **SaaS** | `saas.telegram` | Telegram Bot | Full | Native bot message dispatch |
 | **SaaS** | `saas.slack` | Slack | Full | Webhook message dispatch |
 | **SaaS** | `saas.discord` | Discord | Full | Webhook message dispatch |
 | **SaaS** | `saas.weather` | Weather | Full | Free live weather query |
+
+---
+
+## Mobile-native Sparks added
+
+| Node ID | Title | Status | Mobile advantage |
+|---|---|---|---|
+| `trigger.geofence` | Place boundary | Full | `LocationManager` proximity alerts with radius and enter/exit filtering |
+| `trigger.bluetooth` | Bluetooth device | Full | Connection/disconnection broadcasts with address and name filters |
+| `trigger.wifi` | Wi-Fi network | Full | Network-name filters, rejects unknown SSIDs, event-aware matching |
+| `trigger.headset` | Headset plug | Full | Wired headset and microphone events without a cloud listener |
+| `trigger.boot` | Phone restarted | Full | Re-arms Flows after reboot and app/time changes |
+
+All five Sparks use fail-closed matching: an event without its identifying fields never starts a Run.
+
+---
+
+## Second catalog expansion
+
+| Category | Node ID | Title | Status | Mobile advantage |
+|---|---|---|---|---|
+| Logic | `logic.sort` | Sort items | Full | Stable numeric, text and date ordering entirely on-device |
+| Logic | `logic.limit` | Limit items | Full | First/last/skip/slice/sample without extra items |
+| Logic | `logic.compare` | Compare lists | Full | Added/removed/changed/same diff with fuzzy text matching |
+| Logic | `logic.table` | Local table | Full | Private app-internal file-backed key/value rows between Runs |
+| Logic | `logic.run_info` | Run details | Full | Run id, time, mode, attempt and item count for logs |
+| Logic | `logic.noop` | Pass through | Full | Annotation/debug marker with zero mutation |
+| Transform | `transform.math` | Math | Full | 20 numeric operations with zero-division and non-finite guards |
+| Transform | `transform.text` | Text tools | Full | Case, slug, regex, split/join, URL/HTML/base64 helpers |
+| Transform | `transform.stats` | Number summary | Full | Count, sum, min, max, mean, median, variance and deviation |
+| Transform | `transform.split` | Split items | Full | Array field, text separator or whole-list batching |
+| Transform | `transform.url` | URL tools | Full | Parse or build links with encoded query parameters |
+| Transform | `transform.csv` | CSV | Full | Quoted-field reader and writer with embedded newlines |
+| Transform | `transform.xml` | XML | Full | Bounded attribute/text/child parser and serializer |
+| Transform | `transform.html` | HTML tools | Full | Readable text, links, images, titles and attribute extraction |
+| Transform | `transform.markdown` | Markdown | Full | Headings, lists, links, emphasis, code and plain-text output |
+| Transform | `transform.ical` | Calendar invite | Full | Standards-shaped `.ics` event text with escaped fields |
+| Transform | `transform.binary` | Binary tools | Full | Base64/text ↔ attachment, gzip, ZIP, SHA-256 and metadata |
+| Transform | `transform.binary_upload` | Upload a file | Full | Multipart/form-data upload with extra form fields |
+| Transform | `transform.chart` | Quick chart | Full | Bar/line/area SVG attachment with no chart SDK |
+| Transform | `transform.random` | Random value | Full | Secure UUID, number, string, pick and shuffle |
+| Transform | `transform.token` | Token tools | Full | Compact-token decode, HMAC verify and sign with exp/nbf checks |
+| Transform | `transform.totp` | One-time code | Full | Base32 secret, SHA1/256/512, 6–8 digits, clock window |
+| Transform | `transform.pdf` | PDF text | Full | Best-effort text-layer extraction and page/size metadata |
+| SaaS | `saas.rss` | Feed reader | Full | RSS/Atom feed entries as ordinary items |
+| SaaS | `saas.graphql` | GraphQL | Full | Query, variables, operation name and readable API errors |
+| SaaS | `saas.webdav` | File store request | Full | GET/PUT/PROPFIND/MKCOL/DELETE/MOVE/COPY with binary downloads |
+| SaaS | `saas.tcp` | Socket message | Full | Bounded raw TCP/TLS conversation for on-premise devices |
+| Device | `device.clipboard_read` | Read clipboard | Full | Uses the text already copied on the phone |
+| Device | `device.toast` | Quick message | Full | Short on-screen confirmation without a notification |
+| Device | `device.share` | Share sheet | Full | Hands text to another local app |
+| Device | `device.torch` | Torch | Full | Camera flash on/off/toggle with capability check |
+| Device | `device.volume` | Volume | Full | Percentage mapped to the device's real media stream range |
+| Device | `device.location` | Current location | Full | Last known coordinates with permission-aware failure text |
+| Device | `device.wifi_info` | Wi-Fi details | Full | Current SSID, signal, link speed and connection state |
+| Device | `device.contact` | Find a contact | Full | Local address-book lookup by name or number |
+| Device | `device.calendar_event` | Add calendar event | Full | Writes a reminder into the phone calendar |
+
+---
+
+## Cross-cutting platform capabilities
+
+| Capability | Status | Notes |
+|---|---|---|
+| First-class binary attachments | Full | `BinaryDataRef` with MIME, file name, size, checksum and internal URI; 25 MB cap |
+| Multipart/base64 HTTP transport | Full | Hand-built multipart body, bounded downloads, transport-error mapping |
+| Native `.kaivoflow` full backup | Full | Secret redaction, ID remap, graph validation, dual-format import UI |
+| Connected-account token refresh | Full | Encrypted vault, per-credential mutex, expiry skew, rotated refresh tokens |
+| Per-output port Stream gesture | Full | 48 dp targets, dashed bezier preview, success haptic, branch-aware chaining |
+| Density-correct canvas coordinates | Full | Single `pixelScale` at every dp↔px boundary for cards, ports, paths and drag deltas |

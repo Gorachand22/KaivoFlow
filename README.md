@@ -7,14 +7,21 @@
 
 ## What is KaivoFlow?
 
-KaivoFlow brings visual workflow automation directly to your Android device. You design **Flows** of **Steps** connected by **Streams**, and execute them on-demand or in response to real-world triggers (**Sparks**):
+KaivoFlow brings visual workflow automation directly to your Android device. You design **Flows** of **Steps** connected by **Streams**, and execute them on-demand or in response to real-world triggers (**Sparks**). The current catalog has **84 original executors**:
 
-* **Sparks (Triggers):** Manual run, Cron & recurring schedules, Local webhooks, Incoming SMS, Notification listener, Device battery status, Android Share Sheet.
-* **Logic & Flow Control:** If/Else branching, Switch routing, Merge branches, Filter items, Deduplication, For-Each batch looping, Non-blocking wait/delay, and Error handlers.
-* **Transformations & Developer Tools:** Set/Edit fields, JSON parser & stringifier, Text templating, Date arithmetic, Item aggregation, Native JavaScript code execution, and Native Cryptography (SHA-256, MD5, SHA-1, HMAC-SHA256, Base64, UUID).
-* **AI & Intelligence:** Multi-provider AI step with support for Google Gemini, local Ollama (LAN or phone-side), and OpenAI-compatible endpoints with structured JSON output.
-* **Hardware & Device Integrations:** Status bar notifications, SMS sending, System clipboard, Text-to-Speech (TTS), Haptic vibration patterns, File storage, Battery status interrogation, and Real-time network monitoring.
-* **SaaS Connectors:** Universal HTTP Request node (GET, POST, PUT, PATCH, DELETE), Google Sheets, Notion, Telegram, Slack, Discord, and Weather.
+* **Sparks:** Manual, Cron/recurring schedules, local webhooks, incoming SMS, notification listener, battery state, Share Sheet, geofence, Bluetooth, Wi-Fi, headset and phone-restarted events.
+* **Logic & Flow Control:** If/Else, Switch, Merge, Filter, Dedupe, For-Each batching, Wait, Stop, Error Handler, Sort, Limit, Compare Lists, Local Table, Run Details and Pass Through.
+* **Transformations & Developer Tools:** Set/Edit fields, JSON parse/stringify, templates, date arithmetic, aggregation, sandboxed JavaScript, cryptography, Math, Text Tools, Number Summary, Split Items, URL Tools, CSV, XML, HTML, Markdown, iCal, Binary Tools, Upload a File, Quick Chart, Random Value, Token Tools, One-Time Code and PDF Text.
+* **AI & Intelligence:** Multi-provider AI chat (Gemini, local Ollama, OpenAI-compatible endpoints), structured extraction and classification.
+* **Device & Hardware:** Notifications, SMS, clipboard read/write, deep-link launcher, Text-to-Speech, haptics, file persistence, battery/network status, toast, share sheet, torch, volume, location, Wi-Fi details, contact lookup and calendar events.
+* **SaaS / Protocols:** Universal HTTP with binary multipart and base64 transport, Google Sheets, Notion, Telegram, Slack, Discord, Weather, RSS/Atom, GraphQL, WebDAV-style file requests and bounded TCP/TLS messages.
+
+### Designed for a phone
+* **Binary-first data:** Attachments keep their MIME type, file name, byte size, checksum and internal URI alongside JSON items.
+* **Portable Flows:** `.kaivoflow` full backups preserve ordinary parameters, redact credentials, remap IDs and disable imported Sparks. The original `.structure` skeleton format remains supported.
+* **Connected accounts:** Refresh-token and client-credentials grants run locally; rotated tokens are encrypted in the existing credential vault.
+* **Touch-first canvas:** One draggable 48 dp target per declared output port, a dashed bezier preview, magnetic input snapping, success haptics, branch-aware Step chaining and density-correct pan/zoom coordinates.
+* **Private by default:** No KaivoFlow account, tracking backend or required relay server. Sensitive OS capabilities are permission-gated.
 
 ---
 
@@ -24,19 +31,21 @@ The project is structured into 13 modular Gradle components:
 
 | Module | Purpose |
 |---|---|
-| `:core:model` | Core domain models (`Flow`, `StepNode`, `StreamEdge`, `FlowData`, `RunRecord`, `ScheduleMath`). |
-| `:core:engine` | Execution engine (`FlowRunner`), topological DAG execution, port liveness, retry policies. |
-| `:core:expressions` | Sandboxed expression runtime (supports `{{ $json.field }}`, `{{ $now }}`, arithmetic, string helpers). |
-| `:core:nodes` | 38+ Built-in node executors and the single `NodeCatalog` registry. |
-| `:core:data` | Room database, DAOs, repositories, JSON serialization, and native `.structure` import/export. |
-| `:core:network` | Ktor/OkHttp network gateway for HTTP, webhook listener, and AI model communication. |
-| `:core:work` | WorkManager integration (`FlowRunWorker`), `FlowScheduler`, `BootReceiver`, `AndroidDeviceGateway`. |
-| `:core:design` | Design tokens, typography, Velvet Obsidian & Champagne Gold theme, Jewel step cards. |
-| `:feature:canvas` | Visual drag-and-drop canvas, bezier curve streams, step inspector sheet, run HUD. |
-| `:feature:flows` | Flow library screen, flow management, execution history. |
-| `:feature:permissions` | Android system permission center (Notification listener, SMS, Alarms). |
-| `:feature:settings` | App settings, Privacy Center, Encrypted Credential Vault. |
-| `:app` | Application entry point, `MainActivity`, Navigation graph, Hilt dependency injection root. |
+| `:core:model` | Immutable domain models (`Flow`, `StepNode`, `StreamEdge`, `FlowData`, `BinaryDataRef`, `RunRecord`, `ScheduleMath`). |
+| `:core:engine` | FlowRunner, DAG validation, port liveness, retries, expressions/parameters and `OAuth2TokenManager`. |
+| `:core:expressions` | Sandboxed expression runtime (`{{ $json.field }}`, `{{ $now }}`, arithmetic, string helpers). |
+| `:core:nodes` | 84 built-in Step executors, pure-JVM parsers/formatters and the single `NodeCatalog` registry. |
+| `:core:data` | Room database, DAOs, repositories, wrapped JSON codec, `.structure` and `.kaivoflow` bundles, encrypted credential/token store. |
+| `:core:network` | Ktor/OkHttp gateway for HTTP, binary transport, webhooks and AI calls. |
+| `:core:work` | WorkManager runs, `FlowScheduler`, event receivers, boot re-arming and `AndroidDeviceGateway`. |
+| `:core:design` | Design tokens, typography, Velvet Obsidian & Champagne Gold theme, shared components. |
+| `:feature:canvas` | Touch-first visual canvas, per-port Stream gestures, bezier rendering, Step Inspector and run HUD. |
+| `:feature:flows` | Flow library, execution history and dual-format import/export. |
+| `:feature:permissions` | Android permission center (Notification listener, SMS, Alarms). |
+| `:feature:settings` | App settings, Privacy Center, Encrypted Credential Vault and connected accounts. |
+| `:app` | Application entry point, `MainActivity`, Navigation graph, Hilt DI root. |
+
+The design principle is strict: decisions about *what happens* live in Android-free pure Kotlin with JVM tests; OS access lives in thin platform adapters. See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the engine blueprint and [PARITY.md](PARITY.md) for the catalog matrix.
 
 ---
 
@@ -56,15 +65,17 @@ echo "sdk.dir=/path/to/android-sdk" > local.properties
 gradle :app:assembleDebug
 
 # 3. Run unit test suites
-gradle test
+gradle :core:nodes:test :core:engine:test :core:data:test
 
 # 4. Install onto connected Android device via ADB
 adb install -r app/build/outputs/apk/debug/app-debug.apk
 ```
 
+> **Verification status:** This cloud-authoring session ran static Kotlin/XML/diff checks only. Gradle compilation, JVM tests, APK assembly and physical-device verification are intentionally left to a local engineer with the Android SDK — follow the step-by-step checklist in [HANDOFF.md](HANDOFF.md).
+
 ---
 
 ## Developer & Cloud IDE Handoff
 
-For detailed architectural notes, recent engine fixes, and next development milestones for AI agents and cloud IDEs, see:
-👉 **[DEVELOPER_HANDOFF.md](DEVELOPER_HANDOFF.md)**
+For architectural notes, verification responsibilities and the next milestones for AI agents and cloud IDEs, see:
+👉 **[DEVELOPER_HANDOFF.md](DEVELOPER_HANDOFF.md)** · **[BACKLOG.md](BACKLOG.md)**
