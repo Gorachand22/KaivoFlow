@@ -23,6 +23,9 @@ data class Flow(
     val createdAt: Long = 0L,
     val updatedAt: Long = 0L,
     val isFavorite: Boolean = false,
+    val groups: ImmutableList<FlowGroup> = persistentListOf(),
+    val notes: ImmutableList<StickyNote> = persistentListOf(),
+    val isActive: Boolean = false,
 ) {
     fun step(id: String?): StepNode? = if (id == null) null else steps.firstOrNull { it.id == id }
 
@@ -48,6 +51,7 @@ data class Flow(
     fun minusStep(stepId: String): Flow = copy(
         steps = steps.filterNot { it.id == stepId }.toImmutableList(),
         streams = streams.filterNot { it.fromStepId == stepId || it.toStepId == stepId }.toImmutableList(),
+        groups = groups.map { g -> g.copy(stepIds = g.stepIds.filterNot { it == stepId }.toImmutableList()) }.toImmutableList(),
         settings = if (settings.errorStepId == stepId) settings.copy(errorStepId = null) else settings,
         updatedAt = System.currentTimeMillis(),
     )
@@ -65,7 +69,64 @@ data class Flow(
         streams = streams.filterNot { it.id == streamId }.toImmutableList(),
         updatedAt = System.currentTimeMillis(),
     )
+
+    fun withGroup(group: FlowGroup): Flow = copy(
+        groups = groups.map { if (it.id == group.id) group else it }.toImmutableList(),
+        updatedAt = System.currentTimeMillis(),
+    )
+
+    fun plusGroup(group: FlowGroup): Flow = copy(
+        groups = (groups + group).toImmutableList(),
+        updatedAt = System.currentTimeMillis(),
+    )
+
+    fun minusGroup(groupId: String): Flow = copy(
+        groups = groups.filterNot { it.id == groupId }.toImmutableList(),
+        updatedAt = System.currentTimeMillis(),
+    )
+
+    fun withNote(note: StickyNote): Flow = copy(
+        notes = notes.map { if (it.id == note.id) note else it }.toImmutableList(),
+        updatedAt = System.currentTimeMillis(),
+    )
+
+    fun plusNote(note: StickyNote): Flow = copy(
+        notes = (notes + note).toImmutableList(),
+        updatedAt = System.currentTimeMillis(),
+    )
+
+    fun minusNote(noteId: String): Flow = copy(
+        notes = notes.filterNot { it.id == noteId }.toImmutableList(),
+        updatedAt = System.currentTimeMillis(),
+    )
 }
+
+/**
+ * Visual bounding container grouping multiple related Steps on Canvas.
+ * [color] is a jewel tone name: "amber", "amethyst", "emerald", "sapphire", "rose", "gold".
+ */
+data class FlowGroup(
+    val id: String,
+    val name: String,
+    val stepIds: ImmutableList<String> = persistentListOf(),
+    val color: String = "amber",
+    val description: String = "",
+)
+
+/**
+ * Freeform canvas documentation note placed at world coordinates [x, y].
+ * [color] is a jewel tone name: "amber", "amethyst", "emerald", "sapphire", "rose", "gold".
+ */
+data class StickyNote(
+    val id: String,
+    val title: String = "Note",
+    val content: String = "",
+    val x: Float = 0f,
+    val y: Float = 0f,
+    val width: Float = 240f,
+    val height: Float = 140f,
+    val color: String = "gold",
+)
 
 /**
  * A Step ("node"). [type] refers to a [NodeSpec.id] in the node catalog.

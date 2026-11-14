@@ -3,11 +3,13 @@ package com.kaivoflow.feature.canvas
 import androidx.compose.runtime.Immutable
 import com.kaivoflow.core.engine.ValidationReport
 import com.kaivoflow.core.model.FlowData
+import com.kaivoflow.core.model.FlowGroup
 import com.kaivoflow.core.model.LogLevel
 import com.kaivoflow.core.model.NodeSpec
 import com.kaivoflow.core.model.RunStatus
 import com.kaivoflow.core.model.StepCategory
 import com.kaivoflow.core.model.StepRunStatus
+import com.kaivoflow.core.model.StickyNote
 import com.kaivoflow.feature.canvas.layout.LayoutMode
 import kotlinx.collections.immutable.ImmutableList
 import kotlinx.collections.immutable.ImmutableMap
@@ -120,6 +122,14 @@ data class CanvasUiState(
     val showPromptCard: Boolean = false,
     val isPromptGenerating: Boolean = false,
     val vars: ImmutableMap<String, Any?> = persistentMapOf(),
+    val groups: ImmutableList<FlowGroup> = persistentListOf(),
+    val notes: ImmutableList<StickyNote> = persistentListOf(),
+    val isActive: Boolean = false,
+    val editingNote: StickyNote? = null,
+    val editingGroup: FlowGroup? = null,
+    val showInfoDialog: Boolean = false,
+    val showRenameDialog: Boolean = false,
+    val showCreateGroupDialog: Boolean = false,
 ) {
     val selectedStep: StepNodeUiModel? get() = steps.firstOrNull { it.id == selectedStepId }
     val canRun: Boolean get() = validation.isValid && !run.isRunning

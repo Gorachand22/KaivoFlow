@@ -38,7 +38,8 @@ object RepositoryModule {
     // Repository constructors use a default IO dispatcher; construct them explicitly so Hilt
     // does not need to inject an unqualified CoroutineDispatcher.
     @Provides @Singleton
-    fun flowRepository(dao: FlowDao): FlowRepository = RoomFlowRepository(dao)
+    fun flowRepository(dao: FlowDao, @ApplicationContext context: Context): FlowRepository =
+        RoomFlowRepository(dao, storageDir = context.filesDir)
 
     @Provides @Singleton
     fun runRepository(dao: RunDao): RunRepository = RoomRunRepository(dao)

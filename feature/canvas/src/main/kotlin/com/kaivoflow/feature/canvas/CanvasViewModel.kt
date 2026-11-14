@@ -11,6 +11,7 @@ import com.kaivoflow.core.engine.ValidationReport
 import com.kaivoflow.core.engine.Values
 import com.kaivoflow.core.model.Flow
 import com.kaivoflow.core.model.FlowData
+import com.kaivoflow.core.model.FlowGroup
 import com.kaivoflow.core.model.LogLevel
 import com.kaivoflow.core.model.NodeKind
 import com.kaivoflow.core.model.NodeSpec
@@ -19,6 +20,7 @@ import com.kaivoflow.core.model.RunStatus
 import com.kaivoflow.core.model.RunTrigger
 import com.kaivoflow.core.model.StepNode
 import com.kaivoflow.core.model.StepRunStatus
+import com.kaivoflow.core.model.StickyNote
 import com.kaivoflow.core.model.StreamEdge
 import com.kaivoflow.core.nodes.NodeCatalog
 import com.kaivoflow.core.nodes.TriggerSpecs
@@ -494,12 +496,142 @@ class CanvasViewModel @Inject constructor(
 
     private fun scheduleSave() {
         pendingSave?.cancel()
+        _state.update { it.copy(isSaving = true) }
         pendingSave = viewModelScope.launch {
-            kotlinx.coroutines.delay(350)
+            kotlinx.coroutines.delay(450)
             flowRepository.save(flow)
-            runCatching { scheduler.schedule(flow) }
+            if (flow.isActive) {
+                runCatching { scheduler.schedule(flow) }
+            } else {
+                runCatching { scheduler.cancel(flow.id) }
+            }
             _state.update { it.copy(lastSavedAt = System.currentTimeMillis(), isSaving = false) }
         }
+    }
+
+    fun toggleFlowActive() {
+        val next = !flow.isActive
+        flow = flow.copy(isActive = next)
+        commit()
+        toast(if (next) "Flow activated for 24/7 background execution" else "Flow deactivated")
+    }
+
+    fun openRenameDialog() {
+        _state.update { it.copy(showRenameDialog = true) }
+    }
+
+    fun dismissRenameDialog() {
+        _state.update { it.copy(showRenameDialog = false) }
+    }
+
+    fun openInfoDialog() {
+        _state.update { it.copy(showInfoDialog = true) }
+    }
+
+    fun dismissInfoDialog() {
+        _state.update { it.copy(showInfoDialog = false) }
+    }
+
+    fun openCreateGroupDialog() {
+        _state.update { it.copy(showCreateGroupDialog = true) }
+    }
+
+    fun dismissCreateGroupDialog() {
+        _state.update { it.copy(showCreateGroupDialog = false) }
+    }
+
+    fun editNote(note: StickyNote?) {
+        _state.update { it.copy(editingNote = note) }
+    }
+
+    fun editGroup(group: FlowGroup?) {
+        _state.update { it.copy(editingGroup = group) }
+    }
+
+    fun addStickyNote(x: Float = 60f, y: Float = 60f) {
+        val note = StickyNote(
+            id = UUID.randomUUID().toString(),
+            title = "Note",
+            content = "Tap to add workflow notes or documentation…",
+            x = x,
+            y = y,
+            color = "gold",
+        )
+        flow = flow.plusNote(note)
+        commit()
+        editNote(note)
+    }
+
+    fun saveStickyNote(note: StickyNote) {
+        flow = flow.withNote(note)
+        editNote(null)
+        commit()
+    }
+
+    fun deleteStickyNote(noteId: String) {
+        flow = flow.minusNote(noteId)
+        editNote(null)
+        commit()
+        toast("Note deleted")
+    }
+
+    fun moveStickyNote(noteId: String, x: Float, y: Float) {
+        val note = flow.notes.firstOrNull { it.id == noteId } ?: return
+        flow = flow.withNote(note.copy(x = CanvasGeometry.snap(x), y = CanvasGeometry.snap(y)))
+        scheduleSave()
+        syncState()
+    }
+
+    fun createGroup(name: String, color: String = "amber", stepIds: List<String> = emptyList()) {
+        val finalStepIds = if (stepIds.isNotEmpty()) {
+            stepIds
+        } else if (_state.value.selectedStepId != null) {
+            listOf(_state.value.selectedStepId!!)
+        } else {
+            flow.steps.map { it.id }.take(2)
+        }
+        val group = FlowGroup(
+            id = UUID.randomUUID().toString(),
+            name = name.ifBlank { "Group" },
+            color = color,
+            stepIds = finalStepIds.toImmutableList(),
+        )
+        flow = flow.plusGroup(group)
+        dismissCreateGroupDialog()
+        commit()
+        toast("Group \"${group.name}\" created")
+    }
+
+    fun saveGroup(group: FlowGroup) {
+        flow = flow.withGroup(group)
+        editGroup(null)
+        commit()
+    }
+
+    fun deleteGroup(groupId: String) {
+        flow = flow.minusGroup(groupId)
+        editGroup(null)
+        commit()
+        toast("Group removed (steps preserved)")
+    }
+
+    fun moveGroup(groupId: String, deltaX: Float, deltaY: Float) {
+        val group = flow.groups.firstOrNull { it.id == groupId } ?: return
+        if (group.stepIds.isEmpty()) return
+        val dx = CanvasGeometry.snap(deltaX)
+        val dy = CanvasGeometry.snap(deltaY)
+        flow = flow.copy(
+            steps = flow.steps.map { step ->
+                if (step.id in group.stepIds) {
+                    step.copy(x = step.x + dx, y = step.y + dy)
+                } else {
+                    step
+                }
+            }.toImmutableList(),
+            updatedAt = System.currentTimeMillis(),
+        )
+        scheduleSave()
+        syncState()
     }
 
     private fun refreshValidation(): ValidationReport {
@@ -555,12 +687,14 @@ class CanvasViewModel @Inject constructor(
                 flowName = flow.name,
                 steps = steps,
                 streams = streams,
+                groups = flow.groups,
+                notes = flow.notes,
+                isActive = flow.isActive,
                 vars = flow.vars,
                 positions = flow.steps.associate { it.id to (it.x to it.y) }.toImmutableMap(),
                 paramCache = flow.steps.associate { step ->
                     step.id to step.params.toImmutableMap()
                 }.toImmutableMap(),
-                isSaving = false,
             )
         }
     }

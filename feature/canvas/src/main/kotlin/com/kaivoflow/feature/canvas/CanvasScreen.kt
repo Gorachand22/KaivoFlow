@@ -14,6 +14,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
@@ -59,6 +60,8 @@ import com.kaivoflow.feature.canvas.layout.LayoutMode
 import com.kaivoflow.feature.canvas.layout.Point
 import com.kaivoflow.feature.canvas.layout.StepLayout
 import com.kaivoflow.feature.canvas.render.CanvasAura
+import com.kaivoflow.feature.canvas.render.CanvasGroupFrame
+import com.kaivoflow.feature.canvas.render.CanvasStickyNote
 import com.kaivoflow.feature.canvas.render.JewelStepCard
 import com.kaivoflow.feature.canvas.render.StreamCanvasLayer
 import com.kaivoflow.feature.canvas.render.StreamDragPreview
@@ -176,6 +179,34 @@ fun CanvasScreen(
                 pixelScale = pixelScale,
                 modifier = Modifier.fillMaxSize(),
             )
+
+            // Visual Step Group frames (underneath step cards)
+            state.groups.forEach { group ->
+                val memberLayouts = group.stepIds.mapNotNull { layouts[it] }
+                CanvasGroupFrame(
+                    group = group,
+                    memberLayouts = memberLayouts,
+                    pixelScale = pixelScale,
+                    density = density,
+                    zoom = transform.zoom,
+                    onEdit = { viewModel.editGroup(group) },
+                    onUngroup = { viewModel.deleteGroup(group.id) },
+                    onDrag = { dx, dy -> viewModel.moveGroup(group.id, dx, dy) },
+                )
+            }
+
+            // Freeform canvas sticky notes
+            state.notes.forEach { note ->
+                CanvasStickyNote(
+                    note = note,
+                    pixelScale = pixelScale,
+                    density = density,
+                    zoom = transform.zoom,
+                    onEdit = { viewModel.editNote(note) },
+                    onDelete = { viewModel.deleteStickyNote(note.id) },
+                    onDrag = { dx, dy -> viewModel.moveStickyNote(note.id, note.x + dx, note.y + dy) },
+                )
+            }
 
             // Step cards: only the ones inside the viewport are composed.
             val visible = transform.visibleRect(
@@ -302,59 +333,184 @@ fun CanvasScreen(
             Modifier
                 .fillMaxWidth()
                 .statusBarsPadding()
-                .padding(horizontal = 12.dp, vertical = 8.dp),
+                .padding(horizontal = 10.dp, vertical = 6.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            GlassPill(Modifier.padding(end = 8.dp)) {
+            // 1. Back button
+            GlassPill(Modifier.padding(end = 6.dp)) {
                 Box(
                     Modifier
-                        .size(48.dp)
+                        .size(42.dp)
                         .clip(CircleShape)
                         .semantics { contentDescription = "Back to Flows" },
+                    contentAlignment = Alignment.Center,
                 ) {
                     androidx.compose.material3.IconButton(onClick = onBack) {
-                        Icon(KaivoIcons.icon("back"), "Back to Flows", tint = colors.inkPrimary, modifier = Modifier.size(24.dp))
+                        Icon(KaivoIcons.icon("back"), "Back to Flows", tint = colors.inkPrimary, modifier = Modifier.size(20.dp))
                     }
                 }
             }
+
+            // 2. Flow Title & Status (Click title to rename, click info icon for details)
             GlassPill(Modifier.weight(1f)) {
-                Column {
-                    Text(
-                        state.flowName.ifBlank { "Flow" },
-                        style = androidx.compose.material3.MaterialTheme.typography.titleMedium,
-                        color = colors.inkPrimary,
-                        maxLines = 1,
-                    )
-                    Text(
-                        text = when {
-                            state.validation.blocking.size > 0 -> "${state.validation.blocking.size} things to fix"
-                            state.validation.warnings.isNotEmpty() -> "Ready, with ${state.validation.warnings.size} tips"
-                            else -> "${state.steps.size} Steps • ready"
-                        },
-                        style = androidx.compose.material3.MaterialTheme.typography.labelMedium,
-                        color = if (state.validation.blocking.isEmpty()) colors.inkSecondary else colors.statusWarning,
-                    )
-                }
-            }
-            Spacer(Modifier.size(8.dp))
-            GlassPill {
-                Row(verticalAlignment = Alignment.CenterVertically) {
+                Row(
+                    Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 10.dp, vertical = 6.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                ) {
+                    Column(
+                        Modifier
+                            .weight(1f)
+                            .clickable(onClick = viewModel::openRenameDialog),
+                    ) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text(
+                                state.flowName.ifBlank { "Flow" },
+                                style = androidx.compose.material3.MaterialTheme.typography.titleMedium,
+                                color = colors.inkPrimary,
+                                maxLines = 1,
+                                overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+                            )
+                            Spacer(Modifier.width(6.dp))
+                            Icon(
+                                KaivoIcons.icon("edit"),
+                                contentDescription = "Rename Flow",
+                                tint = colors.inkMuted,
+                                modifier = Modifier.size(13.dp),
+                            )
+                        }
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            // Auto-Save Status Pill
+                            if (state.isSaving) {
+                                Box(
+                                    Modifier
+                                        .size(6.dp)
+                                        .clip(CircleShape)
+                                        .background(colors.royalGold),
+                                )
+                                Spacer(Modifier.width(4.dp))
+                                Text(
+                                    "Saving…",
+                                    style = androidx.compose.material3.MaterialTheme.typography.labelSmall,
+                                    color = colors.royalGold,
+                                )
+                            } else {
+                                Box(
+                                    Modifier
+                                        .size(6.dp)
+                                        .clip(CircleShape)
+                                        .background(colors.statusSuccess),
+                                )
+                                Spacer(Modifier.width(4.dp))
+                                Text(
+                                    "Saved",
+                                    style = androidx.compose.material3.MaterialTheme.typography.labelSmall,
+                                    color = colors.inkMuted,
+                                )
+                            }
+                            Spacer(Modifier.width(6.dp))
+                            Text(
+                                text = "• ${state.steps.size} Steps",
+                                style = androidx.compose.material3.MaterialTheme.typography.labelSmall,
+                                color = colors.inkMuted,
+                            )
+                        }
+                    }
+
+                    // "i" info button
                     Box(
                         Modifier
                             .clip(CircleShape)
-                            .padding(6.dp)
+                            .clickable(onClick = viewModel::openInfoDialog)
+                            .padding(6.dp),
+                    ) {
+                        Icon(
+                            KaivoIcons.icon("info"),
+                            contentDescription = "Flow Details",
+                            tint = colors.inkSecondary,
+                            modifier = Modifier.size(18.dp),
+                        )
+                    }
+                }
+            }
+
+            Spacer(Modifier.width(6.dp))
+
+            // 3. 24/7 Deployment / Active Toggle Pill
+            GlassPill {
+                Row(
+                    Modifier
+                        .clickable(onClick = viewModel::toggleFlowActive)
+                        .padding(horizontal = 8.dp, vertical = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Box(
+                        Modifier
+                            .size(7.dp)
+                            .clip(CircleShape)
+                            .background(if (state.isActive) colors.royalGold else colors.inkMuted),
+                    )
+                    Spacer(Modifier.width(5.dp))
+                    Text(
+                        if (state.isActive) "Active" else "Manual",
+                        style = androidx.compose.material3.MaterialTheme.typography.labelMedium,
+                        color = if (state.isActive) colors.royalGold else colors.inkSecondary,
+                    )
+                }
+            }
+
+            Spacer(Modifier.width(6.dp))
+
+            // 4. Quick Actions: + Note, + Group, and Layout Mode
+            GlassPill {
+                Row(
+                    Modifier.padding(horizontal = 2.dp, vertical = 2.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    // Add Note
+                    Box(
+                        Modifier
+                            .clip(CircleShape)
+                            .clickable { viewModel.addStickyNote() }
+                            .padding(7.dp),
+                    ) {
+                        Icon(
+                            KaivoIcons.icon("bookmark"),
+                            contentDescription = "Add Sticky Note",
+                            tint = colors.inkSecondary,
+                            modifier = Modifier.size(16.dp),
+                        )
+                    }
+
+                    // Create Group
+                    Box(
+                        Modifier
+                            .clip(CircleShape)
+                            .clickable { viewModel.openCreateGroupDialog() }
+                            .padding(7.dp),
+                    ) {
+                        Icon(
+                            KaivoIcons.icon("grid"),
+                            contentDescription = "Create Group",
+                            tint = colors.inkSecondary,
+                            modifier = Modifier.size(16.dp),
+                        )
+                    }
+
+                    // Toggle Layout
+                    Box(
+                        Modifier
+                            .clip(CircleShape)
+                            .clickable { viewModel.toggleLayoutMode() }
+                            .padding(7.dp),
                     ) {
                         Icon(
                             KaivoIcons.icon(if (state.layoutMode == LayoutMode.GuidedPath) "bolt" else "globe"),
-                            contentDescription = if (state.layoutMode == LayoutMode.GuidedPath) {
-                                "Switch to Freeform canvas"
-                            } else "Switch to Guided Path"
-,
-                            tint = colors.inkSecondary,
-                            modifier = Modifier
-                                .size(20.dp)
-                                .clip(CircleShape)
-                                .androidClickable { viewModel.toggleLayoutMode() },
+                            contentDescription = if (state.layoutMode == LayoutMode.GuidedPath) "Switch to Freeform" else "Switch to Guided Path",
+                            tint = if (state.layoutMode == LayoutMode.Freeform) colors.royalGold else colors.inkSecondary,
+                            modifier = Modifier.size(16.dp),
                         )
                     }
                 }
@@ -518,6 +674,53 @@ fun CanvasScreen(
                     onDismiss = viewModel::closeInspector,
                 )
             }
+        }
+
+        // ---------------- flow & canvas dialogs ----------------
+        if (state.showRenameDialog) {
+            FlowRenameDialog(
+                currentName = state.flowName,
+                onDismiss = viewModel::dismissRenameDialog,
+                onSave = viewModel::setFlowName,
+            )
+        }
+
+        if (state.showInfoDialog) {
+            FlowInfoDialog(
+                flowId = state.flowId,
+                flowName = state.flowName,
+                stepCount = state.steps.size,
+                streamCount = state.streams.size,
+                isActive = state.isActive,
+                lastSavedAt = state.lastSavedAt,
+                onDismiss = viewModel::dismissInfoDialog,
+            )
+        }
+
+        if (state.showCreateGroupDialog) {
+            CreateGroupDialog(
+                steps = state.steps,
+                onDismiss = viewModel::dismissCreateGroupDialog,
+                onCreate = { name, color, stepIds -> viewModel.createGroup(name, color, stepIds) },
+            )
+        }
+
+        state.editingNote?.let { note ->
+            StickyNoteEditDialog(
+                note = note,
+                onDismiss = { viewModel.editNote(null) },
+                onSave = viewModel::saveStickyNote,
+                onDelete = { viewModel.deleteStickyNote(note.id) },
+            )
+        }
+
+        state.editingGroup?.let { group ->
+            FlowGroupEditDialog(
+                group = group,
+                onDismiss = { viewModel.editGroup(null) },
+                onSave = viewModel::saveGroup,
+                onDelete = { viewModel.deleteGroup(group.id) },
+            )
         }
     }
 }

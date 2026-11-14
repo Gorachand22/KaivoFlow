@@ -2,6 +2,7 @@ package com.kaivoflow.core.data
 
 import com.kaivoflow.core.model.Flow
 import com.kaivoflow.core.model.FlowData
+import com.kaivoflow.core.model.FlowGroup
 import com.kaivoflow.core.model.OnErrorPolicy
 import com.kaivoflow.core.model.RetryPolicy
 import com.kaivoflow.core.model.RunRecord
@@ -9,6 +10,7 @@ import com.kaivoflow.core.model.RunStatus
 import com.kaivoflow.core.model.StepNode
 import com.kaivoflow.core.model.StepRun
 import com.kaivoflow.core.model.StepRunStatus
+import com.kaivoflow.core.model.StickyNote
 import com.kaivoflow.core.model.StreamEdge
 import kotlinx.collections.immutable.persistentListOf
 import kotlinx.collections.immutable.persistentMapOf
@@ -122,6 +124,51 @@ class JsonCodecTest {
 
         val notify = decoded.steps.first { it.id == "s3" }
         assertTrue("disabled flag was lost", notify.disabled)
+    }
+
+    @Test
+    fun `groups, sticky notes and active deploy flag survive`() {
+        val flow = sampleFlow().copy(
+            isActive = true,
+            groups = persistentListOf(
+                FlowGroup(
+                    id = "g1",
+                    name = "Weather Processing",
+                    stepIds = persistentListOf("s1", "s2"),
+                    color = "amber",
+                    description = "Collects forecast data",
+                )
+            ),
+            notes = persistentListOf(
+                StickyNote(
+                    id = "n1",
+                    title = "Architecture Note",
+                    content = "This pipeline runs daily and triggers local push notification.",
+                    x = 100f,
+                    y = 200f,
+                    width = 280f,
+                    height = 160f,
+                    color = "gold",
+                )
+            ),
+        )
+        val decoded = JsonCodec.decodeFlow(JsonCodec.encodeFlow(flow))!!
+        assertTrue(decoded.isActive)
+        assertEquals(1, decoded.groups.size)
+        val group = decoded.groups.first()
+        assertEquals("g1", group.id)
+        assertEquals("Weather Processing", group.name)
+        assertEquals("amber", group.color)
+        assertEquals(listOf("s1", "s2"), group.stepIds)
+
+        assertEquals(1, decoded.notes.size)
+        val note = decoded.notes.first()
+        assertEquals("n1", note.id)
+        assertEquals("Architecture Note", note.title)
+        assertEquals(100f, note.x, 1e-4f)
+        assertEquals(200f, note.y, 1e-4f)
+        assertEquals(280f, note.width, 1e-4f)
+        assertEquals(160f, note.height, 1e-4f)
     }
 
     @Test

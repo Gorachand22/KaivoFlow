@@ -16,11 +16,16 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -38,8 +43,11 @@ import com.kaivoflow.core.design.KaivoIcons
 import com.kaivoflow.core.design.KaivoShapes
 import com.kaivoflow.core.design.KaivoTheme
 import com.kaivoflow.core.design.StatusBadge
+import com.kaivoflow.core.model.FlowGroup
+import com.kaivoflow.core.model.StickyNote
 import com.kaivoflow.feature.canvas.layout.Rect2
 import com.kaivoflow.feature.canvas.layout.StepLayout
+import com.kaivoflow.feature.canvas.render.jewelToneColor
 
 /**
  * Floating HUD shown while a Run is in flight: progress, elapsed time, current Step, Cancel.
@@ -315,5 +323,286 @@ fun EmptyCanvasHint(onAddStep: () -> Unit, modifier: Modifier = Modifier) {
         )
         Spacer(Modifier.height(16.dp))
         GoldButton(text = "Add a Step", icon = "add", onClick = onAddStep)
+    }
+}
+
+@Composable
+fun FlowRenameDialog(
+    currentName: String,
+    onDismiss: () -> Unit,
+    onSave: (String) -> Unit,
+) {
+    var name by remember { mutableStateOf(currentName) }
+    val colors = KaivoTheme.colors
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        containerColor = colors.surfaceAtelier,
+        title = {
+            Text("Rename Flow", style = androidx.compose.material3.MaterialTheme.typography.titleMedium, color = colors.inkPrimary)
+        },
+        text = {
+            Column {
+                OutlinedTextField(
+                    value = name,
+                    onValueChange = { name = it },
+                    singleLine = true,
+                    label = { Text("Flow Name", color = colors.inkSecondary) },
+                    modifier = Modifier.fillMaxWidth(),
+                )
+            }
+        },
+        confirmButton = {
+            TextButton(
+                onClick = {
+                    if (name.isNotBlank()) onSave(name.trim())
+                    onDismiss()
+                },
+            ) {
+                Text("Save", color = colors.royalGold)
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text("Cancel", color = colors.inkSecondary)
+            }
+        },
+    )
+}
+
+@Composable
+fun FlowInfoDialog(
+    flowId: String,
+    flowName: String,
+    stepCount: Int,
+    streamCount: Int,
+    isActive: Boolean,
+    lastSavedAt: Long?,
+    onDismiss: () -> Unit,
+) {
+    val colors = KaivoTheme.colors
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        containerColor = colors.surfaceAtelier,
+        title = {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(KaivoIcons.icon("info"), contentDescription = null, tint = colors.royalGold, modifier = Modifier.size(20.dp))
+                Spacer(Modifier.width(8.dp))
+                Text("Flow Overview", style = androidx.compose.material3.MaterialTheme.typography.titleMedium, color = colors.inkPrimary)
+            }
+        },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Text(flowName, style = androidx.compose.material3.MaterialTheme.typography.titleLarge, color = colors.inkPrimary)
+                Spacer(Modifier.height(4.dp))
+                InfoRow("Status", if (isActive) "Active (24/7 background worker)" else "Manual trigger only")
+                InfoRow("Steps", "$stepCount nodes")
+                InfoRow("Streams", "$streamCount connections")
+                InfoRow("Storage", "Internal storage (files/flows/$flowId.json)")
+                if (lastSavedAt != null) {
+                    val date = java.text.SimpleDateFormat("dd MMM yyyy, HH:mm:ss", java.util.Locale.getDefault()).format(java.util.Date(lastSavedAt))
+                    InfoRow("Last Saved", date)
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = onDismiss) {
+                Text("Close", color = colors.royalGold)
+            }
+        },
+    )
+}
+
+@Composable
+private fun InfoRow(label: String, value: String) {
+    val colors = KaivoTheme.colors
+    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+        Text(label, style = androidx.compose.material3.MaterialTheme.typography.labelMedium, color = colors.inkMuted)
+        Text(value, style = androidx.compose.material3.MaterialTheme.typography.bodySmall, color = colors.inkSecondary)
+    }
+}
+
+@Composable
+fun StickyNoteEditDialog(
+    note: StickyNote,
+    onDismiss: () -> Unit,
+    onSave: (StickyNote) -> Unit,
+    onDelete: () -> Unit,
+) {
+    var title by remember { mutableStateOf(note.title) }
+    var content by remember { mutableStateOf(note.content) }
+    var color by remember { mutableStateOf(note.color) }
+    val colors = KaivoTheme.colors
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        containerColor = colors.surfaceAtelier,
+        title = {
+            Text("Edit Sticky Note", style = androidx.compose.material3.MaterialTheme.typography.titleMedium, color = colors.inkPrimary)
+        },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                OutlinedTextField(
+                    value = title,
+                    onValueChange = { title = it },
+                    singleLine = true,
+                    label = { Text("Title", color = colors.inkSecondary) },
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                OutlinedTextField(
+                    value = content,
+                    onValueChange = { content = it },
+                    minLines = 3,
+                    maxLines = 6,
+                    label = { Text("Note Content", color = colors.inkSecondary) },
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                Text("Accent Tone", style = androidx.compose.material3.MaterialTheme.typography.labelMedium, color = colors.inkMuted)
+                ColorTonePicker(selected = color, onSelect = { color = it })
+            }
+        },
+        confirmButton = {
+            TextButton(
+                onClick = {
+                    onSave(note.copy(title = title.trim(), content = content.trim(), color = color))
+                },
+            ) {
+                Text("Save", color = colors.royalGold)
+            }
+        },
+        dismissButton = {
+            Row {
+                TextButton(onClick = onDelete) {
+                    Text("Delete", color = colors.statusError)
+                }
+                Spacer(Modifier.width(8.dp))
+                TextButton(onClick = onDismiss) {
+                    Text("Cancel", color = colors.inkSecondary)
+                }
+            }
+        },
+    )
+}
+
+@Composable
+fun FlowGroupEditDialog(
+    group: FlowGroup,
+    onDismiss: () -> Unit,
+    onSave: (FlowGroup) -> Unit,
+    onDelete: () -> Unit,
+) {
+    var name by remember { mutableStateOf(group.name) }
+    var color by remember { mutableStateOf(group.color) }
+    val colors = KaivoTheme.colors
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        containerColor = colors.surfaceAtelier,
+        title = {
+            Text("Edit Group", style = androidx.compose.material3.MaterialTheme.typography.titleMedium, color = colors.inkPrimary)
+        },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                OutlinedTextField(
+                    value = name,
+                    onValueChange = { name = it },
+                    singleLine = true,
+                    label = { Text("Group Name", color = colors.inkSecondary) },
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                Text("Frame Tone", style = androidx.compose.material3.MaterialTheme.typography.labelMedium, color = colors.inkMuted)
+                ColorTonePicker(selected = color, onSelect = { color = it })
+            }
+        },
+        confirmButton = {
+            TextButton(
+                onClick = {
+                    onSave(group.copy(name = name.trim(), color = color))
+                },
+            ) {
+                Text("Save", color = colors.royalGold)
+            }
+        },
+        dismissButton = {
+            Row {
+                TextButton(onClick = onDelete) {
+                    Text("Ungroup", color = colors.statusError)
+                }
+                Spacer(Modifier.width(8.dp))
+                TextButton(onClick = onDismiss) {
+                    Text("Cancel", color = colors.inkSecondary)
+                }
+            }
+        },
+    )
+}
+
+@Composable
+fun CreateGroupDialog(
+    steps: List<StepNodeUiModel>,
+    onDismiss: () -> Unit,
+    onCreate: (name: String, color: String, stepIds: List<String>) -> Unit,
+) {
+    var name by remember { mutableStateOf("New Group") }
+    var color by remember { mutableStateOf("amber") }
+    var selectedIds by remember { mutableStateOf(steps.map { it.id }.toSet()) }
+    val colors = KaivoTheme.colors
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        containerColor = colors.surfaceAtelier,
+        title = {
+            Text("Create Step Group", style = androidx.compose.material3.MaterialTheme.typography.titleMedium, color = colors.inkPrimary)
+        },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                OutlinedTextField(
+                    value = name,
+                    onValueChange = { name = it },
+                    singleLine = true,
+                    label = { Text("Group Name", color = colors.inkSecondary) },
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                Text("Frame Tone", style = androidx.compose.material3.MaterialTheme.typography.labelMedium, color = colors.inkMuted)
+                ColorTonePicker(selected = color, onSelect = { color = it })
+            }
+        },
+        confirmButton = {
+            TextButton(
+                onClick = {
+                    onCreate(name.trim(), color, selectedIds.toList())
+                },
+            ) {
+                Text("Create", color = colors.royalGold)
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text("Cancel", color = colors.inkSecondary)
+            }
+        },
+    )
+}
+
+@Composable
+private fun ColorTonePicker(selected: String, onSelect: (String) -> Unit) {
+    val tones = listOf("amber", "amethyst", "emerald", "sapphire", "rose", "gold")
+    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+        tones.forEach { tone ->
+            val toneColor = jewelToneColor(tone)
+            val isSelected = selected.equals(tone, ignoreCase = true)
+            Box(
+                Modifier
+                    .size(34.dp)
+                    .clip(CircleShape)
+                    .background(toneColor)
+                    .border(if (isSelected) 2.5.dp else 1.dp, if (isSelected) Color.White else Color.Transparent, CircleShape)
+                    .clickable { onSelect(tone) },
+                contentAlignment = Alignment.Center,
+            ) {
+                if (isSelected) {
+                    Icon(KaivoIcons.icon("check"), null, tint = Color.White, modifier = Modifier.size(16.dp))
+                }
+            }
+        }
     }
 }

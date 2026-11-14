@@ -41,6 +41,7 @@ interface FlowRepository {
 class RoomFlowRepository(
     private val flowDao: FlowDao,
     private val io: CoroutineDispatcher = Dispatchers.IO,
+    private val storageDir: java.io.File? = null,
 ) : FlowRepository {
 
     override fun observeSummaries(): FlowStream<List<FlowSummary>> =
@@ -69,15 +70,16 @@ class RoomFlowRepository(
         flowDao.all().mapNotNull { JsonCodec.decodeFlow(it.flowJson) }
     }
 
-    override suspend fun save(flow: Flow) = withContext(io) {
+    override suspend fun save(flow: Flow): Unit = withContext(io) {
         val now = System.currentTimeMillis()
         val stamped = if (flow.updatedAt == 0L) flow.copy(updatedAt = now, createdAt = if (flow.createdAt == 0L) now else flow.createdAt) else flow
         val existing = flowDao.byId(stamped.id)
+        val json = JsonCodec.encodeFlow(stamped)
         flowDao.upsert(
             FlowEntity(
                 id = stamped.id,
                 name = stamped.name,
-                flowJson = JsonCodec.encodeFlow(stamped),
+                flowJson = json,
                 updatedAt = stamped.updatedAt,
                 createdAt = stamped.createdAt,
                 isFavorite = stamped.isFavorite,
@@ -86,9 +88,23 @@ class RoomFlowRepository(
                 lastRunAt = existing?.lastRunAt,
             )
         )
+        // Sovereign file mirror in app internal storage
+        runCatching {
+            storageDir?.let { root ->
+                val dir = root.resolve("flows").apply { mkdirs() }
+                dir.resolve("${stamped.id}.json").writeText(json)
+            }
+        }
+        Unit
     }
 
-    override suspend fun delete(id: String) = withContext(io) { flowDao.delete(id) }
+    override suspend fun delete(id: String): Unit = withContext(io) {
+        flowDao.delete(id)
+        runCatching {
+            storageDir?.resolve("flows")?.resolve("$id.json")?.delete()
+        }
+        Unit
+    }
 
     override suspend fun duplicate(id: String): Flow? = withContext(io) {
         val original = flow(id) ?: return@withContext null

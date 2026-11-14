@@ -3,6 +3,7 @@ package com.kaivoflow.core.data
 import com.kaivoflow.core.model.BinaryDataRef
 import com.kaivoflow.core.model.Flow
 import com.kaivoflow.core.model.FlowData
+import com.kaivoflow.core.model.FlowGroup
 import com.kaivoflow.core.model.FlowSettings
 import com.kaivoflow.core.model.OnErrorPolicy
 import com.kaivoflow.core.model.RetryPolicy
@@ -11,6 +12,7 @@ import com.kaivoflow.core.model.RunStatus
 import com.kaivoflow.core.model.StepNode
 import com.kaivoflow.core.model.StepRun
 import com.kaivoflow.core.model.StepRunStatus
+import com.kaivoflow.core.model.StickyNote
 import com.kaivoflow.core.model.StreamEdge
 import kotlinx.collections.immutable.toImmutableList
 import kotlinx.collections.immutable.toImmutableMap
@@ -101,6 +103,36 @@ object JsonCodec {
                 )
             }
         })
+        put("isActive", JsonPrimitive(flow.isActive))
+        put("groups", buildJsonArray {
+            flow.groups.forEach { group ->
+                add(
+                    buildJsonObject {
+                        put("id", JsonPrimitive(group.id))
+                        put("name", JsonPrimitive(group.name))
+                        put("color", JsonPrimitive(group.color))
+                        put("description", JsonPrimitive(group.description))
+                        put("stepIds", buildJsonArray { group.stepIds.forEach { add(JsonPrimitive(it)) } })
+                    }
+                )
+            }
+        })
+        put("notes", buildJsonArray {
+            flow.notes.forEach { note ->
+                add(
+                    buildJsonObject {
+                        put("id", JsonPrimitive(note.id))
+                        put("title", JsonPrimitive(note.title))
+                        put("content", JsonPrimitive(note.content))
+                        put("x", JsonPrimitive(note.x))
+                        put("y", JsonPrimitive(note.y))
+                        put("width", JsonPrimitive(note.width))
+                        put("height", JsonPrimitive(note.height))
+                        put("color", JsonPrimitive(note.color))
+                    }
+                )
+            }
+        })
     }.toString()
 
     fun decodeFlow(text: String): Flow? = runCatching {
@@ -160,6 +192,31 @@ object JsonCodec {
                     fromPort = stream.long("fromPort").toInt(),
                     toPort = stream.long("toPort").toInt(),
                     label = stream.str("label"),
+                )
+            }?.toImmutableList() ?: kotlinx.collections.immutable.persistentListOf(),
+            isActive = root.bool("isActive"),
+            groups = (root["groups"] as? JsonArray)?.mapNotNull { element ->
+                val group = element as? JsonObject ?: return@mapNotNull null
+                FlowGroup(
+                    id = group.str("id"),
+                    name = group.str("name").ifBlank { "Group" },
+                    color = group.str("color").ifBlank { "amber" },
+                    description = group.str("description"),
+                    stepIds = (group["stepIds"] as? JsonArray)?.map { it.jsonPrimitive.content }?.toImmutableList()
+                        ?: kotlinx.collections.immutable.persistentListOf(),
+                )
+            }?.toImmutableList() ?: kotlinx.collections.immutable.persistentListOf(),
+            notes = (root["notes"] as? JsonArray)?.mapNotNull { element ->
+                val note = element as? JsonObject ?: return@mapNotNull null
+                StickyNote(
+                    id = note.str("id"),
+                    title = note.str("title").ifBlank { "Note" },
+                    content = note.str("content"),
+                    x = note.double("x").toFloat(),
+                    y = note.double("y").toFloat(),
+                    width = note.double("width").toFloat().takeIf { it > 0 } ?: 240f,
+                    height = note.double("height").toFloat().takeIf { it > 0 } ?: 140f,
+                    color = note.str("color").ifBlank { "gold" },
                 )
             }?.toImmutableList() ?: kotlinx.collections.immutable.persistentListOf(),
         )
