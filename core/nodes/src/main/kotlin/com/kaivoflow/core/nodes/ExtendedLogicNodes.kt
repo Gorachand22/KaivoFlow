@@ -271,11 +271,11 @@ class TableNode(private val gateway: DeviceGateway = NoopDeviceGateway) : StepEx
                 }
                 "get" -> {
                     val value = rows[key]
-                    results += item.copy(json = item.json + (field to value, "found" to (value != null)))
+                    results += item.copy(json = item.json + mapOf(field to value, "found" to (value != null)))
                 }
                 "delete" -> {
                     val removed = rows.remove(key)
-                    results += item.copy(json = item.json + (field to removed, "deleted" to (removed != null)))
+                    results += item.copy(json = item.json + mapOf(field to removed, "deleted" to (removed != null)))
                 }
                 "increment" -> {
                     val numberField = Values.asString(params["numberField"], "count").ifBlank { "count" }

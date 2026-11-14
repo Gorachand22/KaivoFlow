@@ -68,7 +68,7 @@ object NativeFlowBundle {
                     }
                     params[key] = ""
                 } else {
-                    params[key] = redactNested(value)
+                    params[key] = redactNested(value) { redactedCount++ }
                 }
             }
             step.copy(
@@ -79,7 +79,7 @@ object NativeFlowBundle {
         }.toImmutableList()
 
         val safe = flow.copy(
-            vars = (redactNested(flow.vars) as Map<String, Any?>).toImmutableMap(),
+            vars = (redactNested(flow.vars) { redactedCount++ } as Map<String, Any?>).toImmutableMap(),
             steps = safeSteps,
         )
 
@@ -241,13 +241,18 @@ object NativeFlowBundle {
         else -> false
     }
 
-    private fun redactNested(value: Any?): Any? = when (value) {
+    private fun redactNested(value: Any?, onRedact: (String) -> Unit = {}): Any? = when (value) {
         is Map<*, *> -> value.entries.associate { (k, v) ->
             val key = k.toString()
-            key to if (isSecretKey(key, emptySet())) "" else redactNested(v)
+            if (isSecretKey(key, emptySet())) {
+                if (!isBlank(v)) onRedact(key)
+                key to ""
+            } else {
+                key to redactNested(v, onRedact)
+            }
         }
-        is List<*> -> value.map { redactNested(it) }
-        is Array<*> -> value.map { redactNested(it) }
+        is List<*> -> value.map { redactNested(it, onRedact) }
+        is Array<*> -> value.map { redactNested(it, onRedact) }
         is String -> value.take(MAX_TEXT)
         else -> value
     }

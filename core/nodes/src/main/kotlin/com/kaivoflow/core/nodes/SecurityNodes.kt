@@ -229,7 +229,7 @@ class PdfNode(private val gateway: DeviceGateway = NoopDeviceGateway) : StepExec
             val bytes = BinarySupport.decode(base64)
                 ?: throw StepExecutionException(ctx.step.id, ctx.step.name, "the PDF is unreadable or too large")
             val text = PdfLite.extractText(bytes)
-            item.copy(json = item.json + (field to text, "pdf" to mapOf(
+            item.copy(json = item.json + mapOf(field to text, "pdf" to mapOf(
                 "fileName" to ref.fileName,
                 "byteSize" to ref.sizeBytes.toDouble(),
                 "pageCount" to PdfLite.pageCount(bytes).toDouble(),

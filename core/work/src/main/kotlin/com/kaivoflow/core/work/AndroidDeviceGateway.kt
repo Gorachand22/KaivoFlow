@@ -366,11 +366,15 @@ class AndroidDeviceGateway @Inject constructor(
             != PackageManager.PERMISSION_GRANTED
         ) return@withContext mapOf("found" to false, "reason" to "Contacts permission is not granted.")
         try {
-            val phone = android.provider.ContactsContract.CommonDataKinds.Phone
+            val projection = arrayOf(
+                android.provider.ContactsContract.CommonDataKinds.Phone.DISPLAY_NAME,
+                android.provider.ContactsContract.CommonDataKinds.Phone.NUMBER,
+            )
+            val selection = "${android.provider.ContactsContract.CommonDataKinds.Phone.DISPLAY_NAME} LIKE ? OR ${android.provider.ContactsContract.CommonDataKinds.Phone.NUMBER} LIKE ?"
             val cursor = context.contentResolver.query(
-                phone.CONTENT_URI,
-                arrayOf(phone.DISPLAY_NAME, phone.NUMBER),
-                "${phone.DISPLAY_NAME} LIKE ? OR ${phone.NUMBER} LIKE ?",
+                android.provider.ContactsContract.CommonDataKinds.Phone.CONTENT_URI,
+                projection,
+                selection,
                 arrayOf("%$query%", "%$query%"),
                 null,
             )
@@ -400,16 +404,15 @@ class AndroidDeviceGateway @Inject constructor(
             != PackageManager.PERMISSION_GRANTED
         ) return@withContext null
         try {
-            val events = android.provider.CalendarContract.Events
             val values = android.content.ContentValues().apply {
-                put(events.DTSTART, startMillis)
-                put(events.DTEND, endMillis.coerceAtLeast(startMillis + 60_000L))
-                put(events.TITLE, title)
-                put(events.DESCRIPTION, description)
-                put(events.CALENDAR_ID, 1L)
-                put(events.EVENT_TIMEZONE, java.util.TimeZone.getDefault().id)
+                put(android.provider.CalendarContract.Events.DTSTART, startMillis)
+                put(android.provider.CalendarContract.Events.DTEND, endMillis.coerceAtLeast(startMillis + 60_000L))
+                put(android.provider.CalendarContract.Events.TITLE, title)
+                put(android.provider.CalendarContract.Events.DESCRIPTION, description)
+                put(android.provider.CalendarContract.Events.CALENDAR_ID, 1L)
+                put(android.provider.CalendarContract.Events.EVENT_TIMEZONE, java.util.TimeZone.getDefault().id)
             }
-            context.contentResolver.insert(events.CONTENT_URI, values)?.toString()
+            context.contentResolver.insert(android.provider.CalendarContract.Events.CONTENT_URI, values)?.toString()
         } catch (e: Exception) {
             null
         }

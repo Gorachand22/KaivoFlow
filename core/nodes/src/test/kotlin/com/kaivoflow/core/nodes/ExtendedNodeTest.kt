@@ -3,6 +3,7 @@ package com.kaivoflow.core.nodes
 import com.kaivoflow.core.engine.FlowInvoker
 import com.kaivoflow.core.engine.HttpRequestSpec
 import com.kaivoflow.core.engine.HttpResponseSpec
+import com.kaivoflow.core.engine.StepExecutor
 import com.kaivoflow.core.engine.Values
 import com.kaivoflow.core.model.FlowData
 import kotlinx.coroutines.runBlocking
@@ -122,10 +123,18 @@ class ExtendedNodeTest {
             CompareNode(),
             mapOf(
                 "key" to "id",
-                "baseline" to listOf(mapOf("id" to "a", "v" to "Old"), mapOf("id" to "z", "v" to "Gone")),
+                "baseline" to listOf(
+                    mapOf("id" to "a", "v" to "Old"),
+                    mapOf("id" to "c", "v" to "Same"),
+                    mapOf("id" to "z", "v" to "Gone"),
+                ),
                 "fuzzy" to true,
             ),
-            listOf(item("id" to "a", "v" to "Different"), item("id" to "b", "v" to "New")),
+            listOf(
+                item("id" to "a", "v" to "Different"),
+                item("id" to "b", "v" to "New"),
+                item("id" to "c", "v" to "Same"),
+            ),
         )
         @Suppress("UNCHECKED_CAST")
         val changes = compare.single()["changes"] as List<Map<String, Any?>>

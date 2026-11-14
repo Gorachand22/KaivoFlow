@@ -295,7 +295,7 @@ class TcpNode : StepExecutor {
             val reply = withContext(Dispatchers.IO) {
                 talk(host, port, payload, timeoutMs, maxBytes, useTls, readReply, ctx)
             }
-            item.copy(json = item.json + (field to reply.text, "socket" to mapOf(
+            item.copy(json = item.json + mapOf(field to reply.text, "socket" to mapOf(
                 "host" to host,
                 "port" to port.toDouble(),
                 "tls" to useTls,

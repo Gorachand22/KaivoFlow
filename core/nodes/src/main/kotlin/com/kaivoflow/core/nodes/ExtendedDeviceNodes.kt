@@ -211,7 +211,7 @@ class ContactLookupNode(private val gateway: DeviceGateway) : StepExecutor {
         return ctx.output(sources.mapIndexed { index, item ->
             val query = ctx.resolveText(params["query"], index)
             val contact = gateway.lookupContact(query)
-            item.copy(json = item.json + (field to contact, "found" to (contact["found"] == true)))
+            item.copy(json = item.json + mapOf(field to contact, "found" to (contact["found"] == true)))
         })
     }
 }
