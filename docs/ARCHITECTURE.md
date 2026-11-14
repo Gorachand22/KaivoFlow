@@ -22,7 +22,7 @@ KaivoFlow/
 │   ├── model/         # Value classes: Flow, StepNode, StreamEdge, FlowData, RunRecord, ScheduleMath
 │   ├── engine/        # Topological DAG runner (FlowRunner), StepContext, DAG validation, events
 │   ├── expressions/   # Sandboxed evaluation: {{ $json.field }}, {{ $now }}, math, string helpers
-│   ├── nodes/         # 84 StepExecutors, bounded pure-JVM parsers/formatters & NodeCatalog registry
+│   ├── nodes/         # 87 StepExecutors, bounded pure-JVM parsers/formatters & NodeCatalog registry
 │   ├── network/       # Ktor/OkHttp gateway for HTTP Request, Webhooks, and AI APIs
 │   ├── data/          # Room DB, DAOs, FlowRepository, JSON codec, .structure & .kaivoflow bundles, encrypted token store
 │   ├── design/        # Design tokens, typography, Jewel Cards, Canvas layout math
@@ -47,7 +47,7 @@ Flow ── steps: ImmutableList<StepNode>
 ```
 
 * **`Flow` is an Immutable Value:** Editing any node, property, or link produces a new `Flow`. Nothing is mutated in place. This guarantees trivial undo/redo, deterministic canvas diffing, debounced autosave, and safe Room database persistence.
-* **Dynamic Parameters:** `StepNode.params` is a typed `Map<String, Any?>` validated against `NodeSpec.params` (`ParamSpec`). This eliminates the need for 84 separate database migration tables and allows declarative UI generation in the Step Inspector. Secret params are read raw and are never expression-expanded.
+* **Dynamic Parameters:** `StepNode.params` is a typed `Map<String, Any?>` validated against `NodeSpec.params` (`ParamSpec`). This eliminates the need for 87 separate database migration tables and allows declarative UI generation in the Step Inspector. Secret params are read raw and are never expression-expanded.
 * **Items Model:** Data flows as `List<FlowData>`, where each `FlowData(val json: Map<String, Any?>, val binary: Map<String, BinaryDataRef>)` represents one payload item passing through output ports to downstream steps. A `BinaryDataRef` records internal URI, MIME type, file name, byte size and SHA-256. The codec supports both wrapped and legacy JSON shapes and caps binary payloads at 25 MB.
 
 ---
@@ -79,15 +79,16 @@ Step parameters can interpolate dynamic variables using `{{ expression }}`:
 
 ---
 
-## 6. Built-in Step Catalog (84 Nodes)
+## 6. Built-in Step Catalog (87 Nodes)
 
 * **Sparks (12):** Manual, schedule, webhook, notification, SMS, battery, share, geofence, Bluetooth, Wi-Fi, headset and boot. Device Sparks use strict, fail-closed filters and OS broadcast/scheduler wiring.
-* **Logic (15):** Original `if`, `switch`, `merge`, `filter`, `dedupe`, `loop`, `wait`, `stop` and `onError`, plus `sort`, `limit`, `compare`, `table`, `run_info` and `noop`.
+* **Logic (17):** Original `if`, `switch`, `merge`, `filter`, `dedupe`, `loop`, `wait`, `stop` and `onError`, plus `sort`, `limit`, `compare`, `table`, `run_info`, `noop`, `subflow` and `poll`.
 * **Transformations (25):** Original `set`, `fields`, `json`, `template`, `date` (parse/format/shift/diff/zone conversion), `aggregate`, `code` and `crypto`, plus `math`, `text`, `stats`, `split`, `url`, `csv`, `xml`, `html`, `markdown`, `ical`, `binary`, `binary_upload`, `chart`, `random`, `token`, `totp` and `pdf`.
 * **AI & Machine Learning (3):** `ai.chat`, `ai.extract`, `ai.classify`. Compatible with Google Gemini, local Ollama, and OpenAI-compatible endpoints with structured JSON schemas.
 * **Device Hardware (18):** Notification, SMS, clipboard read/write, app/URL launcher, Text-to-Speech, haptics, file persistence, battery/network status, toast, share sheet, torch, volume, location, Wi-Fi info, contact lookup and calendar events.
-* **SaaS / Protocols (11):** Universal REST client, Google Sheets, Notion, Telegram, Slack, Discord, Weather, RSS/Atom, GraphQL, WebDAV-style file requests and bounded TCP/TLS messages.
+* **SaaS / Protocols (12):** Universal REST client, Google Sheets, Notion, Telegram, Slack, Discord, Weather, RSS/Atom, GraphQL, WebDAV-style file requests, bounded TCP/TLS messages and the generic Service Connector.
 * Bounded pure-JVM parsers/formatters (`MiniJson`, CSV, XML, HTML, Markdown, iCal, JWT, TOTP and best-effort PDF text) have explicit size/depth caps and return typed errors. See `PARITY.md` for the complete matrix.
+* **Composition tools:** `logic.subflow` reuses another Flow through `FlowInvoker` (depth cap 8, nested Runs not persisted); `saas.connector` calls any REST API with credential auth, dot-path response extraction, bounded pagination and retries; `logic.poll` remembers item IDs/hashes in a private local file and emits only new items. Built-in `FlowTemplates` create five editable starter Flows with fresh IDs.
 
 ---
 

@@ -34,10 +34,10 @@
 ---
 
 ## Cloud-Authoring Verification (this session)
-- [x] Kotlin delimiter/string sanity check: **102 files, 0 issues**.
+- [x] Kotlin delimiter/string sanity check: **107 files, 0 issues**.
 - [x] `git diff --check`: clean.
 - [x] Android manifest and resource XML parse check: clean.
-- [x] JVM test suites authored/updated: `ExtendedNodeTest`, `OAuth2TokenManagerTest`, `MobileTriggerTest`, `NativeFlowBundleTest`, `CanvasGeometryTest`.
+- [x] JVM test suites authored/updated: `ExtendedNodeTest`, `ExtendedCompositionTest`, `FlowTemplatesTest`, `OAuth2TokenManagerTest`, `MobileTriggerTest`, `NativeFlowBundleTest`, `CanvasGeometryTest`.
 - [ ] `kotlinc` / Gradle / Android SDK execution: **not run here** (cloud role is pure authoring; no JDK/Gradle installed).
 - [ ] APK build and physical-phone verification: **local agent only**.
 
@@ -49,3 +49,7 @@
 3. Verify geofence, Bluetooth, Wi-Fi, headset and boot Sparks with real OS broadcasts and runtime permissions.
 4. Verify binary download → ZIP/gzip → upload with a real `content://` document.
 5. Capture 1.3x / 2.0x font-scale screenshots of Flow List, Canvas, Inspector, Credentials and Run History.
+6. Verify `logic.subflow` with two saved Flows, including recursion guard and returned items.
+7. Verify `saas.connector` against a mock paginated REST endpoint with a saved credential.
+8. Verify `logic.poll` across three scheduled Runs with repeated and new IDs.
+9. Verify each starter template creates an editable Flow with fresh IDs and working Streams.

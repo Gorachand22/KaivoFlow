@@ -1,7 +1,7 @@
 # KaivoFlow — Capability & Node Parity Matrix
 
 > **Tracking node availability, mobile implementation status, and mobile-native improvements.**
-> Current `NodeCatalog`: **84 runnable executors** — 12 Sparks, 15 Logic, 25 Transform, 3 AI, 11 SaaS, 18 Device.
+> Current `NodeCatalog`: **87 runnable executors** — 12 Sparks, 17 Logic, 25 Transform, 3 AI, 12 SaaS, 18 Device.
 > Every expanded Step is an original KaivoFlow implementation; no external node code, descriptions, icons or schemas were copied.
 
 ---
@@ -109,6 +109,9 @@ All five Sparks use fail-closed matching: an event without its identifying field
 | Device | `device.wifi_info` | Wi-Fi details | Full | Current SSID, signal, link speed and connection state |
 | Device | `device.contact` | Find a contact | Full | Local address-book lookup by name or number |
 | Device | `device.calendar_event` | Add calendar event | Full | Writes a reminder into the phone calendar |
+| Logic | `logic.subflow` | Run another Flow | Full | Reuse a saved Flow, pass items in, get its terminal items back, depth-capped |
+| Logic | `logic.poll` | Only new items | Full | Poll an API, hash/ID-dedupe against a private local state file between Runs |
+| SaaS | `saas.connector` | Service connector | Full | Arbitrary REST call with credential auth, dot-path extraction, pagination, retries |
 
 ---
 
@@ -122,3 +125,7 @@ All five Sparks use fail-closed matching: an event without its identifying field
 | Connected-account token refresh | Full | Encrypted vault, per-credential mutex, expiry skew, rotated refresh tokens |
 | Per-output port Stream gesture | Full | 48 dp targets, dashed bezier preview, success haptic, branch-aware chaining |
 | Density-correct canvas coordinates | Full | Single `pixelScale` at every dp↔px boundary for cards, ports, paths and drag deltas |
+| Sub-Flow composition | Full | `FlowInvoker` + `RunTrigger(kind="subflow")`; nested Runs are not persisted as top-level history |
+| Generic service connector | Full | Original response-path/pagination/retry engine covers many API integrations without copied presets |
+| Polling change detection | Full | Bounded local state file remembers item IDs/hashes across Runs |
+| Starter Flow templates | Full | Five editable original templates with fresh Step/Stream IDs and a picker in Flow List |

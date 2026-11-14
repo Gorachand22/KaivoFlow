@@ -33,3 +33,4 @@
 * **Data Model:** Data travels as `List<FlowData>` through numbered ports.
 * **Trigger Seeding:** Triggers emit real payloads so downstream steps receive items and execute.
 * **Pure Logic Tests:** Put business logic and node executions in pure Kotlin modules (`:core:engine`, `:core:nodes`, `:core:model`, `:core:expressions`) with JVM unit tests.
+* **Composition:** Sub-Flow Steps go through `FlowInvoker`; nested Runs carry a depth cap and are not persisted as top-level history. Generic connectors and poll Steps must bound retries, pages, state size and response size.

@@ -7,7 +7,7 @@
 
 ## What is KaivoFlow?
 
-KaivoFlow brings visual workflow automation directly to your Android device. You design **Flows** of **Steps** connected by **Streams**, and execute them on-demand or in response to real-world triggers (**Sparks**). The current catalog has **84 original executors**:
+KaivoFlow brings visual workflow automation directly to your Android device. You design **Flows** of **Steps** connected by **Streams**, and execute them on-demand or in response to real-world triggers (**Sparks**). The current catalog has **87 original executors**:
 
 * **Sparks:** Manual, Cron/recurring schedules, local webhooks, incoming SMS, notification listener, battery state, Share Sheet, geofence, Bluetooth, Wi-Fi, headset and phone-restarted events.
 * **Logic & Flow Control:** If/Else, Switch, Merge, Filter, Dedupe, For-Each batching, Wait, Stop, Error Handler, Sort, Limit, Compare Lists, Local Table, Run Details and Pass Through.
@@ -19,6 +19,8 @@ KaivoFlow brings visual workflow automation directly to your Android device. You
 ### Designed for a phone
 * **Binary-first data:** Attachments keep their MIME type, file name, byte size, checksum and internal URI alongside JSON items.
 * **Portable Flows:** `.kaivoflow` full backups preserve ordinary parameters, redact credentials, remap IDs and disable imported Sparks. The original `.structure` skeleton format remains supported.
+* **Composable engine:** A Step can run another Flow and bring its items back; a generic Service Connector shapes/paginates any REST API; a polling Step emits only items unseen since the last Run.
+* **Starter templates:** Five original phone-first templates create fully editable Flows with fresh Step/Stream IDs.
 * **Connected accounts:** Refresh-token and client-credentials grants run locally; rotated tokens are encrypted in the existing credential vault.
 * **Touch-first canvas:** One draggable 48 dp target per declared output port, a dashed bezier preview, magnetic input snapping, success haptics, branch-aware Step chaining and density-correct pan/zoom coordinates.
 * **Private by default:** No KaivoFlow account, tracking backend or required relay server. Sensitive OS capabilities are permission-gated.
@@ -32,9 +34,9 @@ The project is structured into 13 modular Gradle components:
 | Module | Purpose |
 |---|---|
 | `:core:model` | Immutable domain models (`Flow`, `StepNode`, `StreamEdge`, `FlowData`, `BinaryDataRef`, `RunRecord`, `ScheduleMath`). |
-| `:core:engine` | FlowRunner, DAG validation, port liveness, retries, expressions/parameters and `OAuth2TokenManager`. |
+| `:core:engine` | FlowRunner, DAG validation, port liveness, retries, expressions/parameters, `FlowInvoker` and `OAuth2TokenManager`. |
 | `:core:expressions` | Sandboxed expression runtime (`{{ $json.field }}`, `{{ $now }}`, arithmetic, string helpers). |
-| `:core:nodes` | 84 built-in Step executors, pure-JVM parsers/formatters and the single `NodeCatalog` registry. |
+| `:core:nodes` | 87 built-in Step executors, pure-JVM parsers/formatters, composition/connector/poll tools and the single `NodeCatalog` registry. |
 | `:core:data` | Room database, DAOs, repositories, wrapped JSON codec, `.structure` and `.kaivoflow` bundles, encrypted credential/token store. |
 | `:core:network` | Ktor/OkHttp gateway for HTTP, binary transport, webhooks and AI calls. |
 | `:core:work` | WorkManager runs, `FlowScheduler`, event receivers, boot re-arming and `AndroidDeviceGateway`. |
@@ -78,4 +80,4 @@ adb install -r app/build/outputs/apk/debug/app-debug.apk
 ## Developer & Cloud IDE Handoff
 
 For architectural notes, verification responsibilities and the next milestones for AI agents and cloud IDEs, see:
-👉 **[DEVELOPER_HANDOFF.md](DEVELOPER_HANDOFF.md)** · **[BACKLOG.md](BACKLOG.md)**
+👉 **[DEVELOPER_HANDOFF.md](DEVELOPER_HANDOFF.md)** · **[BACKLOG.md](BACKLOG.md)** · **[PARITY.md](PARITY.md)** · **[docs/CAPABILITY_GAP.md](docs/CAPABILITY_GAP.md)**

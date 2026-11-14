@@ -15,7 +15,7 @@ KaivoFlow is an independent, sovereign, mobile-first visual automation system de
 
 The app includes:
 * **Rich Trigger System:** Manual taps, Cron schedules, webhooks, SMS, notification listener, battery state, Share Sheet, geofence, Bluetooth, Wi-Fi, headset and boot events.
-* **84 Original Built-in Steps:** Logic, transforms, AI, device hardware, SaaS/protocol connectors, structured formats, binary attachments, token tools and local table state.
+* **87 Original Built-in Steps:** Logic, transforms, AI, device hardware, SaaS/protocol connectors, structured formats, binary attachments, token tools and local table state.
 * **Pure Local Execution:** Flows run via Android `WorkManager`, Foreground Services, receivers and `AlarmManager`.
 * **Zero External Dependencies:** Self-contained, fair, independent, and designed strictly for mobile thumbs.
 
@@ -30,7 +30,7 @@ KaivoFlow/
 │   ├── model/            # Pure Kotlin data classes (Flow, StepNode, StreamEdge, FlowData, BinaryDataRef, RunRecord)
 │   ├── engine/           # FlowRunner, DAG validation, lifecycle events, OAuth2TokenManager
 │   ├── expressions/      # Sandboxed Expression Evaluator ({{ $json.field }}, {{ $now }}, math)
-│   ├── nodes/            # 84 StepExecutors, bounded pure-JVM parsers/formatters, NodeCatalog
+│   ├── nodes/            # 87 StepExecutors, bounded pure-JVM parsers/formatters, composition tools, NodeCatalog
 │   ├── network/          # Ktor/OkHttp gateway for HTTP, binary transport, webhooks, AI calls
 │   ├── data/             # Room Database, DAOs, Repositories, JSON codecs, .structure & .kaivoflow bundles
 │   ├── design/           # Theme, colors, typography, shared components, Canvas tokens
@@ -59,9 +59,10 @@ KaivoFlow/
 8. **Canvas gestures:** Declared output ports are individually draggable 48 dp targets; a dashed bezier preview snaps to input ports; success haptics fire only when a Stream is actually added; the Step picker chains from the selected output port; `connectStream` rejects cycles.
 9. **Canvas coordinate contract:** A single `pixelScale` converts dp↔px for card heights, port centres, bezier lift, visible rect, fit-to-screen, minimap jumps, graphics layers and drag deltas. `worldDelta = screenDelta.toDp() / zoomScale`.
 10. **Mobile polish:** Status/navigation/IME insets on Flow List, Run History and Credentials; 48 dp touch targets on pills, segmented controls, back button and ports.
+11. **Reference-gap batch:** A shallow, blobless, sparse read of a large external automation catalog identified portable patterns (not code to copy). Implemented original `logic.subflow`, `saas.connector`, `logic.poll`, five starter Flow templates, a `FlowInvoker` engine contract, depth-capped nested Runs, two new JVM suites and a generic capability-gap document.
 
 ### JVM tests authored (not executed here)
-`ExtendedNodeTest.kt`, `OAuth2TokenManagerTest.kt`, `MobileTriggerTest.kt`, `NativeFlowBundleTest.kt`, `CanvasGeometryTest.kt`. Helper scripts exist for pure-JVM execution where a Kotlin toolchain is available:
+`ExtendedNodeTest.kt`, `ExtendedCompositionTest.kt`, `FlowTemplatesTest.kt`, `OAuth2TokenManagerTest.kt`, `MobileTriggerTest.kt`, `NativeFlowBundleTest.kt`, `CanvasGeometryTest.kt`. Helper scripts exist for pure-JVM execution where a Kotlin toolchain is available:
 `scripts/run-core-reliability-tests.sh`, `scripts/run-transfer-tests.sh`, `scripts/run-canvas-tests.sh`.
 
 ---
@@ -88,26 +89,31 @@ gradle :app:assembleDebug
 adb install -r app/build/outputs/apk/debug/app-debug.apk
 ```
 
-Resolve compiler diagnostics locally first; report exact errors to the cloud agent rather than reverting whole features. Important local checks: serialization imports, `ParamType.Secret`, new `DeviceGateway` methods, Hilt providers, Compose gesture imports, `rememberFitToScreen` call sites, Android 12+ `PendingIntent.FLAG_MUTABLE`, exported receiver security and background-location limits.
+Resolve compiler diagnostics locally first; report exact errors to the cloud agent rather than reverting whole features. Important local checks: serialization imports, `ParamType.Secret`, new `DeviceGateway` methods, `FlowInvoker`/`StepContext` constructor sites, Hilt providers, Compose gesture and `AlertDialog` imports, `rememberFitToScreen` call sites, Android 12+ `PendingIntent.FLAG_MUTABLE`, exported receiver security and background-location limits.
 
 ---
 
 ## 5. NEEDS DEVICE VERIFICATION
 
-See the 15-step table in [HANDOFF.md](HANDOFF.md). Highest-priority checks:
-1. `assembleDebug` and all five new JVM test suites.
+See the 19-step table in [HANDOFF.md](HANDOFF.md). Highest-priority checks:
+1. `assembleDebug` and all seven JVM test suites.
 2. Native `.kaivoflow` export → import between two installs, with a credential re-bind preview.
 3. Binary download → ZIP/gzip → multipart upload and a real `content://` document.
 4. Refreshed connected-account token used by HTTP, Sheets and AI Steps.
 5. Per-output port drag, branch chaining, cycle rejection and haptics at 0.35x/2x zoom.
 6. Real geofence/Bluetooth/Wi-Fi/headset/boot broadcasts plus runtime permissions.
 7. 1.3x/2.0x font-scale screenshots of every screen.
+8. Sub-Flow composition, Service Connector pagination/retry and `logic.poll` dedupe across three Runs.
+9. All five starter templates and their fresh-ID Flow creation.
 
 ---
 
 ## 6. Next Development Milestones
 
 * Add a Storage Access Framework document-picker UI for binary attachment selection.
+* Add dynamic webhook responses and wait-for-webhook resume on top of the existing local webhook server.
+* Add a global error Flow setting that invokes another Flow when a Run fails.
+* Add AI agent tool-calling / local vector memory on top of the existing AI Steps.
 * Add an OAuth2 authorization-code Custom Tabs receiver on top of the existing refresh-token manager.
 * Add undo/redo history to the Canvas ViewModel using the existing immutable `Flow` model.
 * Add per-node fixture snapshots and a visual run debugger for skipped/retried branches.
