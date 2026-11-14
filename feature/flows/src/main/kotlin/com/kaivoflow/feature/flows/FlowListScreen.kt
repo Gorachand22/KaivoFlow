@@ -20,8 +20,10 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
@@ -47,6 +49,7 @@ import com.kaivoflow.core.design.KaivoIcons
 import com.kaivoflow.core.design.KaivoShapes
 import com.kaivoflow.core.design.KaivoTheme
 import com.kaivoflow.core.design.StatusBadge
+import com.kaivoflow.core.model.FlowTemplates
 import com.kaivoflow.core.model.RunRecord
 import com.kaivoflow.core.work.FlowScheduler
 import dagger.hilt.android.lifecycle.HiltViewModel
@@ -73,6 +76,9 @@ class FlowListViewModel @Inject constructor(
     private val _isCreating = MutableStateFlow(false)
     val isCreating: StateFlow<Boolean> = _isCreating.asStateFlow()
 
+    private val _showTemplates = MutableStateFlow(false)
+    val showTemplates: StateFlow<Boolean> = _showTemplates.asStateFlow()
+
     val state: StateFlow<FlowListUiState> = combine(
         flowRepository.observeSummaries(),
         runRepository.observeRecent(20),
@@ -95,6 +101,32 @@ class FlowListViewModel @Inject constructor(
             flowRepository.save(flow)
             _isCreating.value = false
             onCreated(flow.id)
+        }
+    }
+
+    fun showTemplates() {
+        _showTemplates.value = true
+    }
+
+    fun hideTemplates() {
+        _showTemplates.value = false
+    }
+
+    fun createFromTemplate(templateId: String, onCreated: (String) -> Unit) {
+        val template = FlowTemplates.byId(templateId) ?: run {
+            hideTemplates()
+            return
+        }
+        viewModelScope.launch {
+            _isCreating.value = true
+            try {
+                val flow = template.build()
+                flowRepository.save(flow)
+                hideTemplates()
+                onCreated(flow.id)
+            } finally {
+                _isCreating.value = false
+            }
         }
     }
 
@@ -132,6 +164,7 @@ fun FlowListScreen(
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
     val creating by viewModel.isCreating.collectAsStateWithLifecycle()
+    val showTemplates by viewModel.showTemplates.collectAsStateWithLifecycle()
     val colors = KaivoTheme.colors
 
     FlowTransferHost(onImported = onOpenFlow) { onImport, onExport, onBackup ->
@@ -167,6 +200,12 @@ fun FlowListScreen(
                 text = stringResource(R.string.transfer_import_button),
                 onClick = onImport,
                 modifier = Modifier.padding(horizontal = KaivoTheme.spacing.md),
+            )
+            GhostButton(
+                text = "Start from a template",
+                icon = "sparkles",
+                onClick = { viewModel.showTemplates() },
+                modifier = Modifier.padding(horizontal = KaivoTheme.spacing.md, vertical = 8.dp),
             )
             if (state.flows.isEmpty()) {
                 EmptyFlows(
@@ -212,8 +251,56 @@ fun FlowListScreen(
                 }
             }
         }
+        if (showTemplates) {
+            TemplatePickerDialog(
+                onDismiss = { viewModel.hideTemplates() },
+                onPick = { templateId -> viewModel.createFromTemplate(templateId, onOpenFlow) },
+            )
+        }
     }
     }
+}
+
+@Composable
+private fun TemplatePickerDialog(
+    onDismiss: () -> Unit,
+    onPick: (String) -> Unit,
+) {
+    val colors = KaivoTheme.colors
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        containerColor = colors.canvasVoid,
+        title = {
+            Text("Start from a template", color = colors.inkPrimary,
+                style = androidx.compose.material3.MaterialTheme.typography.titleLarge)
+        },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                FlowTemplates.all.forEach { template ->
+                    Column(
+                        Modifier
+                            .fillMaxWidth()
+                            .clip(KaivoShapes.medallion)
+                            .background(colors.surfaceCard)
+                            .border(1.dp, colors.hairline, KaivoShapes.medallion)
+                            .clickable { onPick(template.id) }
+                            .padding(12.dp),
+                    ) {
+                        Text(template.name, color = colors.inkPrimary,
+                            style = androidx.compose.material3.MaterialTheme.typography.titleMedium)
+                        Spacer(Modifier.height(4.dp))
+                        Text(template.description, color = colors.inkSecondary,
+                            style = androidx.compose.material3.MaterialTheme.typography.bodySmall)
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = onDismiss) {
+                Text("Close", color = colors.inkSecondary)
+            }
+        },
+    )
 }
 
 @Composable

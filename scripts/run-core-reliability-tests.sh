@@ -10,9 +10,10 @@ for jar in "${JARS[@]}"; do [[ -f "$jar" ]] || { echo "Missing jar: $jar" >&2; e
 OUTPUT="$(mktemp -d)"
 trap 'rm -rf "$OUTPUT"' EXIT
 "$KOTLINC_HOME/bin/kotlinc" \
-  "$ROOT/core/model/src/main/kotlin" "$ROOT/core/engine/src/main/kotlin" \
+  "$ROOT/core/model/src/main/kotlin" "$ROOT/core/model/src/test/kotlin" \
+  "$ROOT/core/engine/src/main/kotlin" "$ROOT/core/engine/src/test/kotlin" \
   "$ROOT/core/nodes/src/main/kotlin" "$ROOT/core/nodes/src/test/kotlin" \
-  "$ROOT/core/engine/src/test/kotlin" -classpath "$CP" -jvm-target 11 -d "$OUTPUT"
+  -classpath "$CP" -jvm-target 11 -d "$OUTPUT"
 java -cp "$OUTPUT:$CP" org.junit.runner.JUnitCore \
   com.kaivoflow.core.nodes.NodeExecutorTest \
   com.kaivoflow.core.nodes.NodeCatalogTest \
@@ -21,6 +22,8 @@ java -cp "$OUTPUT:$CP" org.junit.runner.JUnitCore \
   com.kaivoflow.core.nodes.AiSafetyTest \
   com.kaivoflow.core.nodes.MobileTriggerTest \
   com.kaivoflow.core.nodes.ExtendedNodeTest \
+  com.kaivoflow.core.nodes.ExtendedCompositionTest \
+  com.kaivoflow.core.model.FlowTemplatesTest \
   com.kaivoflow.core.engine.OAuth2TokenManagerTest \
   com.kaivoflow.core.engine.FlowRunnerTest \
   com.kaivoflow.core.engine.FlowValidatorTest \
