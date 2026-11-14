@@ -9,12 +9,16 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.imePadding
+import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -73,6 +77,39 @@ class CredentialsViewModel @Inject constructor(
         }
     }
 
+    /** Saves a connected account; the first Run exchanges the refresh token for an access token. */
+    fun saveConnectedAccount(
+        label: String,
+        tokenUrl: String,
+        clientId: String,
+        clientSecret: String,
+        refreshToken: String,
+        authInHeader: Boolean,
+    ) {
+        viewModelScope.launch {
+            runCatching {
+                require(tokenUrl.trim().startsWith("https://")) {
+                    "A connected account needs an https:// token address."
+                }
+                require(refreshToken.isNotBlank()) { "Add the refresh token from your provider." }
+                val fields = mapOf(
+                    "tokenUrl" to tokenUrl.trim(),
+                    "clientId" to clientId.trim(),
+                    "clientSecret" to clientSecret,
+                    "refreshToken" to refreshToken,
+                    "grantType" to "refresh_token",
+                    "authStyle" to if (authInHeader) "basic" else "body",
+                    "accessToken" to "",
+                )
+                credentials.save(null, "oauth2", label.ifBlank { "Connected account" }, fields)
+                _message.value = "Saved. The account refreshes its token on first use; secrets stay encrypted."
+            }.onFailure { error ->
+                _message.value = error.message ?: "Could not save that connected account."
+            }
+            refresh()
+        }
+    }
+
     fun delete(id: String) {
         viewModelScope.launch {
             credentials.delete(id)
@@ -95,6 +132,9 @@ fun PrivacyCentreScreen(onBack: () -> Unit) {
         Modifier
             .fillMaxSize()
             .background(colors.canvasVoid)
+            .statusBarsPadding()
+            .navigationBarsPadding()
+            .imePadding()
             .verticalScroll(rememberScrollState())
             .padding(16.dp),
     ) {
@@ -165,6 +205,12 @@ fun CredentialsScreen(onBack: () -> Unit, viewModel: CredentialsViewModel = hilt
     val colors = KaivoTheme.colors
     var label by remember { mutableStateOf("") }
     var value by remember { mutableStateOf("") }
+    var accountLabel by remember { mutableStateOf("") }
+    var tokenUrl by remember { mutableStateOf("") }
+    var clientId by remember { mutableStateOf("") }
+    var clientSecret by remember { mutableStateOf("") }
+    var refreshToken by remember { mutableStateOf("") }
+    var authInHeader by remember { mutableStateOf(false) }
 
     androidx.compose.runtime.LaunchedEffect(Unit) { viewModel.refresh() }
 
@@ -172,6 +218,9 @@ fun CredentialsScreen(onBack: () -> Unit, viewModel: CredentialsViewModel = hilt
         Modifier
             .fillMaxSize()
             .background(colors.canvasVoid)
+            .statusBarsPadding()
+            .navigationBarsPadding()
+            .imePadding()
             .verticalScroll(rememberScrollState())
             .padding(16.dp),
     ) {
@@ -233,6 +282,92 @@ fun CredentialsScreen(onBack: () -> Unit, viewModel: CredentialsViewModel = hilt
                 viewModel.save(null, label, "apiKey", value)
                 label = ""
                 value = ""
+            },
+        )
+
+        Spacer(Modifier.height(24.dp))
+        SectionHeader(title = "Connect an account")
+        Spacer(Modifier.height(6.dp))
+        Text(
+            "Paste a refresh token once. KaivoFlow exchanges it for an access token on first use and keeps every secret encrypted on this phone.",
+            style = androidx.compose.material3.MaterialTheme.typography.bodyMedium,
+            color = colors.inkSecondary,
+        )
+        Spacer(Modifier.height(10.dp))
+        OutlinedTextField(
+            value = accountLabel,
+            onValueChange = { accountLabel = it },
+            label = { Text("Name (e.g. My workspace)") },
+            modifier = Modifier.fillMaxWidth(),
+            shape = KaivoShapes.chip,
+            singleLine = true,
+        )
+        Spacer(Modifier.height(8.dp))
+        OutlinedTextField(
+            value = tokenUrl,
+            onValueChange = { tokenUrl = it },
+            label = { Text("Token address (https://…)") },
+            modifier = Modifier.fillMaxWidth(),
+            shape = KaivoShapes.chip,
+            singleLine = true,
+            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri),
+        )
+        Spacer(Modifier.height(8.dp))
+        OutlinedTextField(
+            value = clientId,
+            onValueChange = { clientId = it },
+            label = { Text("Client ID") },
+            modifier = Modifier.fillMaxWidth(),
+            shape = KaivoShapes.chip,
+            singleLine = true,
+        )
+        Spacer(Modifier.height(8.dp))
+        OutlinedTextField(
+            value = clientSecret,
+            onValueChange = { clientSecret = it },
+            label = { Text("Client secret") },
+            modifier = Modifier.fillMaxWidth(),
+            shape = KaivoShapes.chip,
+            singleLine = true,
+            visualTransformation = PasswordVisualTransformation(),
+            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
+        )
+        Spacer(Modifier.height(8.dp))
+        OutlinedTextField(
+            value = refreshToken,
+            onValueChange = { refreshToken = it },
+            label = { Text("Refresh token") },
+            modifier = Modifier.fillMaxWidth(),
+            shape = KaivoShapes.chip,
+            singleLine = true,
+            visualTransformation = PasswordVisualTransformation(),
+            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
+        )
+        Spacer(Modifier.height(6.dp))
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Switch(checked = authInHeader, onCheckedChange = { authInHeader = it })
+            Spacer(Modifier.width(8.dp))
+            Text(
+                "Send client details in the authorization header",
+                style = androidx.compose.material3.MaterialTheme.typography.bodyMedium,
+                color = colors.inkPrimary,
+            )
+        }
+        Spacer(Modifier.height(12.dp))
+        GoldButton(
+            text = "Save connected account",
+            icon = "lock",
+            enabled = tokenUrl.isNotBlank() && refreshToken.isNotBlank() && clientId.isNotBlank(),
+            onClick = {
+                viewModel.saveConnectedAccount(
+                    accountLabel, tokenUrl, clientId, clientSecret, refreshToken, authInHeader,
+                )
+                accountLabel = ""
+                tokenUrl = ""
+                clientId = ""
+                clientSecret = ""
+                refreshToken = ""
+                authInHeader = false
             },
         )
         message?.let {

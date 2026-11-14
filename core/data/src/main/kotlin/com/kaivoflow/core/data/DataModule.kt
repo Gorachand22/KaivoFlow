@@ -2,6 +2,8 @@ package com.kaivoflow.core.data
 
 import android.content.Context
 import androidx.room.Room
+import com.kaivoflow.core.engine.HttpGateway
+import com.kaivoflow.core.engine.OAuth2TokenManager
 import dagger.Module
 import dagger.Provides
 import dagger.hilt.InstallIn
@@ -42,6 +44,13 @@ object RepositoryModule {
     fun runRepository(dao: RunDao): RunRepository = RoomRunRepository(dao)
 
     @Provides @Singleton
-    fun credentialRepository(dao: CredentialDao, cryptoBox: CryptoBox): CredentialRepository =
-        EncryptedCredentialRepository(dao, cryptoBox)
+    fun oauth2TokenManager(http: HttpGateway, dao: CredentialDao, cryptoBox: CryptoBox): OAuth2TokenManager =
+        OAuth2TokenManager(http, RoomOAuth2TokenStore(dao, cryptoBox))
+
+    @Provides @Singleton
+    fun credentialRepository(
+        dao: CredentialDao,
+        cryptoBox: CryptoBox,
+        tokens: OAuth2TokenManager,
+    ): CredentialRepository = EncryptedCredentialRepository(dao, cryptoBox, tokenManager = tokens)
 }

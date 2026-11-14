@@ -1,6 +1,8 @@
 package com.kaivoflow.core.data
 
 import com.kaivoflow.core.engine.CredentialProvider
+import com.kaivoflow.core.engine.OAuth2TokenManager
+import com.kaivoflow.core.engine.OAuth2TokenStore
 import com.kaivoflow.core.model.CredentialRef
 import com.kaivoflow.core.model.Flow
 import com.kaivoflow.core.model.RunRecord
@@ -169,14 +171,20 @@ class EncryptedCredentialRepository(
     private val credentialDao: CredentialDao,
     private val cryptoBox: CryptoBox = CryptoBox(),
     private val io: CoroutineDispatcher = Dispatchers.IO,
+    private val tokenManager: OAuth2TokenManager? = null,
 ) : CredentialRepository {
 
     override suspend fun resolve(ref: String): Map<String, String> = withContext(io) {
         val entity = credentialDao.byId(ref) ?: throw IllegalStateException("That credential was deleted. Pick another one.")
-        val json = cryptoBox.decrypt(entity.cipherText)
+        val fields = decrypt(entity.cipherText)
+        tokenManager?.refreshIfNeeded(ref, entity.type, fields) ?: fields
+    }
+
+    private fun decrypt(cipherText: String): Map<String, String> {
+        val json = cryptoBox.decrypt(cipherText)
             ?: throw IllegalStateException("This credential could not be unlocked on this device. Please re-enter it.")
         val map = JsonCodec.fromJsonMap(kotlinx.serialization.json.Json.parseToJsonElement(json)) ?: emptyMap()
-        map.mapValues { it.value?.toString().orEmpty() }
+        return map.mapValues { it.value?.toString().orEmpty() }
     }
 
     override suspend fun list(): List<CredentialRef> = withContext(io) {
@@ -205,4 +213,41 @@ class EncryptedCredentialRepository(
         }
 
     override suspend fun delete(id: String) = withContext(io) { credentialDao.delete(id) }
+}
+
+/**
+ * Encrypted persistence for refreshed OAuth2 tokens.
+ *
+ * This writes the credential row directly (never through [CredentialRepository.resolve]) so a
+ * refresh cannot recurse into itself. The access token, refresh token and client secret are all
+ * inside the same Keystore-encrypted blob as before.
+ */
+class RoomOAuth2TokenStore(
+    private val credentialDao: CredentialDao,
+    private val cryptoBox: CryptoBox = CryptoBox(),
+    private val io: CoroutineDispatcher = Dispatchers.IO,
+) : OAuth2TokenStore {
+
+    override suspend fun load(credentialId: String): Map<String, String> = withContext(io) {
+        val entity = credentialDao.byId(credentialId) ?: return@withContext emptyMap()
+        val json = cryptoBox.decrypt(entity.cipherText) ?: return@withContext emptyMap()
+        val map = JsonCodec.fromJsonMap(kotlinx.serialization.json.Json.parseToJsonElement(json)) ?: emptyMap()
+        map.mapValues { it.value?.toString().orEmpty() }
+    }
+
+    override suspend fun save(credentialId: String, fields: Map<String, String>) = withContext(io) {
+        val payload = JsonCodec.toJson(fields)?.toString() ?: "{}"
+        val cipherText = cryptoBox.encrypt(payload)
+            ?: throw IllegalStateException("This device's secure storage refused to encrypt the refreshed token.")
+        val existing = credentialDao.byId(credentialId)
+        credentialDao.upsert(
+            CredentialEntity(
+                id = credentialId,
+                type = existing?.type ?: "oauth2",
+                label = existing?.label ?: "Connected account",
+                cipherText = cipherText,
+                createdAt = existing?.createdAt ?: System.currentTimeMillis(),
+            )
+        )
+    }
 }
