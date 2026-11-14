@@ -1,5 +1,6 @@
 package com.kaivoflow.core.data
 
+import com.kaivoflow.core.model.BinaryDataRef
 import com.kaivoflow.core.model.Flow
 import com.kaivoflow.core.model.FlowData
 import com.kaivoflow.core.model.FlowSettings
@@ -80,7 +81,7 @@ object JsonCodec {
                             put("maxDelayMs", JsonPrimitive(step.retry.maxDelayMs))
                         })
                         step.frozenOutput?.let { frozen ->
-                            put("frozenOutput", buildJsonArray { frozen.forEach { add(toJson(it.json) ?: JsonNull) } })
+                            put("frozenOutput", buildJsonArray { frozen.forEach { add(encodeFlowData(it)) } })
                         }
                     }
                 )
@@ -146,7 +147,7 @@ object JsonCodec {
                             maxDelayMs = retry.long("maxDelayMs").takeIf { it > 0 } ?: 30_000,
                         )
                     } ?: RetryPolicy(),
-                    frozenOutput = (step["frozenOutput"] as? JsonArray)?.map { FlowData(fromJsonMap(it) ?: emptyMap()) }
+                    frozenOutput = (step["frozenOutput"] as? JsonArray)?.map { decodeFlowData(it) }
                         ?.toImmutableList(),
                 )
             }?.toImmutableList() ?: kotlinx.collections.immutable.persistentListOf(),
@@ -188,7 +189,7 @@ object JsonCodec {
                         put("attempts", JsonPrimitive(stepRun.attempts))
                         put("output", buildJsonArray {
                             stepRun.output.take(20).forEach { data ->
-                                add(toJson(data.json) ?: JsonNull)
+                                add(encodeFlowData(data))
                             }
                         })
                     }
@@ -220,12 +221,45 @@ object JsonCodec {
                     itemsOut = step.long("itemsOut").toInt(),
                     error = step.str("error").ifBlank { null },
                     attempts = step.long("attempts").toInt().coerceAtLeast(1),
-                    output = (step["output"] as? JsonArray)?.map { FlowData(fromJsonMap(it) ?: emptyMap()) }
+                    output = (step["output"] as? JsonArray)?.map { decodeFlowData(it) }
                         ?.toImmutableList() ?: kotlinx.collections.immutable.persistentListOf(),
                 )
             }?.toImmutableList() ?: kotlinx.collections.immutable.persistentListOf(),
         )
     }.getOrNull()
+
+    // ---- FlowData (json + binary attachments) ------------------------------------------
+
+    /**
+     * Encodes one data item. Older documents stored the bare json object; current documents store
+     * a wrapper so binary attachments, item pairing and error flags all survive a round trip.
+     */
+    fun encodeFlowData(data: FlowData): JsonObject = buildJsonObject {
+        put("json", toJson(data.json) ?: JsonObject(emptyMap()))
+        if (data.binary.isNotEmpty()) {
+            put("binary", buildJsonObject {
+                data.binary.forEach { (key, ref) -> put(key, toJson(ref.asJson()) ?: JsonNull) }
+            })
+        }
+        data.pairedIndex?.let { put("pairedIndex", JsonPrimitive(it)) }
+        data.error?.let { put("error", JsonPrimitive(it)) }
+    }
+
+    /** Reads both the current wrapped format and the legacy bare-json format. */
+    fun decodeFlowData(element: JsonElement): FlowData {
+        val obj = element as? JsonObject ?: return FlowData()
+        if (obj["json"] == null) return FlowData(fromJsonMap(element) ?: emptyMap())
+        val json = (obj["json"] as? JsonObject)?.let { fromJsonMap(it) } ?: emptyMap()
+        val binary = (obj["binary"] as? JsonObject)?.entries?.mapNotNull { (key, value) ->
+            BinaryDataRef.fromJson(fromJson(value))?.let { key to it }
+        }?.toMap() ?: emptyMap()
+        return FlowData(
+            json = json,
+            pairedIndex = (obj["pairedIndex"] as? JsonPrimitive)?.doubleOrNull?.toInt(),
+            error = (obj["error"] as? JsonPrimitive)?.content?.takeUnless { it == "null" },
+            binary = binary,
+        )
+    }
 
     // ---- JSON-ish value <-> JsonElement -------------------------------------------------
 

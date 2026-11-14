@@ -217,6 +217,200 @@ class AndroidDeviceGateway @Inject constructor(
         )
     }
 
+    // ---- Binary attachments: app-internal files, never external storage -------------------
+
+    override suspend fun storeBinary(fileName: String, mimeType: String, base64: String): Map<String, Any?>? =
+        withContext(Dispatchers.IO) {
+            val support = com.kaivoflow.core.nodes.BinarySupport
+            val bytes = support.decode(base64) ?: return@withContext null
+            val safe = support.safeFileName(fileName)
+            val dir = File(context.filesDir, "binary").apply { mkdirs() }
+            val file = File(dir, safe)
+            file.writeBytes(bytes)
+            mapOf(
+                "uri" to "kaivo://files/$safe",
+                "mimeType" to mimeType.ifBlank { "application/octet-stream" },
+                "fileName" to safe,
+                "sizeBytes" to bytes.size.toLong(),
+                "checksum" to com.kaivoflow.core.nodes.CryptoMath.sha256Hex(bytes),
+            )
+        }
+
+    override suspend fun loadBinary(uri: String): String? = withContext(Dispatchers.IO) {
+        val support = com.kaivoflow.core.nodes.BinarySupport
+        when {
+            uri.startsWith("data:") -> support.readDataUri(uri)
+            uri.startsWith("kaivo://files/") -> {
+                val name = support.safeFileName(uri.removePrefix("kaivo://files/"))
+                val file = File(File(context.filesDir, "binary"), name)
+                if (file.exists() && file.length() <= 25L * 1024 * 1024) {
+                    java.util.Base64.getEncoder().encodeToString(file.readBytes())
+                } else null
+            }
+            uri.startsWith("content://") -> runCatching {
+                context.contentResolver.openInputStream(Uri.parse(uri))?.use { input ->
+                    val bytes = input.readBytes()
+                    if (bytes.size <= 25L * 1024 * 1024) {
+                        java.util.Base64.getEncoder().encodeToString(bytes)
+                    } else null
+                }
+            }.getOrNull()
+            else -> null
+        }
+    }
+
+    // ---- Extended phone capabilities ---------------------------------------------------
+
+    override suspend fun readClipboard(): String? = withContext(Dispatchers.Main) {
+        val manager = context.getSystemService(ClipboardManager::class.java)
+        runCatching { manager?.primaryClip?.getItemAt(0)?.text?.toString() }.getOrNull()
+    }
+
+    override suspend fun showToast(text: String): Unit = withContext(Dispatchers.Main) {
+        android.widget.Toast.makeText(context, text.take(300), android.widget.Toast.LENGTH_SHORT).show()
+    }
+
+    override suspend fun shareText(text: String, title: String): Unit = withContext(Dispatchers.Main) {
+        val send = Intent(Intent.ACTION_SEND).apply {
+            type = "text/plain"
+            putExtra(Intent.EXTRA_TEXT, text)
+            putExtra(Intent.EXTRA_SUBJECT, title)
+        }
+        val chooser = Intent.createChooser(send, title.ifBlank { "Share via KaivoFlow" })
+            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        runCatching { context.startActivity(chooser) }
+        Unit
+    }
+
+    override suspend fun setTorch(enabled: Boolean): Boolean = withContext(Dispatchers.IO) {
+        runCatching {
+            val manager = context.getSystemService(android.hardware.camera2.CameraManager::class.java)
+            val cameraId = manager.cameraIdList.firstOrNull { id ->
+                runCatching {
+                    manager.getCameraCharacteristics(id)
+                        .get(android.hardware.camera2.CameraCharacteristics.FLASH_INFO_AVAILABLE) == true
+                }.getOrDefault(false)
+            }
+            if (cameraId == null) {
+                false
+            } else {
+                manager.setTorchMode(cameraId, enabled)
+                true
+            }
+        }.getOrDefault(false)
+    }
+
+    override suspend fun setVolume(level: Int): Boolean = withContext(Dispatchers.Main) {
+        runCatching {
+            val audio = context.getSystemService(android.media.AudioManager::class.java)
+            val max = audio.getStreamMaxVolume(android.media.AudioManager.STREAM_MUSIC)
+            audio.setStreamVolume(android.media.AudioManager.STREAM_MUSIC, level.coerceIn(0, max), 0)
+            true
+        }.getOrDefault(false)
+    }
+
+    @Suppress("MissingPermission")
+    override suspend fun getLocation(): Map<String, Any?> = withContext(Dispatchers.IO) {
+        val fine = ContextCompat.checkSelfPermission(
+            context, Manifest.permission.ACCESS_FINE_LOCATION
+        ) == PackageManager.PERMISSION_GRANTED
+        val coarse = ContextCompat.checkSelfPermission(
+            context, Manifest.permission.ACCESS_COARSE_LOCATION
+        ) == PackageManager.PERMISSION_GRANTED
+        if (!fine && !coarse) {
+            return@withContext mapOf("available" to false, "reason" to "Location permission is not granted.")
+        }
+        val manager = context.getSystemService(android.location.LocationManager::class.java)
+            ?: return@withContext mapOf("available" to false, "reason" to "Location is unavailable on this device.")
+        val location = manager.getProviders(true).firstNotNullOfOrNull { provider ->
+            runCatching { manager.getLastKnownLocation(provider) }.getOrNull()
+        }
+        if (location == null) {
+            mapOf("available" to false, "reason" to "No last known location yet.")
+        } else {
+            mapOf(
+                "available" to true,
+                "latitude" to location.latitude,
+                "longitude" to location.longitude,
+                "accuracyMeters" to location.accuracy,
+                "provider" to location.provider,
+                "timestamp" to location.time,
+            )
+        }
+    }
+
+    override suspend fun getWifiInfo(): Map<String, Any?> = withContext(Dispatchers.IO) {
+        try {
+            @Suppress("DEPRECATION")
+            val manager = context.applicationContext.getSystemService(Context.WIFI_SERVICE)
+                as? android.net.wifi.WifiManager
+            @Suppress("DEPRECATION")
+            val info = manager?.connectionInfo
+            mapOf(
+                "connected" to (info != null && info.networkId != -1),
+                "ssid" to info?.ssid?.trim('"'),
+                "rssi" to info?.rssi,
+                "linkSpeedMbps" to info?.linkSpeed,
+            )
+        } catch (e: Exception) {
+            mapOf("connected" to false, "reason" to (e.message ?: "Wi-Fi state is unavailable."))
+        }
+    }
+
+    override suspend fun lookupContact(query: String): Map<String, Any?> = withContext(Dispatchers.IO) {
+        if (ContextCompat.checkSelfPermission(context, Manifest.permission.READ_CONTACTS)
+            != PackageManager.PERMISSION_GRANTED
+        ) return@withContext mapOf("found" to false, "reason" to "Contacts permission is not granted.")
+        try {
+            val phone = android.provider.ContactsContract.CommonDataKinds.Phone
+            val cursor = context.contentResolver.query(
+                phone.CONTENT_URI,
+                arrayOf(phone.DISPLAY_NAME, phone.NUMBER),
+                "${phone.DISPLAY_NAME} LIKE ? OR ${phone.NUMBER} LIKE ?",
+                arrayOf("%$query%", "%$query%"),
+                null,
+            )
+            cursor?.use { c ->
+                if (c.moveToFirst()) {
+                    return@withContext mapOf(
+                        "found" to true,
+                        "query" to query,
+                        "name" to c.getString(0),
+                        "number" to c.getString(1),
+                    )
+                }
+            }
+            mapOf("found" to false, "query" to query)
+        } catch (e: Exception) {
+            mapOf("found" to false, "reason" to (e.message ?: "Contacts lookup failed."))
+        }
+    }
+
+    override suspend fun addCalendarEvent(
+        title: String,
+        startMillis: Long,
+        endMillis: Long,
+        description: String,
+    ): String? = withContext(Dispatchers.IO) {
+        if (ContextCompat.checkSelfPermission(context, Manifest.permission.WRITE_CALENDAR)
+            != PackageManager.PERMISSION_GRANTED
+        ) return@withContext null
+        try {
+            val events = android.provider.CalendarContract.Events
+            val values = android.content.ContentValues().apply {
+                put(events.DTSTART, startMillis)
+                put(events.DTEND, endMillis.coerceAtLeast(startMillis + 60_000L))
+                put(events.TITLE, title)
+                put(events.DESCRIPTION, description)
+                put(events.CALENDAR_ID, 1L)
+                put(events.EVENT_TIMEZONE, java.util.TimeZone.getDefault().id)
+            }
+            context.contentResolver.insert(events.CONTENT_URI, values)?.toString()
+        } catch (e: Exception) {
+            null
+        }
+    }
+
     private fun workflowDir(): File = File(context.filesDir, "flows").apply { mkdirs() }
 
     /** Prevent path traversal: a Flow may only write inside its own directory. */

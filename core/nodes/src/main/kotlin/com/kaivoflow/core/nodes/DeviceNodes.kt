@@ -33,6 +33,34 @@ interface DeviceGateway {
     suspend fun isSmsPermissionGranted(): Boolean
     suspend fun getBatteryStatus(): Map<String, Any?> = mapOf("level" to 100, "isCharging" to false, "status" to "ok")
     suspend fun getNetworkStatus(): Map<String, Any?> = mapOf("connected" to true, "type" to "wifi", "metered" to false)
+
+    // ---- Binary attachments ------------------------------------------------------------
+    // Default implementations keep test doubles and older gateways source-compatible while still
+    // giving every pure-Kotlin executor a working, bounded data-URI store.
+
+    /** Persists base64 bytes and returns a JSON-ish [com.kaivoflow.core.model.BinaryDataRef] map. */
+    suspend fun storeBinary(fileName: String, mimeType: String, base64: String): Map<String, Any?>? =
+        BinarySupport.storeAsDataUri(fileName, mimeType, base64)
+
+    /** Returns base64 bytes for a ref, or null when the URI is not readable on this device. */
+    suspend fun loadBinary(uri: String): String? = BinarySupport.readDataUri(uri)
+
+    // ---- Extended phone capabilities ---------------------------------------------------
+
+    suspend fun readClipboard(): String? = null
+    suspend fun showToast(text: String) = Unit
+    suspend fun shareText(text: String, title: String) = Unit
+    suspend fun setTorch(enabled: Boolean): Boolean = false
+    suspend fun setVolume(level: Int): Boolean = false
+    suspend fun getLocation(): Map<String, Any?> = emptyMap()
+    suspend fun getWifiInfo(): Map<String, Any?> = emptyMap()
+    suspend fun lookupContact(query: String): Map<String, Any?> = emptyMap()
+    suspend fun addCalendarEvent(
+        title: String,
+        startMillis: Long,
+        endMillis: Long,
+        description: String,
+    ): String? = null
 }
 
 /** A gateway that refuses everything, used by tests and previews. */

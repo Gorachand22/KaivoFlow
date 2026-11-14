@@ -112,9 +112,22 @@ data class HttpRequestSpec(
     /** Fail on 4xx/5xx instead of returning them as data. */
     val failOnErrorStatus: Boolean = true,
     val formFields: Map<String, String> = emptyMap(),
+    /** When true the response bytes are returned as base64 in [HttpResponseSpec.bodyBase64]. */
+    val responseAsBinary: Boolean = false,
+    /** When set, the body is sent as multipart/form-data carrying one binary attachment. */
+    val binaryUpload: BinaryUploadSpec? = null,
 ) {
-    enum class BodyKind { Json, Form, Raw, None }
+    enum class BodyKind { Json, Form, Raw, Multipart, None }
 }
+
+/** One file to upload as multipart/form-data. The bytes are base64 so the contract stays JSON-ish. */
+data class BinaryUploadSpec(
+    val field: String,
+    val fileName: String,
+    val mimeType: String,
+    val base64: String,
+    val extraFields: Map<String, String> = emptyMap(),
+)
 
 data class HttpResponseSpec(
     val status: Int,
@@ -122,6 +135,8 @@ data class HttpResponseSpec(
     val bodyText: String = "",
     val body: Any? = null,
     val durationMs: Long = 0,
+    /** Base64 of the raw response bytes, populated only when [HttpRequestSpec.responseAsBinary]. */
+    val bodyBase64: String = "",
 ) {
     val isSuccess: Boolean get() = status in 200..299
 }
