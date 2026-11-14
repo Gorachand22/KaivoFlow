@@ -7,6 +7,15 @@ import com.kaivoflow.core.model.RunTrigger
 import com.kaivoflow.core.nodes.TriggerSpecs
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.collections.immutable.toImmutableList
+import kotlinx.collections.immutable.toImmutableMap
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.JsonNull
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.booleanOrNull
+import kotlinx.serialization.json.doubleOrNull
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -135,7 +144,7 @@ class WebhookServer @Inject constructor(
             val payload = parseBody(body, headers["content-type"])
             respond(socket, 200, "OK", "{\"accepted\":true}")
             // Enqueue rather than block the socket on the whole Run.
-            launch {
+            scope.launch {
                 flowEngine.runById(
                     flowId = route.flowId,
                     trigger = RunTrigger(

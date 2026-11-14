@@ -1,5 +1,6 @@
 package com.kaivoflow.feature.canvas.render
 
+import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -83,7 +84,7 @@ fun JewelStepCard(
             targetValue = 0.75f,
             animationSpec = androidx.compose.animation.core.infiniteRepeatable(
                 animation = androidx.compose.animation.core.tween(
-                    motion.breathingDurationMs,
+                    motion.breathingDurationMs.toInt(),
                     easing = androidx.compose.animation.core.FastOutSlowInEasing,
                 ),
                 repeatMode = androidx.compose.animation.core.RepeatMode.Reverse,

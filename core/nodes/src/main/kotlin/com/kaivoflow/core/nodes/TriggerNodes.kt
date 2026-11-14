@@ -38,10 +38,10 @@ object TriggerSpecs {
     val timeZones = listOf("Asia/Kolkata", "Asia/Dubai", "Asia/Singapore", "Europe/London", "America/New_York", "UTC")
 }
 
-/** Base for the simple Spark executors: pass items through untouched. */
+/** Base for the Spark executors: forwards trigger items. */
 abstract class PassThroughTrigger : StepExecutor {
     override suspend fun execute(ctx: StepContext): StepResult =
-        StepResult(mapOf(0 to ctx.input.ifEmpty { listOf() }))
+        StepResult(mapOf(0 to ctx.input))
 }
 
 class ManualTriggerNode : PassThroughTrigger() {

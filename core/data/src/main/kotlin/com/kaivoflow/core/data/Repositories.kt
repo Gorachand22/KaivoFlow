@@ -175,7 +175,8 @@ class EncryptedCredentialRepository(
         val entity = credentialDao.byId(ref) ?: throw IllegalStateException("That credential was deleted. Pick another one.")
         val json = cryptoBox.decrypt(entity.cipherText)
             ?: throw IllegalStateException("This credential could not be unlocked on this device. Please re-enter it.")
-        JsonCodec.fromJsonMap(kotlinx.serialization.json.Json.parseToJsonElement(json)) ?: emptyMap()
+        val map = JsonCodec.fromJsonMap(kotlinx.serialization.json.Json.parseToJsonElement(json)) ?: emptyMap()
+        map.mapValues { it.value?.toString().orEmpty() }
     }
 
     override suspend fun list(): List<CredentialRef> = withContext(io) {

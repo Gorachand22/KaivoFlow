@@ -176,8 +176,8 @@ private fun buildPath(start: Point, end: Point): Path {
 private fun DrawScope.drawDotGrid(viewport: com.kaivoflow.feature.canvas.layout.Rect2, color: Color) {
     val spacing = 24f
     val radius = 1.2f * density
-    val startX = Math.floor(viewport.left / spacing) * spacing
-    val startY = Math.floor(viewport.top / spacing) * spacing
+    val startX = kotlin.math.floor(viewport.left / spacing) * spacing
+    val startY = kotlin.math.floor(viewport.top / spacing) * spacing
     var x = startX
     while (x <= viewport.right) {
         var y = startY

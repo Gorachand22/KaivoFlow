@@ -31,6 +31,8 @@ interface DeviceGateway {
     suspend fun vibrate(pattern: List<Long>)
     suspend fun isNotificationAccessGranted(): Boolean
     suspend fun isSmsPermissionGranted(): Boolean
+    suspend fun getBatteryStatus(): Map<String, Any?> = mapOf("level" to 100, "isCharging" to false, "status" to "ok")
+    suspend fun getNetworkStatus(): Map<String, Any?> = mapOf("connected" to true, "type" to "wifi", "metered" to false)
 }
 
 /** A gateway that refuses everything, used by tests and previews. */
@@ -47,6 +49,8 @@ object NoopDeviceGateway : DeviceGateway {
     override suspend fun vibrate(pattern: List<Long>) = Unit
     override suspend fun isNotificationAccessGranted(): Boolean = false
     override suspend fun isSmsPermissionGranted(): Boolean = false
+    override suspend fun getBatteryStatus(): Map<String, Any?> = mapOf("level" to 100, "isCharging" to false, "status" to "ok")
+    override suspend fun getNetworkStatus(): Map<String, Any?> = mapOf("connected" to true, "type" to "wifi", "metered" to false)
 }
 
 class NotificationSendNode(private val gateway: DeviceGateway) : StepExecutor {
@@ -246,5 +250,53 @@ class FileNode(private val gateway: DeviceGateway) : StepExecutor {
             gateway.writeFile(fileName, content.ifBlank { Values.stringify(ctx.input.map { it.json }) })
             ctx.output(ctx.input)
         }
+    }
+}
+
+class BatteryStatusNode(private val gateway: DeviceGateway) : StepExecutor {
+    override val spec = NodeSpec(
+        id = "device.battery_status",
+        title = "Battery status",
+        category = StepCategory.Device,
+        subtitle = "Get battery level and charging state",
+        iconKey = "battery",
+        params = persistentListOf(
+            ParamSpec("outputField", "Save status in", ParamType.Text, default = "battery"),
+        ),
+        keywords = persistentListOf("battery", "power", "charging", "level", "device"),
+    )
+
+    override suspend fun execute(ctx: StepContext): StepResult {
+        val params = ctx.params()
+        val field = Values.asString(params["outputField"], "battery")
+        val status = gateway.getBatteryStatus()
+        val out = ctx.input.map { item ->
+            item.copy(json = item.json + (field to status))
+        }
+        return ctx.output(out)
+    }
+}
+
+class NetworkStatusNode(private val gateway: DeviceGateway) : StepExecutor {
+    override val spec = NodeSpec(
+        id = "device.network_status",
+        title = "Network status",
+        category = StepCategory.Device,
+        subtitle = "Check Wi-Fi, cellular and internet connectivity",
+        iconKey = "globe",
+        params = persistentListOf(
+            ParamSpec("outputField", "Save status in", ParamType.Text, default = "network"),
+        ),
+        keywords = persistentListOf("wifi", "cellular", "internet", "network", "ping", "online"),
+    )
+
+    override suspend fun execute(ctx: StepContext): StepResult {
+        val params = ctx.params()
+        val field = Values.asString(params["outputField"], "network")
+        val status = gateway.getNetworkStatus()
+        val out = ctx.input.map { item ->
+            item.copy(json = item.json + (field to status))
+        }
+        return ctx.output(out)
     }
 }

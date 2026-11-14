@@ -151,17 +151,18 @@ class AndroidDeviceGateway @Inject constructor(
         if (file.exists()) file.readText() else null
     }
 
-    override suspend fun vibrate(pattern: List<Long>) = withContext(Dispatchers.Main) {
+    override suspend fun vibrate(pattern: List<Long>): Unit = withContext(Dispatchers.Main) {
         val vibrator = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
             context.getSystemService(VibratorManager::class.java).defaultVibrator
         } else {
             @Suppress("DEPRECATION")
             context.getSystemService(Vibrator::class.java)
         }
-        val timings = pattern.toLongArray().ifEmpty { longArrayOf(120) }
+        val timings = pattern.ifEmpty { listOf(120L) }.toLongArray()
         runCatching {
             vibrator.vibrate(VibrationEffect.createWaveform(timings, -1))
         }
+        Unit
     }
 
     override suspend fun isNotificationAccessGranted(): Boolean {
@@ -174,6 +175,47 @@ class AndroidDeviceGateway @Inject constructor(
 
     override suspend fun isSmsPermissionGranted(): Boolean =
         ContextCompat.checkSelfPermission(context, Manifest.permission.SEND_SMS) == PackageManager.PERMISSION_GRANTED
+
+    override suspend fun getBatteryStatus(): Map<String, Any?> = withContext(Dispatchers.IO) {
+        val filter = android.content.IntentFilter(Intent.ACTION_BATTERY_CHANGED)
+        val batteryStatus = context.registerReceiver(null, filter)
+        val level = batteryStatus?.getIntExtra(android.os.BatteryManager.EXTRA_LEVEL, -1) ?: -1
+        val scale = batteryStatus?.getIntExtra(android.os.BatteryManager.EXTRA_SCALE, -1) ?: -1
+        val percentage = if (level >= 0 && scale > 0) (level * 100) / scale else level
+        val status = batteryStatus?.getIntExtra(android.os.BatteryManager.EXTRA_STATUS, -1) ?: -1
+        val isCharging = status == android.os.BatteryManager.BATTERY_STATUS_CHARGING ||
+                status == android.os.BatteryManager.BATTERY_STATUS_FULL
+        val temperature = (batteryStatus?.getIntExtra(android.os.BatteryManager.EXTRA_TEMPERATURE, 0) ?: 0) / 10.0
+
+        mapOf(
+            "level" to percentage,
+            "isCharging" to isCharging,
+            "temperatureCelsius" to temperature,
+            "status" to if (isCharging) "charging" else "discharging"
+        )
+    }
+
+    override suspend fun getNetworkStatus(): Map<String, Any?> = withContext(Dispatchers.IO) {
+        val cm = context.getSystemService(android.net.ConnectivityManager::class.java)
+        val activeNetwork = cm?.activeNetwork
+        val caps = activeNetwork?.let { cm.getNetworkCapabilities(it) }
+        val isConnected = caps != null && (
+            caps.hasCapability(android.net.NetworkCapabilities.NET_CAPABILITY_INTERNET)
+        )
+        val isWifi = caps?.hasTransport(android.net.NetworkCapabilities.TRANSPORT_WIFI) == true
+        val isCellular = caps?.hasTransport(android.net.NetworkCapabilities.TRANSPORT_CELLULAR) == true
+        val isMetered = cm?.isActiveNetworkMetered == true
+
+        mapOf(
+            "connected" to isConnected,
+            "type" to when {
+                isWifi -> "wifi"
+                isCellular -> "cellular"
+                else -> if (isConnected) "other" else "none"
+            },
+            "metered" to isMetered
+        )
+    }
 
     private fun workflowDir(): File = File(context.filesDir, "flows").apply { mkdirs() }
 

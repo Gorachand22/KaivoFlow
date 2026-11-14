@@ -143,7 +143,7 @@ class BatteryHealth @Inject constructor(
             title = "Data Saver",
             explanation = "Data Saver blocks background data, so Flows that call an API will wait until you open the app.",
             ok = !restricted,
-            action = Intent(Settings.ACTION_DATA_SAVER_SETTINGS),
+            action = Intent(Settings.ACTION_DATA_USAGE_SETTINGS),
         )
     }
 

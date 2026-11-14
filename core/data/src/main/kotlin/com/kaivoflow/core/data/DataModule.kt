@@ -18,7 +18,7 @@ object DatabaseModule {
     fun provideDatabase(@ApplicationContext context: Context): KaivoDatabase =
         Room.databaseBuilder(context, KaivoDatabase::class.java, KaivoDatabase.NAME)
             // Schema is version 1; migrations are added here as the model evolves.
-            .fallbackToDestructiveMigrationOnDowngrade(dropAllTables = true)
+            .fallbackToDestructiveMigrationOnDowngrade()
             .build()
 
     @Provides fun flowDao(db: KaivoDatabase): FlowDao = db.flowDao()

@@ -78,7 +78,7 @@ class HttpNode : StepExecutor {
             ParamSpec("splitItems", "One item per array entry", ParamType.Boolean, default = true, advanced = true),
             ParamSpec("outputField", "Wrap response in field", ParamType.Text, advanced = true),
         ),
-        keywords = persistentListOf("http", "rest", "api", "request", "get", "post", "fetch", "webhook", "n8n http request"),
+        keywords = persistentListOf("http", "rest", "api", "request", "get", "post", "fetch", "webhook", "network call"),
     )
 
     override val requiresNetwork: Boolean get() = true

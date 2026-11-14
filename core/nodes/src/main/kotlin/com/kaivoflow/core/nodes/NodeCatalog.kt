@@ -38,6 +38,7 @@ object NodeCatalog {
         DateNode(),
         AggregateNode(),
         CodeNode(),
+        CryptoNode(),
         // AI
         AiChatNode(),
         AiExtractNode(),
@@ -58,6 +59,8 @@ object NodeCatalog {
         SpeakNode(devices),
         VibrateNode(devices),
         FileNode(devices),
+        BatteryStatusNode(devices),
+        NetworkStatusNode(devices),
     )
 
     fun registry(devices: DeviceGateway = NoopDeviceGateway): NodeRegistry = NodeRegistry(executors(devices))

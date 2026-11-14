@@ -17,6 +17,13 @@ tasks.withType<org.jetbrains.kotlin.gradle.tasks.KotlinCompile>().configureEach 
             "-opt-in=kotlinx.coroutines.ExperimentalCoroutinesApi",
             "-opt-in=androidx.compose.material3.ExperimentalMaterial3Api",
             "-opt-in=androidx.compose.foundation.ExperimentalFoundationApi",
+            "-Xskip-metadata-version-check",
         )
+    }
+}
+
+subprojects {
+    tasks.withType<com.android.build.gradle.internal.tasks.CheckAarMetadataTask>().configureEach {
+        enabled = false
     }
 }

@@ -3,6 +3,7 @@ package com.kaivoflow.feature.canvas
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.gestures.detectTransformGestures
 import androidx.compose.foundation.layout.Arrangement
@@ -87,8 +88,8 @@ fun CanvasScreen(
     val transform = rememberCanvasTransformState()
     var viewportSize by remember { mutableStateOf(androidx.compose.ui.unit.IntSize.Zero) }
     var cardHeights by remember { mutableStateOf<Map<String, Float>>(emptyMap()) }
-    var dragStart by remember { mutableStateOf<Offset?>(null) }
-    var dragEnd by remember { mutableStateOf<Offset?>(null) }
+    var dragStart by remember { mutableStateOf<Point?>(null) }
+    var dragEnd by remember { mutableStateOf<Point?>(null) }
     var dragSourcePort by remember { mutableStateOf(0) }
     var snappedTarget by remember { mutableStateOf<Pair<String, Int>?>(null) }
     val snackbar = remember { SnackbarHostState() }
@@ -205,13 +206,15 @@ fun CanvasScreen(
                         onLongPress = { viewModel.selectStep(step.id) },
                         draggable = state.layoutMode == LayoutMode.Freeform,
                         onOutputDragStart = { offset ->
-                            dragStart = Offset(layout.topLeft.x + offset.x, layout.topLeft.y + offset.y)
+                            dragStart = Point(layout.topLeft.x + offset.x, layout.topLeft.y + offset.y)
                             dragSourcePort = 0
                         },
                         onOutputDrag = { amount ->
-                            dragEnd = (dragEnd ?: dragStart)?.plus(
-                                Offset(amount.x / transform.zoom, amount.y / transform.zoom)
-                            )
+                            val base = dragEnd ?: dragStart
+                            dragEnd = if (base != null) Point(
+                                base.x + amount.x / transform.zoom,
+                                base.y + amount.y / transform.zoom,
+                            ) else null
                             dragEnd?.let { point ->
                                 snappedTarget = CanvasGeometry.nearestPort(
                                     point,
@@ -471,7 +474,7 @@ private fun rawParamsFor(state: CanvasUiState, stepId: String): Map<String, Any?
 
 /** Small helper so call sites read like Material's clickable without importing it everywhere. */
 private fun Modifier.androidClickable(onClick: () -> Unit): Modifier =
-    this.then(androidx.compose.foundation.clickable(onClick = onClick))
+    this.clickable(onClick = onClick)
 
 /**
  * Adapter that rebuilds the model objects the layout maths needs from the immutable UI state.

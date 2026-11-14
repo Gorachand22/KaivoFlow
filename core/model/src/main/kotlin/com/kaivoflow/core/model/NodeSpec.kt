@@ -19,7 +19,7 @@ data class NodeSpec(
     val outputs: Int = 1,
     val outputLabels: ImmutableList<String> = persistentListOf(),
     val params: ImmutableList<ParamSpec> = persistentListOf(),
-    /** Search aliases, including the legacy n8n name so users can find "HTTP Request" etc. */
+    /** Search aliases and keywords so users can quickly find nodes. */
     val keywords: ImmutableList<String> = persistentListOf(),
     /** True when the Step needs a sensitive Android permission (Pillar 4 disclosure). */
     val requiresSensitivePermission: String? = null,

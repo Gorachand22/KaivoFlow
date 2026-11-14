@@ -55,7 +55,7 @@ object FlowStructureBundle {
         checkDepth(text)
         val root = try { Json.parseToJsonElement(text) as? JsonObject } catch (_: Exception) { null }
             ?: throw InvalidBundle("This file is not a valid KaivoFlow structure.")
-        if ((root["format"] as? JsonPrimitive)?.content != FORMAT) throw InvalidBundle("This is not a KaivoFlow structure file; n8n imports are not supported yet.")
+        if ((root["format"] as? JsonPrimitive)?.content != FORMAT) throw InvalidBundle("This is not a valid KaivoFlow structure file.")
         if ((root["version"] as? JsonPrimitive)?.content != VERSION.toString()) throw InvalidBundle("This structure file version is not supported.")
         val document = root["flow"] as? JsonObject ?: throw InvalidBundle("The Flow is missing.")
         val rawSteps = document["steps"] as? JsonArray ?: throw InvalidBundle("The Steps list is missing.")

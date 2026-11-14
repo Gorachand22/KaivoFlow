@@ -27,6 +27,13 @@ object EventTriggerMatcher {
                 contains(payload["from"], step.paramString("senderContains")) &&
                 contains(payload["body"], step.paramString("bodyContains"))
             TriggerSpecs.SHARE -> step.paramString("types", "text") in setOf("text", "any") && payload["text"] is String
+            TriggerSpecs.BATTERY_LOW -> {
+                val level = (payload["level"] as? Number)?.toDouble() ?: return false
+                val threshold = (step.params["threshold"] as? Number)?.toDouble() ?: 20.0
+                val isCharging = payload["isCharging"] as? Boolean ?: false
+                val alsoWhenCharging = step.paramBoolean("alsoWhenCharging", false)
+                (level <= threshold) || (alsoWhenCharging && isCharging)
+            }
             else -> false // Unknown events never start a Flow by accident.
         }
     }

@@ -2,6 +2,7 @@ package com.kaivoflow.feature.settings
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -179,4 +180,4 @@ private fun SettingRow(title: String, subtitle: String, icon: String, onClick: (
 }
 
 private fun Modifier.androidClickable(onClick: () -> Unit): Modifier =
-    this.then(androidx.compose.foundation.clickable(onClick = onClick))
+    this.clickable(onClick = onClick)

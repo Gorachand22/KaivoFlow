@@ -242,7 +242,7 @@
       }
       return out;
     };
-    // n8n-style $node["Name"].json also works, KaivoFlow style is $step("Name").
+    // KaivoFlow step access syntax: $step("Name").json or $node["Name"].json
     globalThis.$step = stepFn;
     globalThis.$node = new Proxy({}, {
       get: function (_t, name) {

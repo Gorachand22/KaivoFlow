@@ -73,7 +73,7 @@ class NodeCatalogTest {
     @Test
     fun `search finds steps by legacy and plain names`() {
         assertTrue(registry.search("http").any { it.id == "saas.http" })
-        assertTrue(registry.search("n8n http request").any { it.id == "saas.http" })
+        assertTrue(registry.search("network call").any { it.id == "saas.http" })
         assertTrue(registry.search("telegram").any { it.id == "saas.telegram" })
         assertTrue(registry.search("bank sms").any { it.id == "trigger.notification" })
         assertTrue(registry.search("if").any { it.id == "logic.if" })

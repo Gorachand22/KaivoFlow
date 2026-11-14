@@ -33,6 +33,8 @@ class FlowRunWorker @AssistedInject constructor(
     @Assisted params: WorkerParameters,
     private val flowEngine: FlowEngine,
     private val runNotifications: RunNotifications,
+    private val flowRepository: com.kaivoflow.core.data.FlowRepository,
+    private val flowScheduler: FlowScheduler,
 ) : CoroutineWorker(appContext, params) {
 
     override suspend fun doWork(): Result {
@@ -59,7 +61,19 @@ class FlowRunWorker @AssistedInject constructor(
                 items = items.toImmutableList(),
             ),
             mode = ExecutionMode.Production,
-        ) ?: return Result.failure(workDataOf(KEY_ERROR to "flow not found"))
+        )
+
+        // Auto-reschedule recurring schedules
+        if (tags.contains(FlowScheduler.TAG_RESCHEDULE) || triggerKind in setOf("schedule", "scheduled")) {
+            runCatching {
+                val flow = flowRepository.flow(flowId)
+                if (flow != null) {
+                    flowScheduler.schedule(flow)
+                }
+            }
+        }
+
+        if (record == null) return Result.failure(workDataOf(KEY_ERROR to "flow not found"))
 
         val output = Data.Builder()
             .putString(KEY_RUN_ID, record.id)

@@ -321,7 +321,17 @@ class FlowRunner(
         private fun collectInput(step: StepNode, upstream: List<Pair<com.kaivoflow.core.model.StreamEdge, NodeResult>>): List<FlowData> {
             val raw = if (step.isTrigger) {
                 if (trigger.items.isEmpty() && trigger.kind.lowercase() in setOf("manual", "schedule", "scheduled")) {
-                    listOf(FlowData()) // A manual or timer tick carries one empty item, not zero.
+                    listOf(
+                        FlowData(
+                            json = mapOf(
+                                "timestamp" to clock(),
+                                "executionId" to runId,
+                                "trigger" to trigger.kind,
+                                "stepId" to step.id,
+                                "stepName" to step.name
+                            )
+                        )
+                    )
                 } else trigger.items.toList()
             } else {
                 upstream
@@ -399,8 +409,9 @@ class FlowRunner(
                         stepOutputs = snapshotOutputs(),
                         logger = { message, level -> onEvent(RunEvent.Log(runId, message, level)) },
                     )
-                    val result = if (step.timeoutMs != null) {
-                        withTimeout(step.timeoutMs) { executor.execute(ctx) }
+                    val timeout = step.timeoutMs
+                    val result = if (timeout != null) {
+                        withTimeout(timeout) { executor.execute(ctx) }
                     } else {
                         executor.execute(ctx)
                     }

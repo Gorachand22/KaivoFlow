@@ -122,7 +122,7 @@ data class StreamEdge(
     val label: String = "",
 )
 
-/** A single item of data flowing through a Flow — the n8n "item" concept, kept explicit. */
+/** A single item of data flowing through a Flow execution graph. */
 data class FlowData(
     val json: Map<String, Any?> = emptyMap(),
     /** Index of the input item that produced this item, used for item linking. */
