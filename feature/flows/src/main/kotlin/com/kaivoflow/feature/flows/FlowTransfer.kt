@@ -13,6 +13,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
+import com.kaivoflow.core.design.KaivoTheme
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -195,21 +196,37 @@ fun FlowTransferHost(
     )
 
     val noneText = stringResource(R.string.transfer_none)
+    val colors = KaivoTheme.colors
     state.exportDraft?.let { draft ->
         AlertDialog(
             onDismissRequest = viewModel::dismiss,
-            title = { Text(stringResource(if (draft.fullBackup) R.string.transfer_backup_title else R.string.transfer_export_title)) },
+            containerColor = colors.surfaceAtelier,
+            title = {
+                Text(
+                    stringResource(if (draft.fullBackup) R.string.transfer_backup_title else R.string.transfer_export_title),
+                    color = colors.inkPrimary,
+                )
+            },
             text = {
                 Text(
                     if (draft.fullBackup) {
                         stringResource(R.string.transfer_backup_warning, draft.name)
                     } else {
                         stringResource(R.string.transfer_export_warning, draft.name)
-                    }
+                    },
+                    color = colors.inkSecondary,
                 )
             },
-            confirmButton = { TextButton(onClick = { exportPicker.launch(draft.fileName) }) { Text(stringResource(R.string.transfer_choose_file)) } },
-            dismissButton = { TextButton(onClick = viewModel::dismiss) { Text(stringResource(R.string.transfer_cancel)) } },
+            confirmButton = {
+                TextButton(onClick = { exportPicker.launch(draft.fileName) }) {
+                    Text(stringResource(R.string.transfer_choose_file), color = colors.royalGold)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = viewModel::dismiss) {
+                    Text(stringResource(R.string.transfer_cancel), color = colors.inkSecondary)
+                }
+            },
         )
     }
     state.importPreview?.let { preview ->
@@ -218,7 +235,13 @@ fun FlowTransferHost(
         val rebind = preview.rebind.take(8).joinToString("\n").ifBlank { noneText }
         AlertDialog(
             onDismissRequest = viewModel::dismiss,
-            title = { Text(stringResource(if (preview.isFullBackup) R.string.transfer_import_full_title else R.string.transfer_import_title)) },
+            containerColor = colors.surfaceAtelier,
+            title = {
+                Text(
+                    stringResource(if (preview.isFullBackup) R.string.transfer_import_full_title else R.string.transfer_import_title),
+                    color = colors.inkPrimary,
+                )
+            },
             text = {
                 Text(
                     if (preview.isFullBackup) {
@@ -232,20 +255,36 @@ fun FlowTransferHost(
                             preview.flow.name, preview.flow.steps.size, preview.flow.streams.size, types, unknown,
                         )
                     },
+                    color = colors.inkSecondary,
                     modifier = Modifier.verticalScroll(rememberScrollState()),
                 )
             },
             confirmButton = {
                 TextButton(onClick = { viewModel.confirmImport(onImported) }) {
-                    Text(stringResource(if (preview.isFullBackup) R.string.transfer_import_full_confirm else R.string.transfer_import_confirm))
+                    Text(
+                        stringResource(if (preview.isFullBackup) R.string.transfer_import_full_confirm else R.string.transfer_import_confirm),
+                        color = colors.royalGold,
+                    )
                 }
             },
-            dismissButton = { TextButton(onClick = viewModel::dismiss) { Text(stringResource(R.string.transfer_cancel)) } },
+            dismissButton = {
+                TextButton(onClick = viewModel::dismiss) {
+                    Text(stringResource(R.string.transfer_cancel), color = colors.inkSecondary)
+                }
+            },
         )
     }
     state.message?.let { message ->
-        AlertDialog(onDismissRequest = viewModel::dismiss,
-            title = { Text(stringResource(R.string.transfer_result_title)) }, text = { Text(message) },
-            confirmButton = { TextButton(onClick = viewModel::dismiss) { Text(stringResource(R.string.transfer_ok)) } })
+        AlertDialog(
+            onDismissRequest = viewModel::dismiss,
+            containerColor = colors.surfaceAtelier,
+            title = { Text(stringResource(R.string.transfer_result_title), color = colors.inkPrimary) },
+            text = { Text(message, color = colors.inkSecondary) },
+            confirmButton = {
+                TextButton(onClick = viewModel::dismiss) {
+                    Text(stringResource(R.string.transfer_ok), color = colors.royalGold)
+                }
+            },
+        )
     }
 }
