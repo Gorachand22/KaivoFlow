@@ -131,7 +131,7 @@ fun FlowListScreen(
     val creating by viewModel.isCreating.collectAsStateWithLifecycle()
     val colors = KaivoTheme.colors
 
-    FlowTransferHost(onImported = onOpenFlow) { onImport, onExport ->
+    FlowTransferHost(onImported = onOpenFlow) { onImport, onExport, onBackup ->
     Box(Modifier.fillMaxSize().background(colors.canvasVoid)) {
         Column(Modifier.fillMaxSize()) {
             Row(
@@ -176,6 +176,7 @@ fun FlowListScreen(
                             lastRun = state.lastRunByFlow[flow.id],
                             onOpen = { onOpenFlow(flow.id) },
                             onExport = { onExport(flow.id) },
+                            onBackup = { onBackup(flow.id) },
                             onDuplicate = { viewModel.duplicate(flow.id, onOpenFlow) },
                             onDelete = { viewModel.delete(flow.id) },
                             onToggleFavorite = { viewModel.toggleFavorite(flow.id, !flow.isFavorite) },
@@ -228,6 +229,7 @@ private fun FlowRowCard(
     lastRun: RunRecord?,
     onOpen: () -> Unit,
     onExport: () -> Unit,
+    onBackup: () -> Unit,
     onDuplicate: () -> Unit,
     onDelete: () -> Unit,
     onToggleFavorite: () -> Unit,
@@ -278,7 +280,18 @@ private fun FlowRowCard(
             }
         }
         Spacer(Modifier.height(KaivoTheme.spacing.xs))
-        GhostButton(text = stringResource(R.string.transfer_export_button), onClick = onExport)
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            GhostButton(
+                text = stringResource(R.string.transfer_export_button),
+                onClick = onExport,
+                modifier = Modifier.weight(1f),
+            )
+            GhostButton(
+                text = stringResource(R.string.transfer_backup_button),
+                onClick = onBackup,
+                modifier = Modifier.weight(1f),
+            )
+        }
         if (lastRun != null) {
             Spacer(Modifier.height(10.dp))
             Row(verticalAlignment = Alignment.CenterVertically) {

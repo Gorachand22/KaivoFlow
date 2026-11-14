@@ -12,6 +12,8 @@ trap 'rm -rf "$OUTPUT"' EXIT
 "$KOTLINC_HOME/bin/kotlinc" "$ROOT/core/model/src/main/kotlin" \
   "$ROOT/core/data/src/main/kotlin/com/kaivoflow/core/data/JsonCodec.kt" \
   "$ROOT/core/data/src/main/kotlin/com/kaivoflow/core/data/FlowStructureBundle.kt" \
+  "$ROOT/core/data/src/main/kotlin/com/kaivoflow/core/data/NativeFlowBundle.kt" \
   "$ROOT/core/data/src/test/kotlin" -classpath "$CP" -jvm-target 11 -d "$OUTPUT"
 java -cp "$OUTPUT:$CP" org.junit.runner.JUnitCore \
-  com.kaivoflow.core.data.JsonCodecTest com.kaivoflow.core.data.FlowStructureBundleTest
+  com.kaivoflow.core.data.JsonCodecTest com.kaivoflow.core.data.FlowStructureBundleTest \
+  com.kaivoflow.core.data.NativeFlowBundleTest
