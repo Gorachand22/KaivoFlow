@@ -119,8 +119,6 @@ data class CanvasUiState(
     /** Step positions and raw params, kept here so the screen never re-reads the Flow document. */
     val positions: ImmutableMap<String, Pair<Float, Float>> = persistentMapOf(),
     val paramCache: ImmutableMap<String, ImmutableMap<String, Any?>> = persistentMapOf(),
-    val showPromptCard: Boolean = false,
-    val isPromptGenerating: Boolean = false,
     val vars: ImmutableMap<String, Any?> = persistentMapOf(),
     val groups: ImmutableList<FlowGroup> = persistentListOf(),
     val notes: ImmutableList<StickyNote> = persistentListOf(),
@@ -130,6 +128,8 @@ data class CanvasUiState(
     val showInfoDialog: Boolean = false,
     val showRenameDialog: Boolean = false,
     val showCreateGroupDialog: Boolean = false,
+    val stepRenaming: Pair<String, String>? = null,
+    val streamDisconnectTarget: StreamEdgeUiModel? = null,
 ) {
     val selectedStep: StepNodeUiModel? get() = steps.firstOrNull { it.id == selectedStepId }
     val canRun: Boolean get() = validation.isValid && !run.isRunning

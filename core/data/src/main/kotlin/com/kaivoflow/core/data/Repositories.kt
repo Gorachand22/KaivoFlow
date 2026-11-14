@@ -7,6 +7,8 @@ import com.kaivoflow.core.model.CredentialRef
 import com.kaivoflow.core.model.Flow
 import com.kaivoflow.core.model.RunRecord
 import com.kaivoflow.core.model.RunStatus
+import com.kaivoflow.core.model.WorkflowGroup
+import com.kaivoflow.core.model.WorkflowVariable
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow as FlowStream
@@ -23,6 +25,7 @@ data class FlowSummary(
     val isFavorite: Boolean,
     val lastRunStatus: String?,
     val lastRunAt: Long?,
+    val groupId: String? = null,
 )
 
 interface FlowRepository {
@@ -34,8 +37,9 @@ interface FlowRepository {
     suspend fun delete(id: String)
     suspend fun duplicate(id: String): Flow?
     suspend fun setFavorite(id: String, favorite: Boolean)
-    suspend fun createEmpty(name: String = "New Flow"): Flow
+    suspend fun createEmpty(name: String = "New Flow", groupId: String? = null): Flow
     suspend fun recordRun(flowId: String, status: RunStatus, at: Long)
+    suspend fun updateGroup(id: String, groupId: String?)
 }
 
 class RoomFlowRepository(
@@ -55,6 +59,7 @@ class RoomFlowRepository(
                     isFavorite = it.isFavorite,
                     lastRunStatus = it.lastRunStatus,
                     lastRunAt = it.lastRunAt,
+                    groupId = it.groupId,
                 )
             }
         }
@@ -86,6 +91,7 @@ class RoomFlowRepository(
                 stepCount = stamped.steps.size,
                 lastRunStatus = existing?.lastRunStatus,
                 lastRunAt = existing?.lastRunAt,
+                groupId = stamped.groupId,
             )
         )
         // Sovereign file mirror in app internal storage
@@ -123,9 +129,13 @@ class RoomFlowRepository(
         flowDao.setFavorite(id, favorite)
     }
 
-    override suspend fun createEmpty(name: String): Flow = withContext(io) {
+    override suspend fun createEmpty(name: String, groupId: String?): Flow = withContext(io) {
         val now = System.currentTimeMillis()
-        Flow(id = UUID.randomUUID().toString(), name = name, createdAt = now, updatedAt = now)
+        Flow(id = UUID.randomUUID().toString(), name = name, groupId = groupId, createdAt = now, updatedAt = now)
+    }
+
+    override suspend fun updateGroup(id: String, groupId: String?) = withContext(io) {
+        flowDao.updateGroup(id, groupId)
     }
 
     override suspend fun recordRun(flowId: String, status: RunStatus, at: Long) = withContext(io) {
@@ -265,5 +275,115 @@ class RoomOAuth2TokenStore(
                 createdAt = existing?.createdAt ?: System.currentTimeMillis(),
             )
         )
+    }
+}
+
+interface WorkflowGroupRepository {
+    fun observeAll(): FlowStream<List<WorkflowGroup>>
+    suspend fun save(group: WorkflowGroup)
+    suspend fun delete(id: String)
+}
+
+class RoomWorkflowGroupRepository(
+    private val dao: WorkflowGroupDao,
+    private val io: CoroutineDispatcher = Dispatchers.IO,
+) : WorkflowGroupRepository {
+    override fun observeAll(): FlowStream<List<WorkflowGroup>> =
+        dao.observeAll().map { entities ->
+            entities.map {
+                WorkflowGroup(
+                    id = it.id,
+                    name = it.name,
+                    description = it.description,
+                    color = it.color,
+                    createdAt = it.createdAt,
+                    updatedAt = it.updatedAt,
+                )
+            }
+        }
+
+    override suspend fun save(group: WorkflowGroup): Unit = withContext(io) {
+        dao.upsert(
+            WorkflowGroupEntity(
+                id = group.id,
+                name = group.name,
+                description = group.description,
+                color = group.color,
+                createdAt = group.createdAt,
+                updatedAt = System.currentTimeMillis(),
+            )
+        )
+    }
+
+    override suspend fun delete(id: String): Unit = withContext(io) {
+        dao.delete(id)
+    }
+}
+
+interface WorkflowVariableRepository {
+    fun observeAll(): FlowStream<List<WorkflowVariable>>
+    fun observeForGroup(groupId: String): FlowStream<List<WorkflowVariable>>
+    suspend fun save(variable: WorkflowVariable)
+    suspend fun delete(id: String)
+    suspend fun resolveVariables(groupId: String?): Map<String, String>
+}
+
+class RoomWorkflowVariableRepository(
+    private val dao: WorkflowVariableDao,
+    private val io: CoroutineDispatcher = Dispatchers.IO,
+) : WorkflowVariableRepository {
+    override fun observeAll(): FlowStream<List<WorkflowVariable>> =
+        dao.observeAll().map { entities ->
+            entities.map {
+                WorkflowVariable(
+                    id = it.id,
+                    groupId = it.groupId,
+                    key = it.key,
+                    value = it.value,
+                    createdAt = it.createdAt,
+                    updatedAt = it.updatedAt,
+                )
+            }
+        }
+
+    override fun observeForGroup(groupId: String): FlowStream<List<WorkflowVariable>> =
+        dao.observeForGroup(groupId).map { entities ->
+            entities.map {
+                WorkflowVariable(
+                    id = it.id,
+                    groupId = it.groupId,
+                    key = it.key,
+                    value = it.value,
+                    createdAt = it.createdAt,
+                    updatedAt = it.updatedAt,
+                )
+            }
+        }
+
+    override suspend fun save(variable: WorkflowVariable): Unit = withContext(io) {
+        dao.upsert(
+            WorkflowVariableEntity(
+                id = variable.id,
+                groupId = variable.groupId,
+                key = variable.key,
+                value = variable.value,
+                createdAt = variable.createdAt,
+                updatedAt = System.currentTimeMillis(),
+            )
+        )
+    }
+
+    override suspend fun delete(id: String): Unit = withContext(io) {
+        dao.delete(id)
+    }
+
+    override suspend fun resolveVariables(groupId: String?): Map<String, String> = withContext(io) {
+        val result = mutableMapOf<String, String>()
+        val all = if (groupId != null) dao.forGroup(groupId) else dao.all()
+        all.filter { it.groupId == null }.forEach { result[it.key] = it.value }
+        if (groupId != null) {
+            all.filter { it.groupId == groupId }.forEach { result[it.key] = it.value }
+        }
+        result
     }
 }

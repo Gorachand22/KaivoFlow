@@ -26,6 +26,9 @@ class RoomFlowRepositoryTest {
         override suspend fun delete(id: String) { map.remove(id) }
         override suspend fun updateLastRun(id: String, status: String, at: Long) {}
         override suspend fun setFavorite(id: String, favorite: Boolean) {}
+        override suspend fun updateGroup(id: String, groupId: String?) {
+            map[id]?.let { map[id] = it.copy(groupId = groupId) }
+        }
     }
 
     @Test

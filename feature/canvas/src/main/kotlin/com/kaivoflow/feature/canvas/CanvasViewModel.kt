@@ -61,7 +61,7 @@ class CanvasViewModel @Inject constructor(
     private val flowId: String = savedStateHandle.get<String>("flowId").orEmpty()
     private val registry = NodeCatalog.registry()
 
-    private val _state = MutableStateFlow(CanvasUiState(showPromptCard = false))
+    private val _state = MutableStateFlow(CanvasUiState())
     val state: StateFlow<CanvasUiState> = _state.asStateFlow()
 
     private val _promptEvents = Channel<String>(Channel.BUFFERED)
@@ -73,12 +73,8 @@ class CanvasViewModel @Inject constructor(
         viewModelScope.launch {
             flowRepository.observeFlow(flowId).collect { loaded ->
                 if (loaded == null) return@collect
-                val isFirstLoad = flow.steps.isEmpty() && loaded.steps.isNotEmpty()
                 flow = loaded
                 refreshValidation()
-                if (isFirstLoad) {
-                    _state.update { it.copy(showPromptCard = loaded.steps.isEmpty()) }
-                }
                 syncState()
             }
         }
@@ -104,7 +100,7 @@ class CanvasViewModel @Inject constructor(
             y = (flow.steps.maxOfOrNull { it.y } ?: 0f) + 120f,
         )
         flow = flow.plusStep(step)
-        if (insertAfter != null) {
+        if (insertAfter != null && spec.kind != NodeKind.Trigger) {
             flow = flow.plusStream(
                 StreamEdge(UUID.randomUUID().toString(), insertAfter, step.id, fromPort = insertPort)
             )
@@ -183,12 +179,6 @@ class CanvasViewModel @Inject constructor(
         _state.update { current -> current.inspector?.let { current.copy(inspector = it.copy(tab = tab)) } ?: current }
     }
 
-    fun renameStep(stepId: String, name: String) {
-        val step = flow.step(stepId) ?: return
-        flow = flow.withStep(step.copy(name = name.ifBlank { step.name }))
-        commit()
-    }
-
     fun updateParam(stepId: String, key: String, value: Any?) {
         val step = flow.step(stepId) ?: return
         flow = flow.withStep(step.copy(params = (step.params + (key to value)).toImmutableMap()))
@@ -216,7 +206,21 @@ class CanvasViewModel @Inject constructor(
 
     /** Returns true only when a Stream was actually added, so the canvas can celebrate success. */
     fun connectStream(fromStepId: String, fromPort: Int, toStepId: String): Boolean {
-        if (fromStepId == toStepId) return false
+        if (fromStepId == toStepId) {
+            toast("Cannot connect a step to itself.", LogLevel.Warn)
+            return false
+        }
+        val targetStep = flow.step(toStepId)
+        val targetSpec = targetStep?.let { registry.spec(it.type) }
+        if (targetSpec?.kind == NodeKind.Trigger) {
+            toast("Triggers (Sparks) cannot receive input from other steps. They start the flow.", LogLevel.Warn)
+            return false
+        }
+        val alreadyConnected = flow.streams.any { it.fromStepId == fromStepId && it.toStepId == toStepId && it.fromPort == fromPort }
+        if (alreadyConnected) {
+            toast("These steps are already connected.", LogLevel.Info)
+            return false
+        }
         // Reject cycles before they exist: a user dragging a loop gets a clear message.
         val candidate = flow.plusStream(
             StreamEdge(UUID.randomUUID().toString(), fromStepId, toStepId, fromPort = fromPort)
@@ -231,6 +235,38 @@ class CanvasViewModel @Inject constructor(
         return true
     }
 
+    fun openStepRename(stepId: String) {
+        val step = flow.step(stepId) ?: return
+        _state.update { it.copy(stepRenaming = step.id to step.name) }
+    }
+
+    fun closeStepRename() {
+        _state.update { it.copy(stepRenaming = null) }
+    }
+
+    fun renameStep(stepId: String, newName: String) {
+        val trimmed = newName.trim()
+        if (trimmed.isEmpty()) return
+        val step = flow.step(stepId) ?: return
+        flow = flow.withStep(step.copy(name = trimmed))
+        closeStepRename()
+        commit()
+    }
+
+    fun requestDisconnectStream(stream: StreamEdgeUiModel) {
+        _state.update { it.copy(streamDisconnectTarget = stream) }
+    }
+
+    fun dismissDisconnectStream() {
+        _state.update { it.copy(streamDisconnectTarget = null) }
+    }
+
+    fun confirmDisconnectStream() {
+        val target = _state.value.streamDisconnectTarget ?: return
+        disconnectStream(target.id)
+        dismissDisconnectStream()
+    }
+
     fun disconnectStream(streamId: String) {
         flow = flow.minusStream(streamId)
         commit()
@@ -238,6 +274,9 @@ class CanvasViewModel @Inject constructor(
 
     fun moveStep(stepId: String, x: Float, y: Float) {
         val step = flow.step(stepId) ?: return
+        if (_state.value.layoutMode == LayoutMode.GuidedPath) {
+            _state.update { it.copy(layoutMode = LayoutMode.Freeform) }
+        }
         flow = flow.withStep(step.copy(x = CanvasGeometry.snap(x), y = CanvasGeometry.snap(y)))
         scheduleSave()
         syncState()
@@ -456,34 +495,6 @@ class CanvasViewModel @Inject constructor(
                 }
             }
         }
-    }
-
-    /** Prompt-to-Flow: turns a sentence into a starter Flow the user can then edit. */
-    fun generateFromPrompt(prompt: String) {
-        if (prompt.isBlank()) return
-        _state.update { it.copy(isPromptGenerating = true) }
-        viewModelScope.launch {
-            val draft = PromptToFlow.draft(prompt, registry)
-            if (draft == null) {
-                _state.update { it.copy(isPromptGenerating = false) }
-                toast("Try describing a trigger and an action, e.g. \"every morning send me the weather\".", LogLevel.Warn)
-                return@launch
-            }
-            flow = draft.copy(id = flow.id, name = draft.name.ifBlank { "New Flow" })
-            commit()
-            _state.update {
-                it.copy(
-                    isPromptGenerating = false,
-                    showPromptCard = false,
-                    layoutMode = LayoutMode.GuidedPath,
-                    toasts = (it.toasts + ToastMessage(System.currentTimeMillis(), "Draft ready — tap a Step to tune it.")).toImmutableList(),
-                )
-            }
-        }
-    }
-
-    fun dismissPromptCard() {
-        _state.update { it.copy(showPromptCard = false) }
     }
 
     // ------------------------------------------------------------------ persistence

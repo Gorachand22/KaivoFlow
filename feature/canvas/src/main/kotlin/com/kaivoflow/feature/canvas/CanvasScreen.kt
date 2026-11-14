@@ -148,6 +148,7 @@ fun CanvasScreen(
             .pointerInput(Unit) {
                 // Pinch to zoom, drag to pan. Reads/writes transform state only.
                 detectTransformGestures { centroid, pan, zoom, _ ->
+                    if (cardDrag != null || draggedFromStepId != null) return@detectTransformGestures
                     transform.beginInteraction()
                     if (pan != Offset.Zero) transform.onPan(pan.x, pan.y)
                     if (zoom != 1f) {
@@ -156,7 +157,7 @@ fun CanvasScreen(
                 }
             },
     ) {
-        if (state.showPromptCard || state.steps.isEmpty()) {
+        if (state.steps.isEmpty()) {
             CanvasAura(Modifier.fillMaxSize())
         }
 
@@ -250,7 +251,8 @@ fun CanvasScreen(
                         selected = state.selectedStepId == step.id,
                         onTap = { viewModel.openInspector(step.id) },
                         onLongPress = { viewModel.selectStep(step.id) },
-                        draggable = state.layoutMode == LayoutMode.Freeform,
+                        draggable = true,
+                        onRename = { viewModel.openStepRename(step.id) },
                         onOutputDragStart = { port, offset ->
                             val origin = Point(layout.topLeft.x + offset.x, layout.topLeft.y + offset.y)
                             draggedFromStepId = step.id
@@ -465,7 +467,7 @@ fun CanvasScreen(
                         contentAlignment = Alignment.Center,
                     ) {
                         Icon(
-                            KaivoIcons.icon("bookmark"),
+                            KaivoIcons.icon("note"),
                             contentDescription = "Add Sticky Note",
                             tint = colors.inkSecondary,
                             modifier = Modifier.size(16.dp),
@@ -479,7 +481,7 @@ fun CanvasScreen(
                         contentAlignment = Alignment.Center,
                     ) {
                         Icon(
-                            KaivoIcons.icon("grid"),
+                            KaivoIcons.icon("group"),
                             contentDescription = "Create Group",
                             tint = colors.inkSecondary,
                             modifier = Modifier.size(16.dp),
@@ -493,7 +495,7 @@ fun CanvasScreen(
                         contentAlignment = Alignment.Center,
                     ) {
                         Icon(
-                            KaivoIcons.icon(if (state.layoutMode == LayoutMode.GuidedPath) "bolt" else "globe"),
+                            KaivoIcons.icon("route"),
                             contentDescription = if (state.layoutMode == LayoutMode.GuidedPath) "Switch to Freeform" else "Switch to Guided Path",
                             tint = if (state.layoutMode == LayoutMode.Freeform) colors.royalGold else colors.inkSecondary,
                             modifier = Modifier.size(16.dp),
@@ -598,59 +600,30 @@ fun CanvasScreen(
                 Spacer(Modifier.height(12.dp))
             }
 
-            if (state.showPromptCard) {
-                MagicPromptCard(
-                    isGenerating = state.isPromptGenerating,
-                    onGenerate = viewModel::generateFromPrompt,
-                )
-            } else {
-                Row(
-                    Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.Center,
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    GlassPill {
-                        Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                            Box(
-                                Modifier
-                                    .size(sizes.touchTarget)
-                                    .clip(CircleShape)
-                                    .androidClickable { viewModel.openStepPicker(null) }
-                                    .semantics { contentDescription = "Add a Step" },
-                                contentAlignment = Alignment.Center,
-                            ) {
-                                Icon(KaivoIcons.icon("add"), "Add a Step", tint = colors.royalGold, modifier = Modifier.size(24.dp))
-                            }
-                            Box(
-                                Modifier
-                                    .size(sizes.touchTarget)
-                                    .clip(CircleShape)
-                                    .androidClickable {
-                                        val bounds = CanvasGeometry.contentBounds(layouts.values, state.notes)
-                                        if (bounds.width > 0f) {
-                                            transform.fit(
-                                                bounds,
-                                                viewportSize.width.toFloat(),
-                                                viewportSize.height.toFloat(),
-                                                pixelScale = pixelScale,
-                                            )
-                                        }
-                                    }
-                                    .semantics { contentDescription = "Fit the Flow on screen" },
-                                contentAlignment = Alignment.Center,
-                            ) {
-                                Icon(KaivoIcons.icon("scale"), "Fit on screen", tint = colors.inkSecondary, modifier = Modifier.size(20.dp))
-                            }
-                        }
+            Row(
+                Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.Center,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                GlassPill {
+                    Box(
+                        Modifier
+                            .size(sizes.touchTarget)
+                            .clip(CircleShape)
+                            .androidClickable { viewModel.openStepPicker(null) }
+                            .semantics { contentDescription = "Add a Step" },
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Icon(KaivoIcons.icon("add"), "Add a Step", tint = colors.royalGold, modifier = Modifier.size(24.dp))
                     }
-                    Spacer(Modifier.size(12.dp))
-                    GoldButton(
-                        text = if (state.run.isRunning) "Running…" else "Run",
-                        icon = if (state.run.isRunning) "pause" else "play",
-                        enabled = state.canRun || state.run.isRunning,
-                        onClick = { if (state.run.isRunning) viewModel.cancelRun() else viewModel.run() },
-                    )
                 }
+                Spacer(Modifier.size(12.dp))
+                GoldButton(
+                    text = if (state.run.isRunning) "Running…" else "Run",
+                    icon = if (state.run.isRunning) "pause" else "play",
+                    enabled = state.canRun || state.run.isRunning,
+                    onClick = { if (state.run.isRunning) viewModel.cancelRun() else viewModel.run() },
+                )
             }
         }
 
@@ -687,9 +660,12 @@ fun CanvasScreen(
                     previousStepNames = state.steps
                         .takeWhile { it.id != step.id }
                         .map { it.name },
+                    connectedStreams = state.streams,
+                    allSteps = state.steps,
                     onTab = viewModel::setInspectorTab,
                     onParamChange = { key, value -> viewModel.updateParam(step.id, key, value) },
                     onRename = { viewModel.renameStep(step.id, it) },
+                    onDisconnectStream = { viewModel.requestDisconnectStream(it) },
                     onTestStep = viewModel::testStep,
                     onFreezeOutput = { viewModel.freezeOutput(step.id) },
                     onToggleDisabled = { viewModel.toggleStepDisabled(step.id) },
@@ -743,6 +719,25 @@ fun CanvasScreen(
                 onDismiss = { viewModel.editGroup(null) },
                 onSave = viewModel::saveGroup,
                 onDelete = { viewModel.deleteGroup(group.id) },
+            )
+        }
+
+        state.stepRenaming?.let { (stepId, currentName) ->
+            StepRenameDialog(
+                initialName = currentName,
+                onConfirm = { newName -> viewModel.renameStep(stepId, newName) },
+                onDismiss = viewModel::closeStepRename,
+            )
+        }
+
+        state.streamDisconnectTarget?.let { edge ->
+            val fromName = state.steps.firstOrNull { it.id == edge.fromStepId }?.name ?: "Step"
+            val toName = state.steps.firstOrNull { it.id == edge.toStepId }?.name ?: "Step"
+            StreamDisconnectDialog(
+                fromStepName = fromName,
+                toStepName = toName,
+                onConfirm = viewModel::confirmDisconnectStream,
+                onDismiss = viewModel::dismissDisconnectStream,
             )
         }
     }

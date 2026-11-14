@@ -26,6 +26,7 @@ data class Flow(
     val groups: ImmutableList<FlowGroup> = persistentListOf(),
     val notes: ImmutableList<StickyNote> = persistentListOf(),
     val isActive: Boolean = false,
+    val groupId: String? = null,
 ) {
     fun step(id: String?): StepNode? = if (id == null) null else steps.firstOrNull { it.id == id }
 

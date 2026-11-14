@@ -4,6 +4,7 @@ import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Arrangement
@@ -19,6 +20,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -44,6 +46,7 @@ import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import com.kaivoflow.core.design.BadgeKind
+import com.kaivoflow.core.design.KaivoIcons
 import com.kaivoflow.core.design.KaivoShapes
 import com.kaivoflow.core.design.KaivoTheme
 import com.kaivoflow.core.design.StatusBadge
@@ -77,8 +80,9 @@ fun JewelStepCard(
     onCardDrag: (Offset) -> Unit = {},
     onCardDragEnd: () -> Unit = {},
     onCardDragCancel: () -> Unit = {},
+    onRename: () -> Unit = {},
     modifier: Modifier = Modifier,
-    draggable: Boolean = false,
+    draggable: Boolean = true,
 ) {
     val colors = KaivoTheme.colors
     val sizes = KaivoTheme.sizes
@@ -195,13 +199,29 @@ fun JewelStepCard(
                 StepMedallion(iconKey = step.iconKey, tint = accent)
                 Spacer(Modifier.width(12.dp))
                 Column(Modifier.weight(1f)) {
-                    Text(
-                        text = step.name,
-                        style = androidx.compose.material3.MaterialTheme.typography.titleMedium,
-                        color = colors.inkPrimary,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                    )
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text(
+                            text = step.name,
+                            style = androidx.compose.material3.MaterialTheme.typography.titleMedium,
+                            color = colors.inkPrimary,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                        Spacer(Modifier.width(4.dp))
+                        Box(
+                            Modifier
+                                .clip(CircleShape)
+                                .clickable { onRename() }
+                                .padding(2.dp),
+                        ) {
+                            Icon(
+                                KaivoIcons.icon("edit"),
+                                contentDescription = "Rename ${step.name}",
+                                tint = colors.inkMuted,
+                                modifier = Modifier.size(12.dp),
+                            )
+                        }
+                    }
                     Spacer(Modifier.height(2.dp))
                     Text(
                         text = step.paramSummary,

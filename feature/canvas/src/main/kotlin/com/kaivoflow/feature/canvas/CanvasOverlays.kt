@@ -18,9 +18,13 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -297,90 +301,119 @@ fun CanvasControlsDock(
 }
 
 /**
- * Prompt-to-Flow: the empty state that turns a sentence into a Flow.
- *
- * Starter chips are real prompts that the (offline) matcher understands, so the very first tap
- * always produces something runnable.
+ * Dialog to rename a Step on the canvas.
  */
 @Composable
-fun MagicPromptCard(
-    isGenerating: Boolean,
-    onGenerate: (String) -> Unit,
-    modifier: Modifier = Modifier,
+fun StepRenameDialog(
+    initialName: String,
+    onConfirm: (String) -> Unit,
+    onDismiss: () -> Unit,
 ) {
     val colors = KaivoTheme.colors
-    var text by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf("") }
+    var name by remember { mutableStateOf(initialName) }
 
-    Column(
-        modifier
-            .fillMaxWidth()
-            .clip(KaivoShapes.sheetTop)
-            .background(colors.surfaceCard.copy(alpha = 0.92f))
-            .border(1.dp, colors.royalGold.copy(alpha = 0.22f), KaivoShapes.sheetTop)
-            .padding(20.dp),
-    ) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Icon(
-                KaivoIcons.icon("sparkles"),
-                contentDescription = null,
-                tint = colors.velvetRose,
-                modifier = Modifier.size(22.dp),
-            )
-            Spacer(Modifier.width(8.dp))
-            Text(
-                "Describe what you want your phone to automate",
-                style = androidx.compose.material3.MaterialTheme.typography.titleLarge,
-                color = colors.inkPrimary,
-            )
-        }
-        Spacer(Modifier.height(12.dp))
-
-        androidx.compose.material3.OutlinedTextField(
-            value = text,
-            onValueChange = { text = it },
-            modifier = Modifier.fillMaxWidth(),
-            placeholder = { Text("e.g. every morning at 8, send me the weather on Telegram") },
-            shape = KaivoShapes.stepCard,
-            minLines = 2,
-            trailingIcon = {
-                Box(
-                    Modifier
-                        .size(48.dp)
-                        .clip(CircleShape)
-                        .background(Brush.linearGradient(listOf(colors.velvetRose, colors.royalGold)))
-                        .clickable(enabled = !isGenerating && text.isNotBlank()) { onGenerate(text) },
-                    contentAlignment = Alignment.Center,
-                ) {
-                    if (isGenerating) {
-                        CircularProgressIndicator(color = Color.White, strokeWidth = 2.dp, modifier = Modifier.size(22.dp))
-                    } else {
-                        Icon(KaivoIcons.icon("sparkles"), "Build my Flow", tint = colors.canvasVoid, modifier = Modifier.size(24.dp))
-                    }
-                }
-            },
-        )
-        Spacer(Modifier.height(12.dp))
-        Text("Try one of these", style = androidx.compose.material3.MaterialTheme.typography.labelMedium, color = colors.inkMuted)
-        Spacer(Modifier.height(8.dp))
-        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            listOf(
-                "Summarise bank SMS alerts with AI & log them to a sheet",
-                "When I share a link, extract the key points and save to Notion",
-                "Every morning at 8 AM, fetch the weather and send a Telegram digest",
-            ).forEach { starter ->
-                Box(
-                    Modifier
-                        .fillMaxWidth()
-                        .clip(KaivoShapes.chip)
-                        .background(colors.surfaceElevated.copy(alpha = 0.6f))
-                        .clickable { text = starter }
-                        .padding(horizontal = 12.dp, vertical = 10.dp),
-                ) {
-                    Text(starter, style = androidx.compose.material3.MaterialTheme.typography.bodyMedium, color = colors.inkSecondary)
-                }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        containerColor = colors.surfaceElevated,
+        shape = KaivoShapes.stepCard,
+        title = {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(KaivoIcons.icon("edit"), contentDescription = null, tint = colors.royalGold, modifier = Modifier.size(20.dp))
+                Spacer(Modifier.width(8.dp))
+                Text("Rename Step", style = MaterialTheme.typography.titleMedium, color = colors.inkPrimary)
             }
-        }
-    }
+        },
+        text = {
+            Column {
+                Text(
+                    "Give this step a descriptive name that clarifies its role in your workflow.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = colors.inkSecondary,
+                )
+                Spacer(Modifier.height(12.dp))
+                OutlinedTextField(
+                    value = name,
+                    onValueChange = { name = it },
+                    singleLine = true,
+                    shape = KaivoShapes.chip,
+                    colors = OutlinedTextFieldDefaults.colors(
+                        focusedBorderColor = colors.royalGold,
+                        unfocusedBorderColor = colors.hairline,
+                        focusedTextColor = colors.inkPrimary,
+                        unfocusedTextColor = colors.inkPrimary,
+                    ),
+                    modifier = Modifier.fillMaxWidth(),
+                )
+            }
+        },
+        confirmButton = {
+            Button(
+                onClick = { if (name.isNotBlank()) onConfirm(name.trim()) },
+                colors = ButtonDefaults.buttonColors(containerColor = colors.royalGold, contentColor = colors.canvasVoid),
+                shape = KaivoShapes.chip,
+            ) {
+                Text("Save")
+            }
+        },
+        dismissButton = {
+            TextButton(
+                onClick = onDismiss,
+                colors = ButtonDefaults.textButtonColors(contentColor = colors.inkSecondary),
+            ) {
+                Text("Cancel")
+            }
+        },
+    )
+}
+
+/**
+ * Dialog to disconnect / delete a stream edge between two nodes.
+ */
+@Composable
+fun StreamDisconnectDialog(
+    fromStepName: String,
+    toStepName: String,
+    onConfirm: () -> Unit,
+    onDismiss: () -> Unit,
+) {
+    val colors = KaivoTheme.colors
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        containerColor = colors.surfaceElevated,
+        shape = KaivoShapes.stepCard,
+        title = {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(KaivoIcons.icon("disconnect"), contentDescription = null, tint = colors.velvetRose, modifier = Modifier.size(20.dp))
+                Spacer(Modifier.width(8.dp))
+                Text("Disconnect Stream", style = MaterialTheme.typography.titleMedium, color = colors.inkPrimary)
+            }
+        },
+        text = {
+            Text(
+                "Remove the connection between '$fromStepName' and '$toStepName'? Data will no longer flow between these steps.",
+                style = MaterialTheme.typography.bodyMedium,
+                color = colors.inkSecondary,
+            )
+        },
+        confirmButton = {
+            Button(
+                onClick = onConfirm,
+                colors = ButtonDefaults.buttonColors(containerColor = colors.velvetRose, contentColor = Color.White),
+                shape = KaivoShapes.chip,
+            ) {
+                Text("Disconnect")
+            }
+        },
+        dismissButton = {
+            TextButton(
+                onClick = onDismiss,
+                colors = ButtonDefaults.textButtonColors(contentColor = colors.inkSecondary),
+            ) {
+                Text("Cancel")
+            }
+        },
+    )
 }
 
 /** Small validation banner: what is stopping the Flow from running. */

@@ -51,6 +51,7 @@ object JsonCodec {
         put("createdAt", JsonPrimitive(flow.createdAt))
         put("updatedAt", JsonPrimitive(flow.updatedAt))
         put("isFavorite", JsonPrimitive(flow.isFavorite))
+        put("groupId", flow.groupId?.let { JsonPrimitive(it) } ?: JsonNull)
         put("vars", toJson(flow.vars) ?: JsonObject(emptyMap()))
         put("settings", buildJsonObject {
             put("timezone", JsonPrimitive(flow.settings.timezone))
@@ -143,6 +144,7 @@ object JsonCodec {
             createdAt = root.long("createdAt"),
             updatedAt = root.long("updatedAt"),
             isFavorite = root.bool("isFavorite"),
+            groupId = root.str("groupId").ifBlank { null },
             vars = root["vars"]?.let { fromJsonMap(it) }?.toImmutableMap() ?: kotlinx.collections.immutable.persistentMapOf(),
             tags = (root["tags"] as? JsonArray)?.map { it.jsonPrimitive.content }?.toImmutableList()
                 ?: kotlinx.collections.immutable.persistentListOf(),

@@ -63,6 +63,7 @@ import com.kaivoflow.core.model.ParamType
 import com.kaivoflow.feature.canvas.InspectorTab
 import com.kaivoflow.feature.canvas.InspectorUiState
 import com.kaivoflow.feature.canvas.StepNodeUiModel
+import com.kaivoflow.feature.canvas.StreamEdgeUiModel
 import kotlinx.collections.immutable.ImmutableList
 import kotlinx.collections.immutable.toImmutableList
 
@@ -81,9 +82,12 @@ fun StepInspectorSheet(
     spec: NodeSpec?,
     params: Map<String, Any?>,
     previousStepNames: List<String>,
+    connectedStreams: List<StreamEdgeUiModel> = emptyList(),
+    allSteps: List<StepNodeUiModel> = emptyList(),
     onTab: (InspectorTab) -> Unit,
     onParamChange: (String, Any?) -> Unit,
     onRename: (String) -> Unit,
+    onDisconnectStream: (StreamEdgeUiModel) -> Unit = {},
     onTestStep: () -> Unit,
     onFreezeOutput: () -> Unit,
     onToggleDisabled: () -> Unit,
@@ -142,12 +146,16 @@ fun StepInspectorSheet(
                         spec = spec,
                         params = params,
                         name = name,
+                        stepId = step.id,
+                        connectedStreams = connectedStreams,
+                        allSteps = allSteps,
                         onNameChange = {
                             name = it
                             onRename(it)
                         },
                         onParamChange = onParamChange,
                         onFocusChange = { key, focused -> focusedField = if (focused) key else null },
+                        onDisconnectStream = onDisconnectStream,
                         isDisabled = step.isDisabled,
                         onToggleDisabled = onToggleDisabled,
                     )
@@ -197,13 +205,20 @@ private fun ConfigureTab(
     spec: NodeSpec?,
     params: Map<String, Any?>,
     name: String,
+    stepId: String,
+    connectedStreams: List<StreamEdgeUiModel>,
+    allSteps: List<StepNodeUiModel>,
     onNameChange: (String) -> Unit,
     onParamChange: (String, Any?) -> Unit,
     onFocusChange: (String, Boolean) -> Unit,
+    onDisconnectStream: (StreamEdgeUiModel) -> Unit,
     isDisabled: Boolean,
     onToggleDisabled: () -> Unit,
 ) {
     val colors = KaivoTheme.colors
+    val incoming = connectedStreams.filter { it.toStepId == stepId }
+    val outgoing = connectedStreams.filter { it.fromStepId == stepId }
+
     Column(Modifier.padding(horizontal = 16.dp)) {
         OutlinedTextField(
             value = name,
@@ -214,6 +229,65 @@ private fun ConfigureTab(
             shape = KaivoShapes.chip,
         )
         Spacer(Modifier.height(12.dp))
+
+        // Connections section
+        if (incoming.isNotEmpty() || outgoing.isNotEmpty()) {
+            Text("Connected Streams", style = androidx.compose.material3.MaterialTheme.typography.titleMedium, color = colors.inkPrimary)
+            Spacer(Modifier.height(8.dp))
+            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                incoming.forEach { edge ->
+                    val sourceName = allSteps.firstOrNull { it.id == edge.fromStepId }?.name ?: "Previous Step"
+                    Row(
+                        Modifier
+                            .fillMaxWidth()
+                            .clip(KaivoShapes.chip)
+                            .background(colors.surfaceElevated)
+                            .border(1.dp, colors.hairline, KaivoShapes.chip)
+                            .padding(horizontal = 12.dp, vertical = 8.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Icon(KaivoIcons.icon("route"), contentDescription = null, tint = colors.royalGold, modifier = Modifier.size(16.dp))
+                        Spacer(Modifier.width(8.dp))
+                        Text("From: $sourceName", style = androidx.compose.material3.MaterialTheme.typography.bodyMedium, color = colors.inkPrimary, modifier = Modifier.weight(1f))
+                        Box(
+                            Modifier
+                                .size(32.dp)
+                                .clip(CircleShape)
+                                .clickable { onDisconnectStream(edge) },
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            Icon(KaivoIcons.icon("disconnect"), contentDescription = "Disconnect Stream", tint = colors.velvetRose, modifier = Modifier.size(16.dp))
+                        }
+                    }
+                }
+                outgoing.forEach { edge ->
+                    val targetName = allSteps.firstOrNull { it.id == edge.toStepId }?.name ?: "Next Step"
+                    Row(
+                        Modifier
+                            .fillMaxWidth()
+                            .clip(KaivoShapes.chip)
+                            .background(colors.surfaceElevated)
+                            .border(1.dp, colors.hairline, KaivoShapes.chip)
+                            .padding(horizontal = 12.dp, vertical = 8.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Icon(KaivoIcons.icon("route"), contentDescription = null, tint = colors.stepTransform, modifier = Modifier.size(16.dp))
+                        Spacer(Modifier.width(8.dp))
+                        Text("To: $targetName", style = androidx.compose.material3.MaterialTheme.typography.bodyMedium, color = colors.inkPrimary, modifier = Modifier.weight(1f))
+                        Box(
+                            Modifier
+                                .size(32.dp)
+                                .clip(CircleShape)
+                                .clickable { onDisconnectStream(edge) },
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            Icon(KaivoIcons.icon("disconnect"), contentDescription = "Disconnect Stream", tint = colors.velvetRose, modifier = Modifier.size(16.dp))
+                        }
+                    }
+                }
+            }
+            Spacer(Modifier.height(16.dp))
+        }
 
         Row(verticalAlignment = Alignment.CenterVertically) {
             Column(Modifier.weight(1f)) {

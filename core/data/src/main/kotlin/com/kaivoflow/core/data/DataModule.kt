@@ -19,13 +19,14 @@ object DatabaseModule {
     @Singleton
     fun provideDatabase(@ApplicationContext context: Context): KaivoDatabase =
         Room.databaseBuilder(context, KaivoDatabase::class.java, KaivoDatabase.NAME)
-            // Schema is version 1; migrations are added here as the model evolves.
-            .fallbackToDestructiveMigrationOnDowngrade()
+            .fallbackToDestructiveMigration()
             .build()
 
     @Provides fun flowDao(db: KaivoDatabase): FlowDao = db.flowDao()
     @Provides fun runDao(db: KaivoDatabase): RunDao = db.runDao()
     @Provides fun credentialDao(db: KaivoDatabase): CredentialDao = db.credentialDao()
+    @Provides fun workflowGroupDao(db: KaivoDatabase): WorkflowGroupDao = db.workflowGroupDao()
+    @Provides fun workflowVariableDao(db: KaivoDatabase): WorkflowVariableDao = db.workflowVariableDao()
 
     @Provides
     @Singleton
@@ -43,6 +44,12 @@ object RepositoryModule {
 
     @Provides @Singleton
     fun runRepository(dao: RunDao): RunRepository = RoomRunRepository(dao)
+
+    @Provides @Singleton
+    fun workflowGroupRepository(dao: WorkflowGroupDao): WorkflowGroupRepository = RoomWorkflowGroupRepository(dao)
+
+    @Provides @Singleton
+    fun workflowVariableRepository(dao: WorkflowVariableDao): WorkflowVariableRepository = RoomWorkflowVariableRepository(dao)
 
     @Provides @Singleton
     fun oauth2TokenManager(http: HttpGateway, dao: CredentialDao, cryptoBox: CryptoBox): OAuth2TokenManager =
