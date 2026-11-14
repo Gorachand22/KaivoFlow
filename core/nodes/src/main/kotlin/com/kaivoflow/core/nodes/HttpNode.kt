@@ -104,7 +104,10 @@ class HttpNode : StepExecutor {
             }
             "credential" -> {
                 val credential = ctx.credential()
-                credential["apiKey"]?.let { headers["Authorization"] = if (it.startsWith("Bearer ")) it else "Bearer $it" }
+                val token = credential.bearerToken()
+                if (token.isNotBlank()) {
+                    headers["Authorization"] = if (token.startsWith("Bearer ")) token else "Bearer $token"
+                }
                 credential["header"]?.let { name -> credential["value"]?.let { headers[name] = it } }
                 credential["username"]?.let { user ->
                     val raw = "$user:${credential["password"].orEmpty()}"

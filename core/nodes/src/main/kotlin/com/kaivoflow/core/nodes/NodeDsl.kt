@@ -31,6 +31,10 @@ internal fun StepContext.resolveBoolean(raw: Any?, index: Int = 0, fallback: Boo
 /** Secret params are never expression-expanded; read them straight from the raw Step params. */
 internal fun StepContext.secret(key: String): String = Values.asString(step.params[key])
 
+/** Connected-account credentials expose `accessToken`; classic vault entries expose `apiKey`. */
+internal fun Map<String, String>.bearerToken(): String =
+    this["accessToken"]?.takeIf { it.isNotBlank() } ?: this["apiKey"].orEmpty()
+
 /** Output field names are resolved once against the first item; they are configuration, not data. */
 internal fun StepContext.outputName(default: String): String = Values.asString(
     ParamResolver(evaluator).resolveValue(step.params["outputField"], scope()), default,

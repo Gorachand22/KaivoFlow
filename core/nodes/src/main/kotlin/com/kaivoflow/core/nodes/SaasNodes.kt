@@ -43,7 +43,7 @@ class TelegramNode : StepExecutor {
     override suspend fun execute(ctx: StepContext): StepResult {
         val params = ctx.params()
         val credential = ctx.credential()
-        val token = credential["apiKey"].orEmpty()
+        val token = credential.bearerToken()
         if (token.isBlank()) throw StepExecutionException(ctx.step.id, ctx.step.name, "the Telegram credential has no bot token")
         val resolver = ParamResolver(ctx.evaluator)
 
@@ -98,7 +98,7 @@ class SlackNode : StepExecutor {
         val params = ctx.params()
         val resolver = ParamResolver(ctx.evaluator)
         val webhook = Values.asString(params["webhookUrl"]).ifBlank {
-            ctx.credential()["apiKey"].orEmpty()
+            ctx.credential().bearerToken()
         }
         if (webhook.isBlank()) throw StepExecutionException(ctx.step.id, ctx.step.name, "add the Slack webhook URL")
 
@@ -145,7 +145,7 @@ class DiscordNode : StepExecutor {
     override suspend fun execute(ctx: StepContext): StepResult {
         val params = ctx.params()
         val resolver = ParamResolver(ctx.evaluator)
-        val webhook = Values.asString(params["webhookUrl"]).ifBlank { ctx.credential()["apiKey"].orEmpty() }
+        val webhook = Values.asString(params["webhookUrl"]).ifBlank { ctx.credential().bearerToken() }
         if (webhook.isBlank()) throw StepExecutionException(ctx.step.id, ctx.step.name, "add the Discord webhook URL")
         ctx.input.forEachIndexed { index, item ->
             val scope = ctx.scope(index)
@@ -206,7 +206,7 @@ class GoogleSheetsNode : StepExecutor {
     override suspend fun execute(ctx: StepContext): StepResult {
         val params = ctx.params()
         val credential = ctx.credential()
-        val token = credential["apiKey"].orEmpty()
+        val token = credential.bearerToken()
         if (token.isBlank()) throw StepExecutionException(ctx.step.id, ctx.step.name, "the Google credential is empty (use an OAuth access token)")
         val spreadsheetId = Values.asString(params["spreadsheetId"])
         val range = Values.asString(params["range"], "Sheet1!A1")
@@ -286,7 +286,7 @@ class NotionNode : StepExecutor {
     override suspend fun execute(ctx: StepContext): StepResult {
         val params = ctx.params()
         val credential = ctx.credential()
-        val token = credential["apiKey"].orEmpty()
+        val token = credential.bearerToken()
         if (token.isBlank()) throw StepExecutionException(ctx.step.id, ctx.step.name, "add a Notion integration token")
         val resolver = ParamResolver(ctx.evaluator)
 

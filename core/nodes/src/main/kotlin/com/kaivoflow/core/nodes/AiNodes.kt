@@ -48,7 +48,7 @@ internal object AiClient {
         }
 
         val credential = runCatching { ctx.credential() }.getOrNull().orEmpty()
-        val apiKey = credential["apiKey"].orEmpty().ifBlank { Values.asString(params["apiKey"]) }
+        val apiKey = credential.bearerToken().ifBlank { Values.asString(params["apiKey"]) }
 
         return when (provider) {
             "gemini" -> gemini(ctx, params, model, prompt, system, temperature, maxTokens, apiKey, jsonMode)
