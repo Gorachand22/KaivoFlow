@@ -1,19 +1,50 @@
-# KaivoFlow — Session Handoff & Device Verification
+# KaivoFlow — Session Handoff & Architecture Status
 
 > **Communication bridge between Cloud Agent (authoring code) and Local Agent (compilation + device verification).**
+> Local Agent runs on physical Realme 9 5G (API 33) with Gradle 8.5 & Android SDK 35.
 > Cloud role: pure Kotlin/Compose authoring only. Do not run or install Gradle, a JDK, npm or build tools in the cloud IDE.
 
 ---
 
 ## Current Session Status
-* **Branch:** `arena/bfa021c7-kaivoflow` (based on `b1dfe74` of `main`).
-* **Source:** 87 registered Step executors, five new mobile Sparks, binary transport, native full backup, connected-account token refresh, Sub-Flow composition, generic connector, polling state, starter templates, per-output Stream gestures and density-correct canvas coordinates.
-* **Static checks:** Kotlin delimiter/string check: 107 files, 0 issues. `git diff --check`: clean. Android/resource XML parse: clean.
-* **Compilation:** ❌ Not run here — no JDK/Kotlin/Gradle/Android SDK in the cloud IDE.
-* **Unit Tests:** ❌ Not run here — seven JVM suites authored/updated, ready for local Gradle.
-* **Device Run:** ❌ Not run here — see step-by-step checklist below.
-* **Architecture Docs:** See `docs/ARCHITECTURE.md`, `docs/CAPABILITY_GAP.md`, `PARITY.md` and `DEVELOPER_HANDOFF.md`.
-* **Git Status:** Clean working tree. All work is committed in small logical commits and pushed to `origin/arena/bfa021c7-kaivoflow` (active Arena work branch). Pull this branch for local verification; the legacy instruction referring to `main` is stale.
+* **Active Branch:** `main` (Fully up to date, commit `c772864`).
+* **Previous Arena Branch:** `origin/arena/bfa021c7-kaivoflow` is **100% merged into main** (commit `2ec4755` is an ancestor of `main`).
+* **Compilation & Device Testing:** All recent code compiled, tests passing (438 Gradle tasks, 0 test failures), and verified on physical Android phone.
+* **Architecture Docs:** See `docs/ARCHITECTURE.md`, `docs/CAPABILITY_GAP.md`, `PARITY.md`, `DEVELOPER_HANDOFF.md`, and `AGENTS.md`.
+
+---
+
+## What Has Been Completed & Verified on Device (On `main`)
+1. **Visual Step Grouping (`FlowGroup`):**
+   - Jewel-toned bounding container with header drag bar, dynamic step count pill, edit dialog (color & name), and ungroup action.
+   - Group dragging calculates world delta (`screenDelta / zoomScale`) and translates all member steps simultaneously without recomposing cards.
+2. **Sticky Notes (`StickyNote`):**
+   - Freeform world-coordinate documentation cards on canvas with title, body text, jewel tone accents, drag handle, and tap-to-edit dialog.
+3. **Inline Flow Renaming & Developer Info Dialog:**
+   - Tap flow title in Canvas Top Bar to rename directly via Velvet Obsidian dialog.
+   - Developer `(i)` button showing Step count, Stream count, Group count, Note count, and sovereign JSON path.
+4. **Live Auto-Save with Status Pill:**
+   - Auto-save debounced saving pill in Canvas Top Bar ("Saving…" in champagne gold -> "Saved" with checkmark).
+5. **24/7 Background Deployment Toggle (`Flow.isActive`):**
+   - Canvas Top Bar toggle switch (`Active` vs `Manual`) for persistent background automation.
+6. **Sovereign File Mirroring:**
+   - Every Flow is saved both to Room Database and mirrored directly to internal storage: `context.filesDir/flows/${flow.id}.json`.
+7. **Import / Export & Template Picker:**
+   - Native `.kaivoflow` import/export dialogs and template flow picker with full Velvet Obsidian styling.
+
+---
+
+## Current Roadmap: Next Focus Areas for Arena AI
+1. **Autonomous ReAct AI Agent Node (`ai.agent`):**
+   - Multi-turn tool-calling ReAct loop: receives goal, calls available Flow steps as tools, evaluates observations, and outputs structured result.
+   - Multi-provider LLM selector (Gemini 1.5/2.0 Flash, Claude 3.5 Sonnet, OpenAI GPT-4o, Local On-Device AI via Ollama/Exec).
+2. **Advanced Control Flow Nodes:**
+   - **SplitInBatches (`logic.split_in_batches`):** splits large lists into batches of N items; downstream loops until all batches processed.
+   - **Multi-Output Dynamic Switch (`logic.switch`):** evaluates multiple expression rules and routes items to port 0, 1, 2, 3... or fallback default port.
+   - **Advanced Merge Modes (`logic.merge`):** Append, Merge by Key, Multiplex, Wait for Both Inputs.
+3. **Canvas Step Testing & Inspector Enhancements:**
+   - **Test Step execution:** Run a single isolated Step with mock or upstream input data directly from the Inspector Sheet.
+   - **Pinned / Frozen Output Viewer:** visual toggle to freeze output and edit mock JSON on any step.
 
 ---
 
