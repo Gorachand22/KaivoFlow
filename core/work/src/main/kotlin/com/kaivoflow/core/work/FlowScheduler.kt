@@ -1,6 +1,13 @@
 package com.kaivoflow.core.work
 
+import android.Manifest
+import android.app.PendingIntent
 import android.content.Context
+import android.content.Intent
+import android.content.pm.PackageManager
+import android.location.LocationManager
+import android.os.Build
+import androidx.core.content.ContextCompat
 import androidx.work.Constraints
 import androidx.work.ExistingPeriodicWorkPolicy
 import androidx.work.ExistingWorkPolicy
@@ -50,6 +57,9 @@ class FlowScheduler @Inject constructor(
     }
 
     fun schedule(flow: Flow) {
+        // Location Sparks are platform proximity alerts, not WorkManager jobs. Re-sync on every
+        // save so editing a radius or disabling the Spark takes effect immediately.
+        syncGeofence(flow)
         val trigger = flow.triggers.firstOrNull { it.type == TriggerSpecs.SCHEDULE && !it.disabled } ?: run {
             cancelSchedule(flow.id)
             return
@@ -122,15 +132,60 @@ class FlowScheduler @Inject constructor(
      */
     suspend fun dispatchTrigger(kind: String, payload: Map<String, Any?>) {
         val seed = FlowData(json = payload)
-        flowRepository.all().forEach { flow ->
-            flow.triggers.filter { EventTriggerMatcher.matches(it, kind, payload, context.packageName) }
-                .forEach { spark -> runNow(flow, kind, listOf(seed), triggerStepId = spark.id) }
-        }
+        // Proximity alerts are registered per Flow; "targetFlowId" stops one phone's geofence from
+        // waking every other Flow that happens to have a location Spark.
+        val targetFlowId = payload["targetFlowId"] as? String
+        flowRepository.all()
+            .filter { flow -> targetFlowId == null || flow.id == targetFlowId }
+            .forEach { flow ->
+                flow.triggers.filter { EventTriggerMatcher.matches(it, kind, payload, context.packageName) }
+                    .forEach { spark -> runNow(flow, kind, listOf(seed), triggerStepId = spark.id) }
+            }
     }
 
     /** Convenience for the share sheet and battery Sparks, which carry no structured payload. */
     suspend fun dispatchSimple(kind: String, reason: String) =
         dispatchTrigger(kind, mapOf("reason" to reason, "at" to System.currentTimeMillis()))
+
+    /**
+     * Registers (or removes) the OS-level proximity alert backing a location Spark.
+     * `addProximityAlert` is a single low-power system subscription — no polling worker is needed.
+     */
+    private fun syncGeofence(flow: Flow) {
+        val manager = context.getSystemService(LocationManager::class.java) ?: return
+        // Intent extras are ignored by filterEquals, so the same PendingIntent can be removed and
+        // re-created with fresh coordinates without leaking duplicate alerts.
+        runCatching { manager.removeProximityAlert(geofenceIntent(flow.id, null)) }
+        val spark = flow.triggers.firstOrNull { it.type == TriggerSpecs.GEOFENCE && !it.disabled } ?: return
+        val granted = ContextCompat.checkSelfPermission(
+            context, Manifest.permission.ACCESS_FINE_LOCATION
+        ) == PackageManager.PERMISSION_GRANTED
+        if (!granted) return
+        val lat = spark.paramNumber("latitude", 0.0)
+        val lon = spark.paramNumber("longitude", 0.0)
+        val radius = spark.paramNumber("radiusMeters", 150.0).toFloat().coerceIn(25f, 100_000f)
+        if (lat !in -90.0..90.0 || lon !in -180.0..180.0) return
+        runCatching {
+            manager.addProximityAlert(lat, lon, radius, -1L, geofenceIntent(flow.id, spark))
+        }
+    }
+
+    private fun geofenceIntent(flowId: String, spark: StepNode?): PendingIntent {
+        val intent = Intent(context, MobileEventReceiver::class.java).apply {
+            action = MobileEventReceiver.ACTION_GEOFENCE
+            putExtra(MobileEventReceiver.EXTRA_FLOW_ID, flowId)
+            if (spark != null) {
+                putExtra(MobileEventReceiver.EXTRA_LAT, spark.paramNumber("latitude", 0.0))
+                putExtra(MobileEventReceiver.EXTRA_LON, spark.paramNumber("longitude", 0.0))
+            }
+        }
+        val flags = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_MUTABLE
+        } else {
+            PendingIntent.FLAG_UPDATE_CURRENT
+        }
+        return PendingIntent.getBroadcast(context, flowId.hashCode() and 0x7fff_ffff, intent, flags)
+    }
 
     fun cancel(flowId: String) {
         workManager.cancelAllWorkByTag(tagFor(flowId))

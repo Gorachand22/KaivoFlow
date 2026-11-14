@@ -32,8 +32,16 @@ object TriggerSpecs {
     const val SMS = "trigger.sms"
     const val SHARE = "trigger.share"
     const val BATTERY_LOW = "trigger.battery"
+    const val GEOFENCE = "trigger.geofence"
+    const val BLUETOOTH = "trigger.bluetooth"
+    const val WIFI = "trigger.wifi"
+    const val HEADSET = "trigger.headset"
+    const val BOOT = "trigger.boot"
 
-    val all = listOf(MANUAL, SCHEDULE, WEBHOOK, NOTIFICATION, SMS, SHARE, BATTERY_LOW)
+    val all = listOf(
+        MANUAL, SCHEDULE, WEBHOOK, NOTIFICATION, SMS, SHARE, BATTERY_LOW,
+        GEOFENCE, BLUETOOTH, WIFI, HEADSET, BOOT,
+    )
 
     val timeZones = listOf("Asia/Kolkata", "Asia/Dubai", "Asia/Singapore", "Europe/London", "America/New_York", "UTC")
 }

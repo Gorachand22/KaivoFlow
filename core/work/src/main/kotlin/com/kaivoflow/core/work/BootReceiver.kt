@@ -3,6 +3,7 @@ package com.kaivoflow.core.work
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
+import com.kaivoflow.core.nodes.TriggerSpecs
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -36,6 +37,9 @@ class BootReceiver : BroadcastReceiver() {
         CoroutineScope(Dispatchers.IO).launch {
             try {
                 scheduler.rescheduleAll()
+                if (action == Intent.ACTION_BOOT_COMPLETED || action == "android.intent.action.QUICKBOOT_POWERON") {
+                    scheduler.dispatchSimple(TriggerSpecs.BOOT, action)
+                }
             } finally {
                 pending.finish()
             }

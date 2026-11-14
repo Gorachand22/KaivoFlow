@@ -63,8 +63,48 @@ import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material.icons.filled.Visibility
 import androidx.compose.material.icons.filled.Vibration
 import androidx.compose.material.icons.filled.VolumeUp
+import androidx.compose.material.icons.filled.Api
+import androidx.compose.material.icons.filled.Archive
+import androidx.compose.material.icons.filled.AttachFile
+import androidx.compose.material.icons.filled.Audiotrack
+import androidx.compose.material.icons.filled.Bluetooth
+import androidx.compose.material.icons.filled.Calculate
+import androidx.compose.material.icons.filled.Compress
+import androidx.compose.material.icons.filled.Contacts
+import androidx.compose.material.icons.filled.DataObject
+import androidx.compose.material.icons.filled.Difference
+import androidx.compose.material.icons.filled.Download
+import androidx.compose.material.icons.filled.EventNote
+import androidx.compose.material.icons.filled.FilterList
+import androidx.compose.material.icons.filled.FlashOn
+import androidx.compose.material.icons.filled.Headset
+import androidx.compose.material.icons.filled.Html
+import androidx.compose.material.icons.filled.Image
+import androidx.compose.material.icons.filled.LocationOn
+import androidx.compose.material.icons.filled.Lock
+import androidx.compose.material.icons.filled.Map
+import androidx.compose.material.icons.filled.Numbers
+import androidx.compose.material.icons.filled.Percent
+import androidx.compose.material.icons.filled.PhotoCamera
+import androidx.compose.material.icons.filled.Pin
+import androidx.compose.material.icons.filled.PowerSettingsNew
+import androidx.compose.material.icons.filled.QueryStats
+import androidx.compose.material.icons.filled.RssFeed
+import androidx.compose.material.icons.filled.Shuffle
+import androidx.compose.material.icons.filled.SortByAlpha
+import androidx.compose.material.icons.filled.Storage
+import androidx.compose.material.icons.filled.SyncAlt
+import androidx.compose.material.icons.filled.TableChart
+import androidx.compose.material.icons.filled.TextFormat
+import androidx.compose.material.icons.filled.TextSnippet
+import androidx.compose.material.icons.filled.Timeline
+import androidx.compose.material.icons.filled.Token
+import androidx.compose.material.icons.filled.Translate
+import androidx.compose.material.icons.filled.UnfoldMore
+import androidx.compose.material.icons.filled.Upload
 import androidx.compose.material.icons.filled.WaterDrop
 import androidx.compose.material.icons.filled.Webhook
+import androidx.compose.material.icons.filled.Wifi
 import androidx.compose.ui.graphics.vector.ImageVector
 
 /**
@@ -143,6 +183,47 @@ object KaivoIcons {
         "language" to Icons.Filled.Language,
         "card" to Icons.Filled.CreditCard,
         "scale" to Icons.Filled.Scale,
+        // Extended catalog (Sparks, data tools, protocol Steps, device hardware).
+        "location" to Icons.Filled.LocationOn,
+        "map" to Icons.Filled.Map,
+        "bluetooth" to Icons.Filled.Bluetooth,
+        "wifi" to Icons.Filled.Wifi,
+        "headset" to Icons.Filled.Headset,
+        "power" to Icons.Filled.PowerSettingsNew,
+        "flashOn" to Icons.Filled.FlashOn,
+        "calculate" to Icons.Filled.Calculate,
+        "numbers" to Icons.Filled.Numbers,
+        "percent" to Icons.Filled.Percent,
+        "textFormat" to Icons.Filled.TextFormat,
+        "table" to Icons.Filled.TableChart,
+        "dataObject" to Icons.Filled.DataObject,
+        "html" to Icons.Filled.Html,
+        "markdown" to Icons.Filled.TextSnippet,
+        "queryStats" to Icons.Filled.QueryStats,
+        "timeline" to Icons.Filled.Timeline,
+        "token" to Icons.Filled.Token,
+        "pin" to Icons.Filled.Pin,
+        "lock" to Icons.Filled.Lock,
+        "attachFile" to Icons.Filled.AttachFile,
+        "download" to Icons.Filled.Download,
+        "upload" to Icons.Filled.Upload,
+        "storage" to Icons.Filled.Storage,
+        "archive" to Icons.Filled.Archive,
+        "compress" to Icons.Filled.Compress,
+        "shuffle" to Icons.Filled.Shuffle,
+        "sortByAlpha" to Icons.Filled.SortByAlpha,
+        "filterList" to Icons.Filled.FilterList,
+        "difference" to Icons.Filled.Difference,
+        "syncAlt" to Icons.Filled.SyncAlt,
+        "unfoldMore" to Icons.Filled.UnfoldMore,
+        "contacts" to Icons.Filled.Contacts,
+        "eventNote" to Icons.Filled.EventNote,
+        "translate" to Icons.Filled.Translate,
+        "api" to Icons.Filled.Api,
+        "rssFeed" to Icons.Filled.RssFeed,
+        "photoCamera" to Icons.Filled.PhotoCamera,
+        "image" to Icons.Filled.Image,
+        "audiotrack" to Icons.Filled.Audiotrack,
     )
 
     fun icon(key: String): ImageVector = byKey[key] ?: Icons.Filled.Bolt

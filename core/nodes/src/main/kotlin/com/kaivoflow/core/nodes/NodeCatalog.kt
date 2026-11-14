@@ -20,6 +20,11 @@ object NodeCatalog {
         SmsTriggerNode(),
         ShareTriggerNode(),
         BatteryTriggerNode(),
+        GeofenceTriggerNode(),
+        BluetoothTriggerNode(),
+        WifiTriggerNode(),
+        HeadsetTriggerNode(),
+        BootTriggerNode(),
         // Logic
         IfNode(),
         SwitchNode(),
