@@ -121,19 +121,13 @@
             </intent-filter>
         </receiver>
 
-        <!-- Phone-native Sparks: geofence proximity alerts, Wi-Fi, Bluetooth, headset. -->
+        <!-- Phone-native Sparks. Not exported: the geofence PendingIntent targets this component
+             explicitly, and Wi-Fi, Bluetooth and headset broadcasts are received through a runtime
+             registration in SparkRuntime (the manifest cannot receive them on modern Android). -->
         <receiver
             android:name="com.kaivoflow.core.work.MobileEventReceiver"
-            android:exported="true"
-            android:enabled="true">
-            <intent-filter>
-                <action android:name="com.kaivoflow.action.GEOFENCE" />
-                <action android:name="android.net.wifi.STATE_CHANGE" />
-                <action android:name="android.bluetooth.device.action.ACL_CONNECTED" />
-                <action android:name="android.bluetooth.device.action.ACL_DISCONNECTED" />
-                <action android:name="android.intent.action.HEADSET_PLUG" />
-            </intent-filter>
-        </receiver>
+            android:exported="false"
+            android:enabled="true" />
 
         <!-- WorkManager is initialised by KaivoApplication through the Hilt worker factory. -->
         <provider
@@ -149,7 +143,7 @@
 
         <!-- One hand-rolled server for the Webhook Spark; started only while such a Flow exists. -->
         <service
-            android:name="com.kaivoflow.core.work.WebhookServer"
+            android:name="com.kaivoflow.core.work.WebhookService"
             android:exported="false"
             android:foregroundServiceType="dataSync"
             android:stopWithTask="false" />

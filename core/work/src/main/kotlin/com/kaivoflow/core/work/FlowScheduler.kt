@@ -18,6 +18,7 @@ import androidx.work.PeriodicWorkRequestBuilder
 import androidx.work.WorkManager
 import androidx.work.workDataOf
 import com.kaivoflow.core.data.FlowRepository
+import com.kaivoflow.core.engine.SchedulePlanner
 import com.kaivoflow.core.engine.Values
 import com.kaivoflow.core.model.Flow
 import com.kaivoflow.core.model.ScheduleMath
@@ -49,33 +50,43 @@ class FlowScheduler @Inject constructor(
 ) {
     private val workManager get() = WorkManager.getInstance(context)
 
-    /** Re-registers every Flow; call on app start and after boot. */
+    /** Re-registers every active Flow and disarms inactive ones; call on app start and after boot. */
     suspend fun rescheduleAll() {
         flowRepository.all().forEach { flow ->
             runCatching { schedule(flow) }
         }
     }
 
-    fun schedule(flow: Flow) {
+    /**
+     * Arms (or disarms) the Flow's schedule.
+     *
+     * Inactive Flows are never armed. [currentSlot] / [firedFor] are passed by the worker that is
+     * about to run an occurrence: the NEXT occurrence is armed in the other unique-work slot, before
+     * the Run starts, so it neither depends on the Run succeeding nor cancels the running work.
+     */
+    fun schedule(flow: Flow, currentSlot: String? = null, firedFor: Long? = null) {
         // Location Sparks are platform proximity alerts, not WorkManager jobs. Re-sync on every
-        // save so editing a radius or disabling the Spark takes effect immediately.
+        // save so editing a radius or disabling the Spark/Flow takes effect immediately.
         syncGeofence(flow)
-        val trigger = flow.triggers.firstOrNull { it.type == TriggerSpecs.SCHEDULE && !it.disabled } ?: run {
-            cancelSchedule(flow.id)
+        val trigger = flow.triggers.firstOrNull { it.type == TriggerSpecs.SCHEDULE && !it.disabled }
+        if (!flow.isActive || trigger == null) {
+            cancelSchedule(flow.id, keepSlot = currentSlot)
             return
         }
-        cancelSchedule(flow.id)
 
         val frequency = trigger.paramString("frequency", "daily")
         val timezone = trigger.paramString("timezone", "Asia/Kolkata")
         val onlyOnWifi = trigger.paramBoolean("runOnlyOnWifi")
+        // Battery-not-low is opt-in: a forced constraint silently skipped reminders on low battery.
+        val requireBatteryNotLow = trigger.paramBoolean("requireBatteryNotLow")
         val constraints = Constraints.Builder()
             .setRequiredNetworkType(if (onlyOnWifi) NetworkType.UNMETERED else NetworkType.NOT_REQUIRED)
-            .setRequiresBatteryNotLow(true)
+            .setRequiresBatteryNotLow(requireBatteryNotLow)
             .build()
 
         when (frequency) {
             "minutes", "hourly" -> {
+                cancelSchedule(flow.id, keepSlot = currentSlot, keepPeriodic = true)
                 val minutes = if (frequency == "hourly") 60L else ScheduleMath.minutesInterval(trigger.paramNumber("interval", 15.0))
                 val request = PeriodicWorkRequestBuilder<FlowRunWorker>(minutes, TimeUnit.MINUTES)
                     .setConstraints(constraints)
@@ -86,16 +97,40 @@ class FlowScheduler @Inject constructor(
                 workManager.enqueueUniquePeriodicWork(flow.id, ExistingPeriodicWorkPolicy.UPDATE, request)
             }
             else -> {
-                val delayMs = nextOccurrenceDelay(trigger, timezone)
+                // Remove stale pending work (old config, legacy name, periodic) but never the running slot.
+                cancelSchedule(flow.id, keepSlot = currentSlot)
+                val now = System.currentTimeMillis()
+                val delayMs = if (firedFor != null) {
+                    val zone = runCatching { java.time.ZoneId.of(timezone) }.getOrDefault(java.time.ZoneId.systemDefault())
+                    SchedulePlanner.delayAfterFire(
+                        firedFor = firedFor,
+                        nowMillis = now,
+                        timeText = trigger.paramString("time", "08:00"),
+                        frequency = frequency,
+                        daysOfWeek = trigger.paramString("daysOfWeek", ""),
+                        dayOfMonth = trigger.paramNumber("dayOfMonth", 1.0).toInt(),
+                        zone = zone,
+                    )
+                } else {
+                    nextOccurrenceDelay(trigger, timezone, now)
+                }
+                val slot = SchedulePlanner.nextSlot(currentSlot)
                 val request = OneTimeWorkRequestBuilder<FlowRunWorker>()
                     .setInitialDelay(delayMs, TimeUnit.MILLISECONDS)
                     .setConstraints(constraints)
-                    .setInputData(inputFor(flow, "scheduled"))
+                    .setInputData(
+                        workDataOf(
+                            FlowRunWorker.KEY_FLOW_ID to flow.id,
+                            FlowRunWorker.KEY_TRIGGER to "scheduled",
+                            FlowRunWorker.KEY_SLOT to slot,
+                            FlowRunWorker.KEY_FIRE_AT to now + delayMs,
+                        )
+                    )
                     .addTag(tagFor(flow.id))
                     .addTag(scheduleTagFor(flow.id))
                     .addTag(TAG_RESCHEDULE)
                     .build()
-                workManager.enqueueUniqueWork("schedule-${flow.id}", ExistingWorkPolicy.REPLACE, request)
+                workManager.enqueueUniqueWork(slotName(flow.id, slot), ExistingWorkPolicy.REPLACE, request)
             }
         }
     }
@@ -136,6 +171,7 @@ class FlowScheduler @Inject constructor(
         // waking every other Flow that happens to have a location Spark.
         val targetFlowId = payload["targetFlowId"] as? String
         flowRepository.all()
+            .filter { flow -> flow.isActive }
             .filter { flow -> targetFlowId == null || flow.id == targetFlowId }
             .forEach { flow ->
                 flow.triggers.filter { EventTriggerMatcher.matches(it, kind, payload, context.packageName) }
@@ -156,6 +192,7 @@ class FlowScheduler @Inject constructor(
         // Intent extras are ignored by filterEquals, so the same PendingIntent can be removed and
         // re-created with fresh coordinates without leaking duplicate alerts.
         runCatching { manager.removeProximityAlert(geofenceIntent(flow.id, null)) }
+        if (!flow.isActive) return
         val spark = flow.triggers.firstOrNull { it.type == TriggerSpecs.GEOFENCE && !it.disabled } ?: return
         val granted = ContextCompat.checkSelfPermission(
             context, Manifest.permission.ACCESS_FINE_LOCATION
@@ -191,9 +228,16 @@ class FlowScheduler @Inject constructor(
         workManager.cancelAllWorkByTag(tagFor(flowId))
     }
 
-    private fun cancelSchedule(flowId: String) {
-        workManager.cancelAllWorkByTag(scheduleTagFor(flowId))
+    /** Cancels pending schedule work by unique name, sparing the slot whose Run is in progress. */
+    private fun cancelSchedule(flowId: String, keepSlot: String? = null, keepPeriodic: Boolean = false) {
+        listOf(SchedulePlanner.SLOT_A, SchedulePlanner.SLOT_B).filter { it != keepSlot }.forEach {
+            workManager.cancelUniqueWork(slotName(flowId, it))
+        }
+        workManager.cancelUniqueWork("schedule-$flowId") // legacy single-slot name
+        if (!keepPeriodic && keepSlot == null) workManager.cancelUniqueWork(flowId)
     }
+
+    private fun slotName(flowId: String, slot: String) = "schedule-$slot-$flowId"
 
     private fun scheduleTagFor(flowId: String) = "schedule:$flowId"
 

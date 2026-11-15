@@ -53,6 +53,20 @@ class FlowRunWorker @AssistedInject constructor(
             JsonItems.decode(raw)
         }.getOrDefault(emptyList())
 
+        val isScheduled = triggerKind in setOf("schedule", "scheduled")
+        if (isScheduled) {
+            val flow = flowRepository.flow(flowId)
+            // A disabled Flow must not run from a leftover alarm.
+            if (flow == null || !flow.isActive) return Result.success()
+            // Arm the next occurrence BEFORE running so a crash, kill or failure cannot end the
+            // schedule. One-shot work carries its slot; periodic work needs no re-arming.
+            val slot = inputData.getString(KEY_SLOT)
+            if (slot != null || tags.contains(FlowScheduler.TAG_RESCHEDULE)) {
+                val firedFor = inputData.getLong(KEY_FIRE_AT, -1L).takeIf { it >= 0 }
+                runCatching { flowScheduler.schedule(flow, currentSlot = slot, firedFor = firedFor) }
+            }
+        }
+
         val record = flowEngine.runById(
             flowId = flowId,
             trigger = RunTrigger(
@@ -62,16 +76,6 @@ class FlowRunWorker @AssistedInject constructor(
             ),
             mode = ExecutionMode.Production,
         )
-
-        // Auto-reschedule recurring schedules
-        if (tags.contains(FlowScheduler.TAG_RESCHEDULE) || triggerKind in setOf("schedule", "scheduled")) {
-            runCatching {
-                val flow = flowRepository.flow(flowId)
-                if (flow != null) {
-                    flowScheduler.schedule(flow)
-                }
-            }
-        }
 
         if (record == null) return Result.failure(workDataOf(KEY_ERROR to "flow not found"))
 
@@ -83,7 +87,7 @@ class FlowRunWorker @AssistedInject constructor(
             .build()
 
         return when (record.status) {
-            RunStatus.Succeeded, RunStatus.PartialSuccess -> Result.success(output)
+            RunStatus.Succeeded, RunStatus.PartialSuccess, RunStatus.Queued -> Result.success(output)
             RunStatus.Canceled -> Result.failure(output)
             // Never replay the entire Flow automatically: earlier Steps may have sent messages
             // or performed other non-idempotent actions. Explicit Step retries remain opt-in.
@@ -121,6 +125,8 @@ class FlowRunWorker @AssistedInject constructor(
         const val KEY_ITEMS_OUT = "itemsOut"
         const val KEY_DURATION = "duration"
         const val KEY_ERROR = "error"
+        const val KEY_SLOT = "slot"
+        const val KEY_FIRE_AT = "fireAt"
         const val FOREGROUND_NOTIFICATION_ID = 4242
     }
 }

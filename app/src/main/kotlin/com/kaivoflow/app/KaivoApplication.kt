@@ -4,6 +4,7 @@ import android.app.Application
 import androidx.hilt.work.HiltWorkerFactory
 import androidx.work.Configuration
 import com.kaivoflow.core.work.FlowScheduler
+import com.kaivoflow.core.work.SparkRuntime
 import dagger.hilt.android.HiltAndroidApp
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -26,6 +27,8 @@ class KaivoApplication : Application(), Configuration.Provider {
 
     @Inject lateinit var workerFactory: HiltWorkerFactory
     @Inject lateinit var scheduler: FlowScheduler
+    @Inject lateinit var flowEngine: com.kaivoflow.core.work.FlowEngine
+    @Inject lateinit var sparkRuntime: SparkRuntime
 
     private val appScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
 
@@ -37,6 +40,8 @@ class KaivoApplication : Application(), Configuration.Provider {
 
     override fun onCreate() {
         super.onCreate()
+        appScope.launch { runCatching { flowEngine.recoverAndPrune() } }
         appScope.launch { runCatching { scheduler.rescheduleAll() } }
+        runCatching { sparkRuntime.start() }
     }
 }

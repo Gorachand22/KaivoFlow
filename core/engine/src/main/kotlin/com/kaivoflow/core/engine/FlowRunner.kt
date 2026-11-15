@@ -74,7 +74,9 @@ class FlowRunner(
         trigger: RunTrigger = RunTrigger(),
         options: RunOptions = RunOptions(),
         onEvent: (RunEvent) -> Unit = {},
-    ): RunRecord = Execution(flow, trigger, options, onEvent).execute()
+        /** Called once the Run has a Spark and is about to execute, with a Running record to persist. */
+        onRunStarted: (suspend (RunRecord) -> Unit)? = null,
+    ): RunRecord = Execution(flow, trigger, options, onEvent, onRunStarted).execute()
 
     /**
      * Executes one Step on its own — the "Test Step" button in the inspector.
@@ -125,6 +127,7 @@ class FlowRunner(
         val trigger: RunTrigger,
         val options: RunOptions,
         val onEvent: (RunEvent) -> Unit,
+        val onRunStarted: (suspend (RunRecord) -> Unit)? = null,
     ) {
         val runId: String = newId()
         val startedAt: Long = clock()
@@ -186,6 +189,15 @@ class FlowRunner(
             }
             selectedTriggerId = selected.id
             onEvent(RunEvent.RunStarted(runId, flow.id, compiled.order.size))
+            // A failure to persist the start must never stop the Run itself.
+            onRunStarted?.let { cb ->
+                try {
+                    cb(RunRecord(id = runId, flowId = flow.id, flowName = flow.name, status = RunStatus.Running,
+                        startedAt = startedAt, trigger = trigger.kind, triggerData = trigger.meta))
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (_: Throwable) { }
+            }
 
             val timeout = options.timeoutMs ?: flow.settings.executionTimeoutMs
             val status = try {

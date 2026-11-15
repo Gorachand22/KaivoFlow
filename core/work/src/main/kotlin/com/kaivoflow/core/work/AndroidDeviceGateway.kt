@@ -18,6 +18,7 @@ import android.telephony.SmsManager
 import androidx.core.app.NotificationCompat
 import androidx.core.content.ContextCompat
 import com.kaivoflow.core.nodes.DeviceGateway
+import com.kaivoflow.core.nodes.UserFileStore
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.suspendCancellableCoroutine
@@ -140,15 +141,11 @@ class AndroidDeviceGateway @Inject constructor(
     }
 
     override suspend fun writeFile(fileName: String, content: String): String = withContext(Dispatchers.IO) {
-        val dir = workflowDir()
-        val file = File(dir, sanitize(fileName))
-        file.writeText(content)
-        file.absolutePath
+        userFiles.write(fileName, content)
     }
 
     override suspend fun readFile(fileName: String): String? = withContext(Dispatchers.IO) {
-        val file = File(workflowDir(), sanitize(fileName))
-        if (file.exists()) file.readText() else null
+        userFiles.read(fileName)
     }
 
     override suspend fun vibrate(pattern: List<Long>): Unit = withContext(Dispatchers.Main) {
@@ -418,11 +415,8 @@ class AndroidDeviceGateway @Inject constructor(
         }
     }
 
-    private fun workflowDir(): File = File(context.filesDir, "flows").apply { mkdirs() }
-
-    /** Prevent path traversal: a Flow may only write inside its own directory. */
-    private fun sanitize(fileName: String): String =
-        fileName.replace(Regex("[^A-Za-z0-9._-]"), "_").take(96).ifBlank { "state.json" }
+    /** File Step storage: files/user-files/, separate from the Flow mirror in files/flows/. */
+    private val userFiles by lazy { UserFileStore(File(context.filesDir, "user-files")) }
 
     private companion object {
         const val CHANNEL_DEFAULT = "kaivo.results"
