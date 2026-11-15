@@ -87,10 +87,11 @@ class FlowRunner(
         onEvent: (RunEvent) -> Unit = {},
     ): StepRun {
         val step = flow.step(stepId) ?: throw KaivoException("Step not found: $stepId")
-        val execution = Execution(flow, RunTrigger(kind = "test", items = input.toImmutableList()), RunOptions(mode = ExecutionMode.TestStep), onEvent)
+        val effectiveInput = if (input.isEmpty()) listOf(FlowData()) else input
+        val execution = Execution(flow, RunTrigger(kind = "test", items = effectiveInput.toImmutableList()), RunOptions(mode = ExecutionMode.TestStep), onEvent)
         onEvent(RunEvent.RunStarted(execution.runId, flow.id, 1))
         val result = try {
-            execution.runWithRetries(step, input)
+            execution.runWithRetries(step, effectiveInput)
         } catch (e: CancellationException) {
             onEvent(RunEvent.RunFinished(execution.runId, RunStatus.Canceled))
             throw e
@@ -325,18 +326,12 @@ class FlowRunner(
 
         private fun collectInput(step: StepNode, upstream: List<Pair<com.kaivoflow.core.model.StreamEdge, NodeResult>>): List<FlowData> {
             val raw = if (step.isTrigger) {
-                if (trigger.items.isEmpty() && trigger.kind.lowercase() in setOf("manual", "schedule", "scheduled", "subflow")) {
-                    listOf(
-                        FlowData(
-                            json = mapOf(
-                                "timestamp" to clock(),
-                                "executionId" to runId,
-                                "trigger" to trigger.kind,
-                                "stepId" to step.id,
-                                "stepName" to step.name
-                            )
-                        )
-                    )
+                if (trigger.items.isEmpty()) {
+                    if (options.mode == ExecutionMode.TestStep || trigger.kind.lowercase() in setOf("manual", "schedule", "scheduled", "subflow")) {
+                        listOf(FlowData(json = defaultTriggerPayload(step)))
+                    } else {
+                        emptyList()
+                    }
                 } else trigger.items.toList()
             } else {
                 upstream
@@ -347,6 +342,96 @@ class FlowRunner(
             if (raw.size <= limit) return raw
             onEvent(RunEvent.Log(runId, "\"${step.name}\" received ${raw.size} items; processing the first $limit.", LogLevel.Warn))
             return raw.take(limit)
+        }
+
+        private fun defaultTriggerPayload(step: StepNode): Map<String, Any?> {
+            val now = clock()
+            return when (step.type) {
+                "trigger.webhook" -> mapOf(
+                    "headers" to mapOf(
+                        "host" to "kaivoflow.local",
+                        "user-agent" to "KaivoFlow/1.0",
+                        "content-type" to "application/json",
+                    ),
+                    "params" to emptyMap<String, Any>(),
+                    "query" to emptyMap<String, Any>(),
+                    "body" to mapOf("message" to "Webhook trigger payload", "timestamp" to now),
+                    "path" to (step.params["path"] as? String ?: "my-flow"),
+                    "method" to (step.params["method"] as? String ?: "POST"),
+                    "timestamp" to now,
+                    "executionId" to runId,
+                )
+                "trigger.notification" -> mapOf(
+                    "app" to "com.whatsapp",
+                    "appName" to "WhatsApp",
+                    "title" to (step.params["titleContains"] as? String ?: "Notification"),
+                    "text" to (step.params["textContains"] as? String ?: "Sample notification text"),
+                    "isOngoing" to false,
+                    "timestamp" to now,
+                    "executionId" to runId,
+                )
+                "trigger.sms" -> mapOf(
+                    "from" to (step.params["senderContains"] as? String ?: "+919876543210"),
+                    "body" to (step.params["bodyContains"] as? String ?: "Sample SMS message body"),
+                    "timestamp" to now,
+                    "executionId" to runId,
+                )
+                "trigger.battery" -> mapOf(
+                    "level" to (step.params["threshold"] as? Number ?: 15),
+                    "isCharging" to false,
+                    "temperature" to 31.5,
+                    "timestamp" to now,
+                    "executionId" to runId,
+                )
+                "trigger.wifi" -> mapOf(
+                    "ssid" to (step.params["ssidContains"] as? String ?: "MyHome_WiFi"),
+                    "event" to (step.params["event"] as? String ?: "connected"),
+                    "ipAddress" to "192.168.1.100",
+                    "timestamp" to now,
+                    "executionId" to runId,
+                )
+                "trigger.bluetooth" -> mapOf(
+                    "name" to (step.params["deviceNameContains"] as? String ?: "Wireless Headphones"),
+                    "event" to (step.params["event"] as? String ?: "connected"),
+                    "address" to "12:34:56:78:9A:BC",
+                    "timestamp" to now,
+                    "executionId" to runId,
+                )
+                "trigger.geofence" -> mapOf(
+                    "transition" to (step.params["transition"] as? String ?: "enter"),
+                    "latitude" to (step.params["latitude"] as? Number ?: 20.2961),
+                    "longitude" to (step.params["longitude"] as? Number ?: 85.8245),
+                    "timestamp" to now,
+                    "executionId" to runId,
+                )
+                "trigger.headset" -> mapOf(
+                    "event" to (step.params["event"] as? String ?: "plugged"),
+                    "hasMic" to true,
+                    "timestamp" to now,
+                    "executionId" to runId,
+                )
+                "trigger.boot" -> mapOf(
+                    "event" to "boot_completed",
+                    "reason" to "reboot",
+                    "boot" to true,
+                    "uptimeMs" to 60_000L,
+                    "timestamp" to now,
+                    "executionId" to runId,
+                )
+                "trigger.share" -> mapOf(
+                    "text" to "https://kaivoflow.app",
+                    "type" to "text",
+                    "timestamp" to now,
+                    "executionId" to runId,
+                )
+                else -> mapOf(
+                    "timestamp" to now,
+                    "executionId" to runId,
+                    "trigger" to trigger.kind,
+                    "stepId" to step.id,
+                    "stepName" to step.name,
+                )
+            }
         }
 
         private fun useFrozen(step: StepNode, items: List<FlowData>, itemsIn: Int): NodeResult {

@@ -161,6 +161,25 @@ interface RunDao {
     suspend fun clear()
 }
 
+@Entity(tableName = "data_tables", indices = [Index("name")])
+data class DataTableEntity(
+    @PrimaryKey val id: String,
+    val name: String,
+    val description: String = "",
+    val columnsJson: String,
+    val createdAt: Long,
+    val updatedAt: Long,
+)
+
+@Entity(tableName = "data_table_rows", indices = [Index("tableId")])
+data class DataTableRowEntity(
+    @PrimaryKey val id: String,
+    val tableId: String,
+    val dataJson: String,
+    val createdAt: Long,
+    val updatedAt: Long,
+)
+
 @Dao
 interface CredentialDao {
     @Query("SELECT * FROM credentials")
@@ -179,6 +198,42 @@ interface CredentialDao {
     suspend fun delete(id: String)
 }
 
+@Dao
+interface DataTableDao {
+    @Query("SELECT * FROM data_tables ORDER BY updatedAt DESC")
+    fun observeAll(): FlowStream<List<DataTableEntity>>
+
+    @Query("SELECT * FROM data_tables WHERE id = :id")
+    suspend fun byId(id: String): DataTableEntity?
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun upsertTable(table: DataTableEntity)
+
+    @Query("DELETE FROM data_tables WHERE id = :id")
+    suspend fun deleteTable(id: String)
+
+    @Query("SELECT * FROM data_table_rows WHERE tableId = :tableId ORDER BY createdAt ASC")
+    fun observeRows(tableId: String): FlowStream<List<DataTableRowEntity>>
+
+    @Query("SELECT * FROM data_table_rows WHERE tableId = :tableId ORDER BY createdAt ASC")
+    suspend fun rowsForTable(tableId: String): List<DataTableRowEntity>
+
+    @Query("SELECT COUNT(*) FROM data_table_rows WHERE tableId = :tableId")
+    fun observeRowCount(tableId: String): FlowStream<Int>
+
+    @Query("SELECT COUNT(*) FROM data_table_rows WHERE tableId = :tableId")
+    suspend fun rowCount(tableId: String): Int
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun upsertRow(row: DataTableRowEntity)
+
+    @Query("DELETE FROM data_table_rows WHERE id = :rowId")
+    suspend fun deleteRow(rowId: String)
+
+    @Query("DELETE FROM data_table_rows WHERE tableId = :tableId")
+    suspend fun deleteRowsForTable(tableId: String)
+}
+
 @Database(
     entities = [
         FlowEntity::class,
@@ -186,8 +241,10 @@ interface CredentialDao {
         CredentialEntity::class,
         WorkflowGroupEntity::class,
         WorkflowVariableEntity::class,
+        DataTableEntity::class,
+        DataTableRowEntity::class,
     ],
-    version = 2,
+    version = 3,
     exportSchema = false,
 )
 abstract class KaivoDatabase : RoomDatabase() {
@@ -196,6 +253,7 @@ abstract class KaivoDatabase : RoomDatabase() {
     abstract fun credentialDao(): CredentialDao
     abstract fun workflowGroupDao(): WorkflowGroupDao
     abstract fun workflowVariableDao(): WorkflowVariableDao
+    abstract fun dataTableDao(): DataTableDao
 
     companion object {
         const val NAME = "kaivoflow.db"

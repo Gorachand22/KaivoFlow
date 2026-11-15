@@ -102,7 +102,7 @@ object CanvasGeometry {
         return layouts
     }
 
-    /** Freeform layout: positions come straight from the model, snapped to the grid. */
+    /** Freeform layout: positions come straight from the model, snapped to grid. */
     fun freeformLayout(
         flow: Flow,
         cardHeights: Map<String, Float> = emptyMap(),

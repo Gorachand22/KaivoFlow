@@ -5,6 +5,11 @@ import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.gestures.calculateCentroid
+import androidx.compose.foundation.gestures.calculatePan
+import androidx.compose.foundation.gestures.calculateZoom
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.gestures.detectTransformGestures
 import androidx.compose.foundation.layout.Arrangement
@@ -100,7 +105,10 @@ fun CanvasScreen(
     var dragEnd by remember { mutableStateOf<Point?>(null) }
     var dragSourcePort by remember { mutableStateOf(0) }
     var draggedFromStepId by remember { mutableStateOf<String?>(null) }
-    var cardDrag by remember { mutableStateOf<Triple<String, Float, Float>?>(null) }
+    var liveCardDrag by remember { mutableStateOf<Triple<String, Float, Float>?>(null) }
+    var liveNoteDrag by remember { mutableStateOf<Triple<String, Float, Float>?>(null) }
+    var pressedStepId by remember { mutableStateOf<String?>(null) }
+    var pressedNoteId by remember { mutableStateOf<String?>(null) }
     var snappedTarget by remember { mutableStateOf<Pair<String, Int>?>(null) }
     val snackbar = remember { SnackbarHostState() }
 
@@ -111,12 +119,47 @@ fun CanvasScreen(
     }
 
     // Layout is recomputed only when the Flow structure changes — never during a gesture.
-    val layouts: Map<String, StepLayout> = remember(state.steps, state.streams, state.layoutMode, cardHeights) {
+    val layouts: Map<String, StepLayout> = remember(
+        state.steps,
+        state.streams,
+        state.layoutMode,
+        state.positions,
+        cardHeights,
+    ) {
         val flow = FakeFlow.from(state)
         if (state.layoutMode == LayoutMode.GuidedPath) {
             CanvasGeometry.guidedLayout(flow, cardHeights, outputPortCounts = outputPortCounts)
         } else {
             CanvasGeometry.freeformLayout(flow, cardHeights, outputPortCounts = outputPortCounts)
+        }
+    }
+
+    // Live layout with dragged card position to smoothly bend connecting streams
+    val effectiveLayouts = remember(layouts, liveCardDrag) {
+        val drag = liveCardDrag
+        if (drag == null) layouts
+        else {
+            val (dragId, dragX, dragY) = drag
+            val base = layouts[dragId]
+            if (base == null) layouts
+            else {
+                val width = base.size.width
+                val height = base.size.height
+                val outputCount = base.ports.outputs.size.coerceAtLeast(1)
+                val updatedOutputs = (0 until outputCount).map { port ->
+                    val px = if (outputCount == 1) dragX + width / 2f
+                    else dragX + width * (port + 1f) / (outputCount + 1f)
+                    Point(px, dragY + height)
+                }.toImmutableList()
+                val updated = base.copy(
+                    topLeft = Point(dragX, dragY),
+                    ports = base.ports.copy(
+                        input = Point(dragX + width / 2f, dragY),
+                        outputs = updatedOutputs,
+                    ),
+                )
+                layouts + (dragId to updated)
+            }
         }
     }
 
@@ -144,190 +187,289 @@ fun CanvasScreen(
         Modifier
             .fillMaxSize()
             .background(colors.canvasVoid)
-            .onSizeChanged { viewportSize = it }
-            .pointerInput(Unit) {
-                // Pinch to zoom, drag to pan. Reads/writes transform state only.
-                detectTransformGestures { centroid, pan, zoom, _ ->
-                    if (cardDrag != null || draggedFromStepId != null) return@detectTransformGestures
-                    transform.beginInteraction()
-                    if (pan != Offset.Zero) transform.onPan(pan.x, pan.y)
-                    if (zoom != 1f) {
-                        transform.onZoom(zoom, Point(centroid.x, centroid.y))
-                    }
-                }
-            },
+            .onSizeChanged { viewportSize = it },
     ) {
         if (state.steps.isEmpty()) {
             CanvasAura(Modifier.fillMaxSize())
         }
 
+        // Interactive Canvas Layer with unified gesture handling
         Box(
             Modifier
                 .fillMaxSize()
-                .graphicsLayer {
-                    // The ONLY place pan/zoom is read: zero recomposition while dragging.
-                    translationX = transform.panX
-                    translationY = transform.panY
-                    scaleX = transform.zoom
-                    scaleY = transform.zoom
-                    transformOrigin = androidx.compose.ui.graphics.TransformOrigin(0f, 0f)
-                },
-        ) {
-            StreamCanvasLayer(
-                layouts = layouts,
-                streams = state.streams,
-                transform = transform,
-                reduceMotion = motion.reduceMotion,
-                pixelScale = pixelScale,
-                modifier = Modifier.fillMaxSize(),
-            )
+                .pointerInput(layouts, state.notes, state.steps, state.positions) {
+                    awaitEachGesture {
+                        val down = awaitFirstDown(requireUnconsumed = false)
+                        val startScreen = down.position
+                        var lastScreen = down.position
+                        val worldDown = transform.toCanvas(down.position.x, down.position.y, pixelScale)
 
-            // Visual Step Group frames (underneath step cards)
-            state.groups.forEach { group ->
-                val memberLayouts = group.stepIds.mapNotNull { layouts[it] }
-                CanvasGroupFrame(
-                    group = group,
-                    memberLayouts = memberLayouts,
-                    pixelScale = pixelScale,
-                    density = density,
-                    zoom = transform.zoom,
-                    onEdit = { viewModel.editGroup(group) },
-                    onUngroup = { viewModel.deleteGroup(group.id) },
-                    onDrag = { dx, dy -> viewModel.moveGroup(group.id, dx, dy) },
-                )
-            }
-
-            // Freeform canvas sticky notes
-            state.notes.forEach { note ->
-                CanvasStickyNote(
-                    note = note,
-                    pixelScale = pixelScale,
-                    density = density,
-                    zoom = transform.zoom,
-                    onEdit = { viewModel.editNote(note) },
-                    onDelete = { viewModel.deleteStickyNote(note.id) },
-                    onDrag = { dx, dy -> viewModel.moveStickyNote(note.id, note.x + dx, note.y + dy) },
-                )
-            }
-
-            // Step cards: only the ones inside the viewport are composed.
-            val visible = transform.visibleRect(
-                viewportSize.width.toFloat().coerceAtLeast(1f),
-                viewportSize.height.toFloat().coerceAtLeast(1f),
-                pixelScale = pixelScale,
-            )
-            layouts.values.forEach { layout ->
-                if (!CanvasGeometry.isVisible(layout, visible)) return@forEach
-                val step = state.steps.firstOrNull { it.id == layout.id } ?: return@forEach
-                val entrance = remember(step.id) { Animatable(0f) }
-                LaunchedEffect(step.id) {
-                    if (!motion.reduceMotion) {
-                        delay(motion.stagerStepMs * (layouts.keys.indexOf(step.id).coerceAtLeast(0)))
-                        entrance.animateTo(1f, tween(220))
-                    } else {
-                        entrance.snapTo(1f)
-                    }
-                }
-                Box(
-                    Modifier
-                        .graphicsLayer {
-                            // StepLayout is in world dp; graphicsLayer works in screen pixels.
-                            translationX = layout.topLeft.x * pixelScale
-                            translationY = layout.topLeft.y * pixelScale
-                            alpha = entrance.value
-                            scaleX = 0.92f + 0.08f * entrance.value
-                            scaleY = 0.92f + 0.08f * entrance.value
-                        }
-                        .onSizeChanged { size ->
-                            val heightDp = with(density) { size.height.toDp().value }
-                            val previous = cardHeights[step.id]
-                            if (previous == null || kotlin.math.abs(previous - heightDp) > 2f) {
-                                cardHeights = cardHeights + (step.id to heightDp)
-                            }
-                        },
-                ) {
-                    JewelStepCard(
-                        step = step,
-                        selected = state.selectedStepId == step.id,
-                        onTap = { viewModel.openInspector(step.id) },
-                        onLongPress = { viewModel.selectStep(step.id) },
-                        draggable = true,
-                        onRename = { viewModel.openStepRename(step.id) },
-                        onOutputDragStart = { port, offset ->
-                            val origin = Point(layout.topLeft.x + offset.x, layout.topLeft.y + offset.y)
-                            draggedFromStepId = step.id
-                            dragSourcePort = port
-                            dragStart = origin
-                            dragEnd = origin
+                        // 1. Output port drag (Stream wiring)
+                        val hitPort = findOutputPort(worldDown, layouts, state.steps)
+                        if (hitPort != null) {
+                            val (stepId, portIndex, portCenter) = hitPort
+                            draggedFromStepId = stepId
+                            dragSourcePort = portIndex
+                            dragStart = portCenter
+                            dragEnd = portCenter
                             snappedTarget = null
-                        },
-                        onOutputDrag = { amount ->
-                            val base = dragEnd ?: dragStart
-                            if (base != null) {
-                                // Pointer deltas are screen pixels; world-dp delta = screen px / (density * zoom).
-                                val dx = with(density) { amount.x.toDp().value / transform.zoom }
-                                val dy = with(density) { amount.y.toDp().value / transform.zoom }
-                                val point = Point(base.x + dx, base.y + dy)
-                                dragEnd = point
+                            haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+
+                            while (true) {
+                                val event = awaitPointerEvent()
+                                val change = event.changes.firstOrNull { it.id == down.id } ?: break
+                                if (!change.pressed) break
+                                change.consume()
+                                val currentWorld = transform.toCanvas(change.position.x, change.position.y, pixelScale)
+                                dragEnd = currentWorld
                                 snappedTarget = CanvasGeometry.nearestPort(
-                                    point,
+                                    currentWorld,
                                     layouts.values,
-                                    excludeStepId = step.id,
+                                    excludeStepId = stepId,
                                     allowOutputs = false,
                                 )
                             }
-                        },
-                        onOutputDragEnd = {
                             val target = snappedTarget
                             val end = dragEnd
                             if (target != null) {
-                                val connected = viewModel.connectStream(step.id, dragSourcePort, target.first)
+                                val connected = viewModel.connectStream(stepId, dragSourcePort, target.first)
                                 if (connected) {
                                     haptics.performHapticFeedback(HapticFeedbackType.LongPress)
                                 }
                             } else if (end != null) {
-                                // Dropped on empty canvas: offer the next Step on the chosen branch.
-                                viewModel.openStepPicker(afterStepId = step.id, fromPort = dragSourcePort)
+                                viewModel.openStepPicker(afterStepId = stepId, fromPort = dragSourcePort)
                             }
                             dragStart = null
                             dragEnd = null
                             snappedTarget = null
                             draggedFromStepId = null
-                        },
-                        onOutputDragCancel = {
-                            dragStart = null
-                            dragEnd = null
-                            snappedTarget = null
-                            draggedFromStepId = null
-                        },
-                        onCardDragStart = {
-                            cardDrag = Triple(step.id, layout.topLeft.x, layout.topLeft.y)
-                        },
-                        onCardDrag = { amount ->
-                            val current = cardDrag
-                            if (current != null && current.first == step.id) {
-                                val dx = with(density) { amount.x.toDp().value / transform.zoom }
-                                val dy = with(density) { amount.y.toDp().value / transform.zoom }
-                                val x = current.second + dx
-                                val y = current.third + dy
-                                cardDrag = Triple(step.id, x, y)
-                                viewModel.moveStep(step.id, x, y)
-                            }
-                        },
-                        onCardDragEnd = { cardDrag = null },
-                        onCardDragCancel = { cardDrag = null },
-                    )
-                }
-            }
+                            return@awaitEachGesture
+                        }
 
-            if (dragStart != null && dragEnd != null) {
-                StreamDragPreview(
-                    start = dragStart,
-                    end = dragEnd,
-                    isSnapped = snappedTarget != null,
+                        // 2. Step card tap or drag
+                        val hitStep = findStepCard(worldDown, layouts, state.steps, state.positions, cardHeights)
+                        if (hitStep != null) {
+                            val (stepId, initialPos) = hitStep
+                            pressedStepId = stepId
+                            var currentWorldPos = initialPos
+                            var isDragging = false
+                            val touchSlop = viewConfiguration.touchSlop
+                            var totalDragDistance = 0f
+
+                            while (true) {
+                                val event = awaitPointerEvent()
+                                val change = event.changes.firstOrNull { it.id == down.id } ?: break
+                                if (!change.pressed) {
+                                    if (isDragging) {
+                                        viewModel.moveStep(stepId, currentWorldPos.first, currentWorldPos.second)
+                                        haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+                                    } else {
+                                        change.consume()
+                                        viewModel.openInspector(stepId)
+                                    }
+                                    break
+                                }
+
+                                val deltaScreen = change.position - lastScreen
+                                lastScreen = change.position
+                                totalDragDistance += (change.position - startScreen).getDistance()
+
+                                if (!isDragging && totalDragDistance > touchSlop) {
+                                    isDragging = true
+                                    haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                }
+
+                                if (isDragging) {
+                                    change.consume()
+                                    val deltaWorldX = deltaScreen.x / (transform.zoom * pixelScale)
+                                    val deltaWorldY = deltaScreen.y / (transform.zoom * pixelScale)
+                                    currentWorldPos = Pair(currentWorldPos.first + deltaWorldX, currentWorldPos.second + deltaWorldY)
+                                    liveCardDrag = Triple(stepId, currentWorldPos.first, currentWorldPos.second)
+                                }
+                            }
+                            pressedStepId = null
+                            liveCardDrag = null
+                            return@awaitEachGesture
+                        }
+
+                        // 3. Sticky note tap or drag
+                        val hitNote = findStickyNote(worldDown, state.notes)
+                        if (hitNote != null) {
+                            pressedNoteId = hitNote.id
+                            var currentWorldPos = Pair(hitNote.x, hitNote.y)
+                            var isDragging = false
+                            val touchSlop = viewConfiguration.touchSlop
+                            var totalDragDistance = 0f
+
+                            while (true) {
+                                val event = awaitPointerEvent()
+                                val change = event.changes.firstOrNull { it.id == down.id } ?: break
+                                if (!change.pressed) {
+                                    if (isDragging) {
+                                        viewModel.moveStickyNote(hitNote.id, currentWorldPos.first, currentWorldPos.second)
+                                        haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+                                    } else {
+                                        change.consume()
+                                        viewModel.editNote(hitNote)
+                                    }
+                                    break
+                                }
+
+                                val deltaScreen = change.position - lastScreen
+                                lastScreen = change.position
+                                totalDragDistance += (change.position - startScreen).getDistance()
+
+                                if (!isDragging && totalDragDistance > touchSlop) {
+                                    isDragging = true
+                                    haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                }
+
+                                if (isDragging) {
+                                    change.consume()
+                                    val deltaWorldX = deltaScreen.x / (transform.zoom * pixelScale)
+                                    val deltaWorldY = deltaScreen.y / (transform.zoom * pixelScale)
+                                    currentWorldPos = Pair(currentWorldPos.first + deltaWorldX, currentWorldPos.second + deltaWorldY)
+                                    liveNoteDrag = Triple(hitNote.id, currentWorldPos.first, currentWorldPos.second)
+                                }
+                            }
+                            pressedNoteId = null
+                            liveNoteDrag = null
+                            return@awaitEachGesture
+                        }
+
+                        // 4. Empty Canvas: Pan & Pinch-to-Zoom
+                        transform.beginInteraction()
+                        while (true) {
+                            val event = awaitPointerEvent()
+                            if (event.changes.all { !it.pressed }) {
+                                transform.endInteraction()
+                                break
+                            }
+                            if (event.changes.size >= 2) {
+                                val zoom = event.calculateZoom()
+                                val centroid = event.calculateCentroid()
+                                if (zoom != 1f) {
+                                    transform.onZoom(zoom, Point(centroid.x, centroid.y))
+                                }
+                            }
+                            val pan = event.calculatePan()
+                            if (pan != Offset.Zero) {
+                                transform.onPan(pan.x, pan.y)
+                                event.changes.forEach { it.consume() }
+                            }
+                        }
+                    }
+                },
+        ) {
+            Box(
+                Modifier
+                    .fillMaxSize()
+                    .graphicsLayer {
+                        // The ONLY place pan/zoom is read: zero recomposition while dragging.
+                        translationX = transform.panX
+                        translationY = transform.panY
+                        scaleX = transform.zoom
+                        scaleY = transform.zoom
+                        transformOrigin = androidx.compose.ui.graphics.TransformOrigin(0f, 0f)
+                    },
+            ) {
+                StreamCanvasLayer(
+                    layouts = effectiveLayouts,
+                    streams = state.streams,
+                    transform = transform,
+                    reduceMotion = motion.reduceMotion,
                     pixelScale = pixelScale,
                     modifier = Modifier.fillMaxSize(),
                 )
+
+                // Visual Step Group frames (underneath step cards)
+                state.groups.forEach { group ->
+                    val memberLayouts = group.stepIds.mapNotNull { layouts[it] }
+                    CanvasGroupFrame(
+                        group = group,
+                        memberLayouts = memberLayouts,
+                        pixelScale = pixelScale,
+                        density = density,
+                        zoom = transform.zoom,
+                        onEdit = { viewModel.editGroup(group) },
+                        onUngroup = { viewModel.deleteGroup(group.id) },
+                        onDrag = { dx, dy -> viewModel.moveGroup(group.id, dx, dy) },
+                    )
+                }
+
+                // Freeform canvas sticky notes
+                state.notes.forEach { note ->
+                    val notePos = liveNoteDrag?.takeIf { it.first == note.id }?.let { it.second to it.third }
+                    CanvasStickyNote(
+                        note = note,
+                        currentPos = notePos,
+                        isPressed = pressedNoteId == note.id,
+                        pixelScale = pixelScale,
+                        density = density,
+                        zoom = transform.zoom,
+                        onEdit = { viewModel.editNote(note) },
+                        onDelete = { viewModel.deleteStickyNote(note.id) },
+                    )
+                }
+
+                // Step cards: only the ones inside the viewport are composed.
+                val visible = transform.visibleRect(
+                    viewportSize.width.toFloat().coerceAtLeast(1f),
+                    viewportSize.height.toFloat().coerceAtLeast(1f),
+                    pixelScale = pixelScale,
+                )
+                layouts.values.forEach { layout ->
+                    if (!CanvasGeometry.isVisible(layout, visible)) return@forEach
+                    val step = state.steps.firstOrNull { it.id == layout.id } ?: return@forEach
+                    val entrance = remember(step.id) { Animatable(0f) }
+                    LaunchedEffect(step.id) {
+                        if (!motion.reduceMotion) {
+                            delay(motion.stagerStepMs * (layouts.keys.indexOf(step.id).coerceAtLeast(0)))
+                            entrance.animateTo(1f, tween(220))
+                        } else {
+                            entrance.snapTo(1f)
+                        }
+                    }
+                    val currentPos = liveCardDrag?.takeIf { it.first == step.id }?.let { it.second to it.third }
+                        ?: (state.positions[step.id]?.takeIf { it.first != 0f || it.second != 0f }
+                            ?: Pair(layout.topLeft.x, layout.topLeft.y))
+
+                    Box(
+                        Modifier
+                            .graphicsLayer {
+                                // StepLayout is in world dp; graphicsLayer works in screen pixels.
+                                translationX = currentPos.first * pixelScale
+                                translationY = currentPos.second * pixelScale
+                                alpha = entrance.value
+                                scaleX = 0.92f + 0.08f * entrance.value
+                                scaleY = 0.92f + 0.08f * entrance.value
+                            }
+                            .onSizeChanged { size ->
+                                val heightDp = with(density) { size.height.toDp().value }
+                                val previous = cardHeights[step.id]
+                                if (previous == null || kotlin.math.abs(previous - heightDp) > 2f) {
+                                    cardHeights = cardHeights + (step.id to heightDp)
+                                }
+                            },
+                    ) {
+                        JewelStepCard(
+                            step = step,
+                            selected = state.selectedStepId == step.id,
+                            isPressed = pressedStepId == step.id,
+                            onRename = { viewModel.openStepRename(step.id) },
+                        )
+                    }
+                }
+
+                if (dragStart != null && dragEnd != null) {
+                    StreamDragPreview(
+                        start = dragStart,
+                        end = dragEnd,
+                        isSnapped = snappedTarget != null,
+                        pixelScale = pixelScale,
+                        modifier = Modifier.fillMaxSize(),
+                    )
+                }
             }
         }
 
@@ -363,7 +505,7 @@ fun CanvasScreen(
                     .background(colors.surfaceGlass)
                     .border(1.dp, colors.hairline, KaivoShapes.pill)
                     .clickable(onClick = viewModel::openRenameDialog)
-                    .padding(horizontal = 12.dp),
+                    .padding(horizontal = 14.dp),
                 contentAlignment = Alignment.CenterStart,
             ) {
                 Row(
@@ -374,32 +516,32 @@ fun CanvasScreen(
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             Text(
                                 state.flowName.ifBlank { "Flow" },
-                                style = androidx.compose.material3.MaterialTheme.typography.titleSmall,
+                                style = androidx.compose.material3.MaterialTheme.typography.titleMedium,
                                 color = colors.inkPrimary,
                                 maxLines = 1,
                                 overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
                                 softWrap = false,
                             )
-                            Spacer(Modifier.width(4.dp))
+                            Spacer(Modifier.width(6.dp))
                             Icon(
                                 KaivoIcons.icon("edit"),
                                 contentDescription = "Rename Flow",
                                 tint = colors.inkMuted,
-                                modifier = Modifier.size(11.dp),
+                                modifier = Modifier.size(13.dp),
                             )
                         }
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             Box(
                                 Modifier
-                                    .size(5.dp)
+                                    .size(6.dp)
                                     .clip(CircleShape)
-                                    .background(if (state.isSaving) colors.royalGold else colors.statusSuccess),
+                                    .background(if (state.isActive) colors.royalGold else if (state.isSaving) colors.royalGold else colors.statusSuccess),
                             )
-                            Spacer(Modifier.width(4.dp))
+                            Spacer(Modifier.width(5.dp))
                             Text(
-                                if (state.isSaving) "Saving…" else "Saved • ${state.steps.size} Steps",
+                                if (state.isSaving) "Saving…" else if (state.isActive) "24/7 Active • ${state.steps.size} Steps" else "Saved • ${state.steps.size} Steps",
                                 style = androidx.compose.material3.MaterialTheme.typography.labelSmall,
-                                color = colors.inkMuted,
+                                color = if (state.isActive) colors.royalGold else colors.inkMuted,
                                 maxLines = 1,
                                 softWrap = false,
                             )
@@ -409,7 +551,7 @@ fun CanvasScreen(
                         Modifier
                             .clip(CircleShape)
                             .clickable(onClick = viewModel::openInfoDialog)
-                            .padding(4.dp),
+                            .padding(6.dp),
                     ) {
                         Icon(
                             KaivoIcons.icon("info"),
@@ -421,86 +563,49 @@ fun CanvasScreen(
                 }
             }
 
-            // 3. 24/7 Deployment / Active Toggle Pill
-            Box(
+            // 4. Quick Actions: + Note and Workflow Execution History
+            Row(
                 Modifier
-                    .height(48.dp)
-                    .clip(KaivoShapes.pill)
-                    .background(colors.surfaceGlass)
-                    .border(1.dp, colors.hairline, KaivoShapes.pill)
-                    .clickable(onClick = viewModel::toggleFlowActive)
-                    .padding(horizontal = 10.dp),
-                contentAlignment = Alignment.Center,
-            ) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Box(
-                        Modifier
-                            .size(7.dp)
-                            .clip(CircleShape)
-                            .background(if (state.isActive) colors.royalGold else colors.inkMuted),
-                    )
-                    Spacer(Modifier.width(5.dp))
-                    Text(
-                        if (state.isActive) "Active" else "Manual",
-                        style = androidx.compose.material3.MaterialTheme.typography.labelMedium,
-                        color = if (state.isActive) colors.royalGold else colors.inkSecondary,
-                    )
-                }
-            }
-
-            // 4. Quick Actions: + Note, + Group, and Layout Mode
-            Box(
-                Modifier
-                    .height(48.dp)
+                    .height(44.dp)
                     .clip(KaivoShapes.pill)
                     .background(colors.surfaceGlass)
                     .border(1.dp, colors.hairline, KaivoShapes.pill)
                     .padding(horizontal = 4.dp),
-                contentAlignment = Alignment.Center,
+                verticalAlignment = Alignment.CenterVertically,
             ) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Box(
-                        Modifier
-                            .size(36.dp)
-                            .clip(CircleShape)
-                            .clickable { viewModel.addStickyNote() },
-                        contentAlignment = Alignment.Center,
-                    ) {
-                        Icon(
-                            KaivoIcons.icon("note"),
-                            contentDescription = "Add Sticky Note",
-                            tint = colors.inkSecondary,
-                            modifier = Modifier.size(16.dp),
-                        )
-                    }
-                    Box(
-                        Modifier
-                            .size(36.dp)
-                            .clip(CircleShape)
-                            .clickable { viewModel.openCreateGroupDialog() },
-                        contentAlignment = Alignment.Center,
-                    ) {
-                        Icon(
-                            KaivoIcons.icon("group"),
-                            contentDescription = "Create Group",
-                            tint = colors.inkSecondary,
-                            modifier = Modifier.size(16.dp),
-                        )
-                    }
-                    Box(
-                        Modifier
-                            .size(36.dp)
-                            .clip(CircleShape)
-                            .clickable { viewModel.toggleLayoutMode() },
-                        contentAlignment = Alignment.Center,
-                    ) {
-                        Icon(
-                            KaivoIcons.icon("route"),
-                            contentDescription = if (state.layoutMode == LayoutMode.GuidedPath) "Switch to Freeform" else "Switch to Guided Path",
-                            tint = if (state.layoutMode == LayoutMode.Freeform) colors.royalGold else colors.inkSecondary,
-                            modifier = Modifier.size(16.dp),
-                        )
-                    }
+                Box(
+                    Modifier
+                        .size(40.dp)
+                        .clip(CircleShape)
+                        .clickable { viewModel.addStickyNote() },
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Icon(
+                        KaivoIcons.icon("note"),
+                        contentDescription = "Add Sticky Note",
+                        tint = colors.inkSecondary,
+                        modifier = Modifier.size(18.dp),
+                    )
+                }
+                Box(
+                    Modifier
+                        .width(1.dp)
+                        .height(20.dp)
+                        .background(colors.hairline),
+                )
+                Box(
+                    Modifier
+                        .size(40.dp)
+                        .clip(CircleShape)
+                        .clickable { viewModel.openExecutions() },
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Icon(
+                        KaivoIcons.icon("history"),
+                        contentDescription = "Workflow Executions & Snapshots",
+                        tint = if (state.flowRuns.any { it.status == com.kaivoflow.core.model.RunStatus.Running }) colors.royalGold else colors.inkSecondary,
+                        modifier = Modifier.size(18.dp),
+                    )
                 }
             }
         }
@@ -530,6 +635,14 @@ fun CanvasScreen(
                 horizontalAlignment = Alignment.End,
                 verticalArrangement = Arrangement.spacedBy(8.dp),
             ) {
+                // Floating Undo / Redo Controls
+                CanvasUndoRedoDock(
+                    canUndo = state.canUndo,
+                    canRedo = state.canRedo,
+                    onUndo = viewModel::undo,
+                    onRedo = viewModel::redo,
+                )
+
                 // Floating Zoom / Fit Controls
                 CanvasControlsDock(
                     currentZoom = transform.zoom,
@@ -557,27 +670,6 @@ fun CanvasScreen(
                         }
                     },
                 )
-
-                // Interactive Minimap Radar
-                if (state.layoutMode == LayoutMode.Freeform) {
-                    Minimap(
-                        layouts = layouts.values,
-                        notes = state.notes,
-                        activeStepId = state.run.currentStepId,
-                        visible = transform.visibleRect(
-                            viewportSize.width.toFloat().coerceAtLeast(1f),
-                            viewportSize.height.toFloat().coerceAtLeast(1f),
-                            pixelScale = pixelScale,
-                        ),
-                        onJump = { x, y ->
-                            transform.jumpTo(
-                                transform.zoom,
-                                -x * transform.zoom * pixelScale + viewportSize.width / 2f,
-                                -y * transform.zoom * pixelScale + viewportSize.height / 2f,
-                            )
-                        },
-                    )
-                }
             }
         }
 
@@ -595,7 +687,7 @@ fun CanvasScreen(
                     run = state.run,
                     flowName = state.flowName.ifBlank { "Flow" },
                     onCancel = viewModel::cancelRun,
-                    onOpenHistory = onOpenRunHistory,
+                    onOpenHistory = { viewModel.openExecutions() },
                 )
                 Spacer(Modifier.height(12.dp))
             }
@@ -640,7 +732,22 @@ fun CanvasScreen(
             StepPickerSheet(
                 specs = specs,
                 onSearch = {},
-                onPick = { spec -> viewModel.addStep(spec.id) },
+                onPick = { spec ->
+                    val centerCanvas = transform.toCanvas(viewportSize.width / 2f, viewportSize.height / 2f, pixelScale)
+                    viewModel.addStep(
+                        spec.id,
+                        atX = centerCanvas.x - CanvasGeometry.CARD_WIDTH / 2f,
+                        atY = centerCanvas.y - 42f,
+                    )
+                },
+                onDropOnCanvas = { spec, dropScreenOffset ->
+                    val worldPoint = transform.toCanvas(dropScreenOffset.x, dropScreenOffset.y, pixelScale)
+                    viewModel.addStep(
+                        spec.id,
+                        atX = worldPoint.x - CanvasGeometry.CARD_WIDTH / 2f,
+                        atY = worldPoint.y - 42f,
+                    )
+                },
                 onDismiss = viewModel::closeStepPicker,
                 hasTrigger = state.triggers.isNotEmpty(),
             )
@@ -662,6 +769,7 @@ fun CanvasScreen(
                         .map { it.name },
                     connectedStreams = state.streams,
                     allSteps = state.steps,
+                    vars = state.vars,
                     onTab = viewModel::setInspectorTab,
                     onParamChange = { key, value -> viewModel.updateParam(step.id, key, value) },
                     onRename = { viewModel.renameStep(step.id, it) },
@@ -673,6 +781,17 @@ fun CanvasScreen(
                     onDismiss = viewModel::closeInspector,
                 )
             }
+        }
+
+        if (state.isExecutionsOpen) {
+            com.kaivoflow.feature.canvas.sheets.WorkflowExecutionsSheet(
+                flowName = state.flowName,
+                runs = state.flowRuns,
+                selectedRun = state.selectedRunDetails,
+                onSelectRun = viewModel::selectRunDetails,
+                onRunNow = viewModel::run,
+                onDismiss = viewModel::closeExecutions,
+            )
         }
 
         // ---------------- flow & canvas dialogs ----------------
@@ -696,13 +815,7 @@ fun CanvasScreen(
             )
         }
 
-        if (state.showCreateGroupDialog) {
-            CreateGroupDialog(
-                steps = state.steps,
-                onDismiss = viewModel::dismissCreateGroupDialog,
-                onCreate = { name, color, stepIds -> viewModel.createGroup(name, color, stepIds) },
-            )
-        }
+
 
         state.editingNote?.let { note ->
             StickyNoteEditDialog(
@@ -777,4 +890,61 @@ private object FakeFlow {
             )
         }.toImmutableList(),
     )
+}
+
+private fun findOutputPort(
+    worldPoint: Point,
+    layouts: Map<String, StepLayout>,
+    steps: List<StepNodeUiModel>,
+): Triple<String, Int, Point>? {
+    for (step in steps) {
+        val layout = layouts[step.id] ?: continue
+        val outputs = layout.ports.outputs
+        val outputCount = outputs.size.coerceAtLeast(1)
+        for (port in 0 until outputCount) {
+            val portCenter = outputs.getOrNull(port) ?: layout.bottomCenter
+            val dist = kotlin.math.hypot(worldPoint.x - portCenter.x, worldPoint.y - portCenter.y)
+            if (dist <= 28f) {
+                return Triple(step.id, port, portCenter)
+            }
+        }
+    }
+    return null
+}
+
+private fun findStepCard(
+    worldPoint: Point,
+    layouts: Map<String, StepLayout>,
+    steps: List<StepNodeUiModel>,
+    positions: Map<String, Pair<Float, Float>>,
+    cardHeights: Map<String, Float>,
+): Pair<String, Pair<Float, Float>>? {
+    for (step in steps.asReversed()) {
+        val layout = layouts[step.id]
+        val pos = positions[step.id]?.takeIf { it.first != 0f || it.second != 0f }
+            ?: layout?.let { it.topLeft.x to it.topLeft.y }
+            ?: Pair(32f, 48f)
+        val height = cardHeights[step.id] ?: layout?.size?.height ?: 84f
+        val width = layout?.size?.width ?: 320f
+        if (worldPoint.x in pos.first..(pos.first + width) &&
+            worldPoint.y in pos.second..(pos.second + height + 10f)
+        ) {
+            return Pair(step.id, pos)
+        }
+    }
+    return null
+}
+
+private fun findStickyNote(
+    worldPoint: Point,
+    notes: List<com.kaivoflow.core.model.StickyNote>,
+): com.kaivoflow.core.model.StickyNote? {
+    for (note in notes.asReversed()) {
+        if (worldPoint.x in note.x..(note.x + note.width) &&
+            worldPoint.y in note.y..(note.y + note.height)
+        ) {
+            return note
+        }
+    }
+    return null
 }

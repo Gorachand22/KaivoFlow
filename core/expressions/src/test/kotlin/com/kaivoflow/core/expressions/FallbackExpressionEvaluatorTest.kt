@@ -66,4 +66,19 @@ class FallbackExpressionEvaluatorTest {
         // only for simple cases, and the JS engine handles the rest.
         assertEquals("plain", evaluator.interpolate("plain", scope))
     }
+
+    @Test
+    fun `expression evaluator resolves vars with dollar syntax`() {
+        val testScope = mapOf(
+            "vars" to mapOf(
+                "CLIENT_ID" to "13033585986-h3vcrcf6",
+                "CLIENT_SECRET" to "GOCSPX-j6VMrhs73ljcT",
+            ),
+            "json" to mapOf("status" to "ok"),
+        )
+        val resolvedId = evaluator.interpolate("Bearer {{ \$vars.CLIENT_ID }}", testScope)
+        val resolvedSecret = evaluator.interpolate("{{ \$vars.CLIENT_SECRET }}", testScope)
+        assertEquals("Bearer 13033585986-h3vcrcf6", resolvedId)
+        assertEquals("GOCSPX-j6VMrhs73ljcT", resolvedSecret)
+    }
 }

@@ -226,6 +226,61 @@ fun Minimap(
 }
 
 /**
+ * Glass pill dock with Undo and Redo actions above the zoom dock.
+ */
+@Composable
+fun CanvasUndoRedoDock(
+    canUndo: Boolean,
+    canRedo: Boolean,
+    onUndo: () -> Unit,
+    onRedo: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val colors = KaivoTheme.colors
+    GlassPill(modifier) {
+        Column(
+            Modifier.padding(vertical = 4.dp, horizontal = 2.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(2.dp),
+        ) {
+            // Undo
+            Box(
+                Modifier
+                    .size(36.dp)
+                    .clip(CircleShape)
+                    .clickable(enabled = canUndo, onClick = onUndo)
+                    .semantics { contentDescription = "Undo Canvas Change" },
+                contentAlignment = Alignment.Center,
+            ) {
+                Icon(
+                    KaivoIcons.icon("undo"),
+                    contentDescription = "Undo",
+                    tint = if (canUndo) colors.inkPrimary else colors.inkMuted.copy(alpha = 0.35f),
+                    modifier = Modifier.size(18.dp),
+                )
+            }
+
+            // Redo
+            Box(
+                Modifier
+                    .size(36.dp)
+                    .clip(CircleShape)
+                    .clickable(enabled = canRedo, onClick = onRedo)
+                    .semantics { contentDescription = "Redo Canvas Change" },
+                contentAlignment = Alignment.Center,
+            ) {
+                Icon(
+                    KaivoIcons.icon("redo"),
+                    contentDescription = "Redo",
+                    tint = if (canRedo) colors.inkPrimary else colors.inkMuted.copy(alpha = 0.35f),
+                    modifier = Modifier.size(18.dp),
+                )
+            }
+        }
+    }
+}
+
+/**
  * Sleek floating vertical glass dock providing quick zoom in, zoom out, 100% zoom reset,
  * and fit-to-screen actions for comfortable one-handed canvas navigation.
  */
@@ -255,22 +310,6 @@ fun CanvasControlsDock(
                 contentAlignment = Alignment.Center,
             ) {
                 Icon(KaivoIcons.icon("add"), contentDescription = "Zoom In", tint = colors.inkPrimary, modifier = Modifier.size(18.dp))
-            }
-
-            // Zoom percent / 100% reset pill
-            Box(
-                Modifier
-                    .clip(KaivoShapes.chip)
-                    .clickable(onClick = onResetZoom)
-                    .padding(horizontal = 4.dp, vertical = 2.dp)
-                    .semantics { contentDescription = "Reset Zoom to 100%" },
-                contentAlignment = Alignment.Center,
-            ) {
-                Text(
-                    text = "${(currentZoom * 100).toInt()}%",
-                    style = androidx.compose.material3.MaterialTheme.typography.labelSmall,
-                    color = colors.royalGold,
-                )
             }
 
             // Zoom Out (-)

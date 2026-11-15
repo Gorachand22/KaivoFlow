@@ -67,14 +67,14 @@ class FlowValidator(private val registry: NodeRegistry) {
             if (step.id == flow.settings.errorStepId) return@forEach // error Steps are reachable by definition
             val hasIncoming = flow.streams.any { it.toStepId == step.id }
             if (!step.isTrigger && !hasIncoming) {
-                issues += validationError(
+                issues += validationWarning(
                     "unconnected_step",
-                    "\"${step.name}\" is not connected to anything, so it will never run.",
+                    "\"${step.name}\" is not connected yet.",
                     step.id,
-                    fixHint = "Drag from the Step above it to connect a Stream.",
+                    fixHint = "Drag from a previous Step to connect a Stream.",
                 )
             } else if (!step.isTrigger && step.id !in reachable) {
-                issues += validationError(
+                issues += validationWarning(
                     "unreachable_step",
                     "\"${step.name}\" cannot be reached from the Spark.",
                     step.id,

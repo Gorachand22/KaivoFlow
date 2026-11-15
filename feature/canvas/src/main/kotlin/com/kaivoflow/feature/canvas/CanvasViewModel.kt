@@ -5,6 +5,8 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.kaivoflow.core.data.CredentialRepository
 import com.kaivoflow.core.data.FlowRepository
+import com.kaivoflow.core.data.RunRepository
+import com.kaivoflow.core.data.WorkflowVariableRepository
 import com.kaivoflow.core.engine.ExecutionMode
 import com.kaivoflow.core.engine.FlowRunner
 import com.kaivoflow.core.engine.ValidationReport
@@ -16,6 +18,7 @@ import com.kaivoflow.core.model.LogLevel
 import com.kaivoflow.core.model.NodeKind
 import com.kaivoflow.core.model.NodeSpec
 import com.kaivoflow.core.model.RunEvent
+import com.kaivoflow.core.model.RunRecord
 import com.kaivoflow.core.model.RunStatus
 import com.kaivoflow.core.model.RunTrigger
 import com.kaivoflow.core.model.StepNode
@@ -29,6 +32,7 @@ import com.kaivoflow.feature.canvas.layout.LayoutMode
 import com.kaivoflow.core.work.FlowEngine
 import com.kaivoflow.core.work.FlowScheduler
 import dagger.hilt.android.lifecycle.HiltViewModel
+import kotlinx.collections.immutable.ImmutableList
 import kotlinx.collections.immutable.persistentListOf
 import kotlinx.collections.immutable.persistentMapOf
 import kotlinx.collections.immutable.toImmutableList
@@ -55,6 +59,8 @@ class CanvasViewModel @Inject constructor(
     private val flowEngine: FlowEngine,
     private val scheduler: FlowScheduler,
     private val credentials: CredentialRepository,
+    private val variableRepository: WorkflowVariableRepository,
+    private val runRepository: RunRepository,
     savedStateHandle: SavedStateHandle,
 ) : ViewModel() {
 
@@ -69,27 +75,59 @@ class CanvasViewModel @Inject constructor(
     private var runJob: Job? = null
     private var pendingSave: Job? = null
 
+    private data class CanvasSnapshot(
+        val steps: ImmutableList<StepNode>,
+        val streams: ImmutableList<StreamEdge>,
+        val notes: ImmutableList<StickyNote>,
+        val groups: ImmutableList<FlowGroup>,
+    )
+
+    private val undoStack = ArrayDeque<CanvasSnapshot>()
+    private val redoStack = ArrayDeque<CanvasSnapshot>()
+
     init {
         viewModelScope.launch {
             flowRepository.observeFlow(flowId).collect { loaded ->
                 if (loaded == null) return@collect
-                flow = loaded
+                val scopedVars = runCatching { variableRepository.resolveVariables(loaded.groupId) }.getOrNull().orEmpty()
+                flow = if (scopedVars.isNotEmpty()) {
+                    loaded.copy(vars = (scopedVars + loaded.vars).toImmutableMap())
+                } else {
+                    loaded
+                }
+                if (loaded.steps.any { it.x != 0f || it.y != 0f }) {
+                    _state.update { it.copy(layoutMode = LayoutMode.Freeform) }
+                }
                 refreshValidation()
                 syncState()
+            }
+        }
+        viewModelScope.launch {
+            runRepository.observeForFlow(flowId).collect { runs ->
+                _state.update { it.copy(flowRuns = runs.toImmutableList()) }
+            }
+        }
+        viewModelScope.launch {
+            variableRepository.observeAll().collect { list ->
+                val resolved = list.associate { it.key to it.value }
+                if (resolved.isNotEmpty()) {
+                    flow = flow.copy(vars = (resolved + flow.vars).toImmutableMap())
+                    _state.update { it.copy(vars = flow.vars) }
+                }
             }
         }
     }
 
     // ------------------------------------------------------------------ editing
 
-    fun addStep(type: String, preferredName: String? = null) {
+    fun addStep(type: String, preferredName: String? = null, atX: Float? = null, atY: Float? = null) {
         val spec = registry.spec(type) ?: return
         if (spec.kind == NodeKind.Trigger && flow.triggers.isNotEmpty()) {
-            toast("This Flow already has a Spark.", LogLevel.Warn)
-            return
+            toast("Added another Spark. This Flow now has multiple triggers.", LogLevel.Info)
         }
         val insertAfter = _state.value.pickerInsertAfterStepId
         val insertPort = _state.value.pickerInsertAfterPort.coerceAtLeast(0)
+        val defaultY = (flow.steps.maxOfOrNull { it.y } ?: 0f) + 140f
         val step = StepNode(
             id = UUID.randomUUID().toString(),
             type = type,
@@ -97,9 +135,13 @@ class CanvasViewModel @Inject constructor(
             params = spec.params.filter { it.default != null }
                 .associate { it.key to it.default }
                 .toImmutableMap(),
-            y = (flow.steps.maxOfOrNull { it.y } ?: 0f) + 120f,
+            x = atX ?: 0f,
+            y = atY ?: defaultY,
         )
         flow = flow.plusStep(step)
+        if (atX != null && _state.value.layoutMode == LayoutMode.GuidedPath) {
+            _state.update { it.copy(layoutMode = LayoutMode.Freeform) }
+        }
         if (insertAfter != null && spec.kind != NodeKind.Trigger) {
             flow = flow.plusStream(
                 StreamEdge(UUID.randomUUID().toString(), insertAfter, step.id, fromPort = insertPort)
@@ -126,7 +168,7 @@ class CanvasViewModel @Inject constructor(
                 selectedStepId = step.id,
             )
         }
-        openInspector(step.id)
+        toast("Added \"${step.name}\" to canvas")
     }
 
     fun openStepPicker(afterStepId: String? = null, fromPort: Int = 0) {
@@ -274,10 +316,26 @@ class CanvasViewModel @Inject constructor(
 
     fun moveStep(stepId: String, x: Float, y: Float) {
         val step = flow.step(stepId) ?: return
+        pushSnapshot()
         if (_state.value.layoutMode == LayoutMode.GuidedPath) {
+            val declaredPorts = flow.steps.associate { s ->
+                s.id to (registry.spec(s.type)?.outputs ?: 1)
+            }
+            val currentLayouts = CanvasGeometry.guidedLayout(flow, outputPortCounts = declaredPorts)
+            flow = flow.copy(
+                steps = flow.steps.map { s ->
+                    if (s.id == stepId) {
+                        s.copy(x = x, y = y)
+                    } else {
+                        val l = currentLayouts[s.id]
+                        if (l != null) s.copy(x = l.topLeft.x, y = l.topLeft.y) else s
+                    }
+                }.toImmutableList()
+            )
             _state.update { it.copy(layoutMode = LayoutMode.Freeform) }
+        } else {
+            flow = flow.withStep(step.copy(x = x, y = y))
         }
-        flow = flow.withStep(step.copy(x = CanvasGeometry.snap(x), y = CanvasGeometry.snap(y)))
         scheduleSave()
         syncState()
     }
@@ -475,13 +533,25 @@ class CanvasViewModel @Inject constructor(
                 flowEngine.testStep(flow, step.id, inspector.inputItems)
             }
             result.onSuccess { stepRun ->
+                lastOutputs[step.name] = stepRun.output
                 _state.update { current ->
+                    val updatedSteps = current.steps.map { s ->
+                        if (s.id == step.id) {
+                            s.copy(
+                                status = if (stepRun.status == StepRunStatus.Failed) StepRunStatus.Failed else StepRunStatus.Succeeded,
+                                itemCount = stepRun.itemsOut,
+                                latencyMs = stepRun.durationMs,
+                            )
+                        } else s
+                    }.toImmutableList()
                     current.copy(
+                        steps = updatedSteps,
                         inspector = current.inspector?.copy(
                             isTesting = false,
                             outputItems = stepRun.output,
                             outputError = stepRun.error,
-                        )
+                            tab = InspectorTab.Output,
+                        ),
                     )
                 }
             }.onFailure { error ->
@@ -499,10 +569,66 @@ class CanvasViewModel @Inject constructor(
 
     // ------------------------------------------------------------------ persistence
 
-    private fun commit() {
+    private fun pushSnapshot() {
+        if (undoStack.size >= 30) undoStack.removeFirst()
+        undoStack.addLast(CanvasSnapshot(flow.steps, flow.streams, flow.notes, flow.groups))
+        redoStack.clear()
+        _state.update { it.copy(canUndo = undoStack.isNotEmpty(), canRedo = false) }
+    }
+
+    private fun commit(pushUndo: Boolean = true) {
+        if (pushUndo) {
+            pushSnapshot()
+        }
         refreshValidation()
         syncState()
         scheduleSave()
+    }
+
+    fun undo() {
+        if (undoStack.isEmpty()) return
+        val currentSnapshot = CanvasSnapshot(flow.steps, flow.streams, flow.notes, flow.groups)
+        redoStack.addLast(currentSnapshot)
+        val previous = undoStack.removeLast()
+        flow = flow.copy(
+            steps = previous.steps,
+            streams = previous.streams,
+            notes = previous.notes,
+            groups = previous.groups,
+            updatedAt = System.currentTimeMillis(),
+        )
+        _state.update { it.copy(canUndo = undoStack.isNotEmpty(), canRedo = redoStack.isNotEmpty()) }
+        commit(pushUndo = false)
+        toast("Undo")
+    }
+
+    fun redo() {
+        if (redoStack.isEmpty()) return
+        val currentSnapshot = CanvasSnapshot(flow.steps, flow.streams, flow.notes, flow.groups)
+        undoStack.addLast(currentSnapshot)
+        val next = redoStack.removeLast()
+        flow = flow.copy(
+            steps = next.steps,
+            streams = next.streams,
+            notes = next.notes,
+            groups = next.groups,
+            updatedAt = System.currentTimeMillis(),
+        )
+        _state.update { it.copy(canUndo = undoStack.isNotEmpty(), canRedo = redoStack.isNotEmpty()) }
+        commit(pushUndo = false)
+        toast("Redo")
+    }
+
+    fun openExecutions() {
+        _state.update { it.copy(isExecutionsOpen = true) }
+    }
+
+    fun closeExecutions() {
+        _state.update { it.copy(isExecutionsOpen = false, selectedRunDetails = null) }
+    }
+
+    fun selectRunDetails(run: RunRecord?) {
+        _state.update { it.copy(selectedRunDetails = run) }
     }
 
     private fun scheduleSave() {
@@ -588,7 +714,8 @@ class CanvasViewModel @Inject constructor(
 
     fun moveStickyNote(noteId: String, x: Float, y: Float) {
         val note = flow.notes.firstOrNull { it.id == noteId } ?: return
-        flow = flow.withNote(note.copy(x = CanvasGeometry.snap(x), y = CanvasGeometry.snap(y)))
+        pushSnapshot()
+        flow = flow.withNote(note.copy(x = x, y = y))
         scheduleSave()
         syncState()
     }
@@ -669,7 +796,10 @@ class CanvasViewModel @Inject constructor(
                 isDisabled = step.disabled,
                 isFrozen = step.frozenOutput != null,
                 hasError = stepIssues.any { it.severity == com.kaivoflow.core.engine.IssueSeverity.Blocking },
-                hasWarning = stepIssues.any { it.severity == com.kaivoflow.core.engine.IssueSeverity.Warning },
+                hasWarning = stepIssues.any {
+                    it.severity == com.kaivoflow.core.engine.IssueSeverity.Warning &&
+                    it.code != "unconnected_step" && it.code != "unreachable_step"
+                },
                 itemCount = previous?.itemCount,
                 latencyMs = previous?.latencyMs,
                 paramSummary = StepSummaries.summarize(spec, step.params),

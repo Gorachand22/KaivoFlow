@@ -6,6 +6,7 @@ import com.kaivoflow.core.model.FlowData
 import com.kaivoflow.core.model.FlowGroup
 import com.kaivoflow.core.model.LogLevel
 import com.kaivoflow.core.model.NodeSpec
+import com.kaivoflow.core.model.RunRecord
 import com.kaivoflow.core.model.RunStatus
 import com.kaivoflow.core.model.StepCategory
 import com.kaivoflow.core.model.StepRunStatus
@@ -130,6 +131,11 @@ data class CanvasUiState(
     val showCreateGroupDialog: Boolean = false,
     val stepRenaming: Pair<String, String>? = null,
     val streamDisconnectTarget: StreamEdgeUiModel? = null,
+    val isExecutionsOpen: Boolean = false,
+    val flowRuns: ImmutableList<RunRecord> = persistentListOf(),
+    val selectedRunDetails: RunRecord? = null,
+    val canUndo: Boolean = false,
+    val canRedo: Boolean = false,
 ) {
     val selectedStep: StepNodeUiModel? get() = steps.firstOrNull { it.id == selectedStepId }
     val canRun: Boolean get() = validation.isValid && !run.isRunning

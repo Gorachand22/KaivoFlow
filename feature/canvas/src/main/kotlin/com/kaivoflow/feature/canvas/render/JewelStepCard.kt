@@ -5,6 +5,8 @@ import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Arrangement
@@ -34,8 +36,10 @@ import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.input.pointer.positionChange
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalHapticFeedback
@@ -70,40 +74,32 @@ import com.kaivoflow.feature.canvas.StepNodeUiModel
 fun JewelStepCard(
     step: StepNodeUiModel,
     selected: Boolean,
-    onTap: () -> Unit,
-    onLongPress: () -> Unit,
-    onOutputDragStart: (Int, Offset) -> Unit,
-    onOutputDrag: (Offset) -> Unit,
-    onOutputDragEnd: () -> Unit,
-    onOutputDragCancel: () -> Unit,
-    onCardDragStart: () -> Unit = {},
-    onCardDrag: (Offset) -> Unit = {},
-    onCardDragEnd: () -> Unit = {},
-    onCardDragCancel: () -> Unit = {},
+    isPressed: Boolean = false,
+    onTap: () -> Unit = {},
+    onLongPress: () -> Unit = {},
     onRename: () -> Unit = {},
     modifier: Modifier = Modifier,
-    draggable: Boolean = true,
 ) {
     val colors = KaivoTheme.colors
     val sizes = KaivoTheme.sizes
     val motion = KaivoTheme.motion
     val density = LocalDensity.current
-    val haptics = LocalHapticFeedback.current
     val accent = colors.categoryColor(step.category)
     var cardSize by remember { mutableStateOf(IntSize.Zero) }
 
+    val isHighlighted = selected || isPressed
     val borderAlpha by animateFloatAsState(
-        targetValue = if (selected) 1f else 0.35f,
+        targetValue = if (isHighlighted) 1f else 0.35f,
         animationSpec = motion.tween(),
         label = "cardBorder",
     )
 
     val running = step.status == StepRunStatus.Running
-    val glowAlpha = if (running && !motion.reduceMotion) {
+    val glowAlpha = if ((running || isHighlighted) && !motion.reduceMotion) {
         val infinite = androidx.compose.animation.core.rememberInfiniteTransition(label = "cardGlow")
         infinite.animateFloat(
-            initialValue = 0.25f,
-            targetValue = 0.75f,
+            initialValue = if (isPressed) 0.6f else 0.25f,
+            targetValue = if (isPressed) 1f else 0.75f,
             animationSpec = androidx.compose.animation.core.infiniteRepeatable(
                 animation = androidx.compose.animation.core.tween(
                     motion.breathingDurationMs.toInt(),
@@ -113,7 +109,7 @@ fun JewelStepCard(
             ),
             label = "cardGlowAlpha",
         ).value
-    } else 0f
+    } else if (isPressed) 0.8f else 0f
 
     Box(
         modifier
@@ -125,11 +121,16 @@ fun JewelStepCard(
             Modifier
                 .fillMaxWidth()
                 .defaultMinSize(minHeight = sizes.stepCardMinHeight)
+                .graphicsLayer {
+                    val s = if (isPressed) 1.025f else 1f
+                    scaleX = s
+                    scaleY = s
+                }
                 .clip(KaivoShapes.stepCard)
                 .background(colors.surfaceCard)
                 .border(
-                    width = if (selected) 1.5.dp else 1.dp,
-                    brush = if (selected) {
+                    width = if (isHighlighted) 1.5.dp else 1.dp,
+                    brush = if (isHighlighted) {
                         Brush.linearGradient(listOf(colors.royalGold, colors.imperialAmethyst, colors.royalGold))
                     } else {
                         Brush.linearGradient(listOf(colors.hairline, colors.hairline))
@@ -140,7 +141,7 @@ fun JewelStepCard(
                     if (glowAlpha > 0f) {
                         drawCircle(
                             brush = Brush.radialGradient(
-                                colors = listOf(colors.royalGold.copy(alpha = 0.18f * glowAlpha), Color.Transparent),
+                                colors = listOf(colors.royalGold.copy(alpha = 0.22f * glowAlpha), Color.Transparent),
                                 center = Offset(0f, size.height / 2f),
                                 radius = size.width * 0.7f,
                             ),
@@ -148,33 +149,6 @@ fun JewelStepCard(
                             center = Offset(0f, size.height / 2f),
                         )
                     }
-                }
-                .then(
-                    if (draggable) {
-                        Modifier.pointerInput(step.id) {
-                            detectDragGestures(
-                                onDragStart = { _ ->
-                                    haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                                    onCardDragStart()
-                                },
-                                onDrag = { change, dragAmount ->
-                                    change.consume()
-                                    onCardDrag(dragAmount)
-                                },
-                                onDragEnd = { onCardDragEnd() },
-                                onDragCancel = { onCardDragCancel() },
-                            )
-                        }
-                    } else Modifier
-                )
-                .pointerInput(step.id) {
-                    detectTapGestures(
-                        onTap = { onTap() },
-                        onLongPress = {
-                            haptics.performHapticFeedback(HapticFeedbackType.LongPress)
-                            onLongPress()
-                        },
-                    )
                 }
                 .semantics {
                     contentDescription = buildString {
@@ -192,7 +166,7 @@ fun JewelStepCard(
                         }
                     }
                 }
-                .padding(horizontal = 12.dp, vertical = 12.dp),
+                .padding(horizontal = 14.dp, vertical = 12.dp),
             verticalArrangement = Arrangement.Center,
         ) {
             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -224,7 +198,7 @@ fun JewelStepCard(
                     }
                     Spacer(Modifier.height(2.dp))
                     Text(
-                        text = step.paramSummary,
+                        text = if (step.paramSummary.isNotBlank()) step.paramSummary else step.subtitle,
                         style = androidx.compose.material3.MaterialTheme.typography.bodyMedium,
                         color = colors.inkSecondary,
                         maxLines = 1,
@@ -307,20 +281,6 @@ fun JewelStepCard(
                         centerY = heightPx,
                         tint = accent,
                         isInput = false,
-                        dragModifier = Modifier.pointerInput(port) {
-                            detectDragGestures(
-                                onDragStart = { _ ->
-                                    haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                                    onOutputDragStart(port, centerDp)
-                                },
-                                onDrag = { change, dragAmount ->
-                                    change.consume()
-                                    onOutputDrag(dragAmount)
-                                },
-                                onDragEnd = { onOutputDragEnd() },
-                                onDragCancel = { onOutputDragCancel() },
-                            )
-                        },
                     )
                 }
             }
@@ -336,7 +296,6 @@ private fun PortTarget(
     centerY: Float,
     tint: Color,
     isInput: Boolean,
-    dragModifier: Modifier = Modifier,
 ) {
     val colors = KaivoTheme.colors
     Box(
@@ -346,7 +305,6 @@ private fun PortTarget(
                 IntOffset((centerX - half).toInt(), (centerY - half).toInt())
             }
             .size(48.dp)
-            .then(dragModifier)
             .semantics { contentDescription = label },
         contentAlignment = Alignment.Center,
     ) {

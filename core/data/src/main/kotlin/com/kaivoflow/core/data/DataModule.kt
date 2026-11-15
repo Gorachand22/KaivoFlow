@@ -27,6 +27,7 @@ object DatabaseModule {
     @Provides fun credentialDao(db: KaivoDatabase): CredentialDao = db.credentialDao()
     @Provides fun workflowGroupDao(db: KaivoDatabase): WorkflowGroupDao = db.workflowGroupDao()
     @Provides fun workflowVariableDao(db: KaivoDatabase): WorkflowVariableDao = db.workflowVariableDao()
+    @Provides fun dataTableDao(db: KaivoDatabase): DataTableDao = db.dataTableDao()
 
     @Provides
     @Singleton
@@ -50,6 +51,9 @@ object RepositoryModule {
 
     @Provides @Singleton
     fun workflowVariableRepository(dao: WorkflowVariableDao): WorkflowVariableRepository = RoomWorkflowVariableRepository(dao)
+
+    @Provides @Singleton
+    fun dataTableRepository(dao: DataTableDao): DataTableRepository = RoomDataTableRepository(dao)
 
     @Provides @Singleton
     fun oauth2TokenManager(http: HttpGateway, dao: CredentialDao, cryptoBox: CryptoBox): OAuth2TokenManager =

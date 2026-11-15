@@ -1,6 +1,8 @@
 package com.kaivoflow.core.design
 
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.Redo
+import androidx.compose.material.icons.automirrored.filled.Undo
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Alarm
 import androidx.compose.material.icons.filled.ArrowBack
@@ -187,6 +189,9 @@ object KaivoIcons {
         "security" to Icons.Filled.Security,
         "fingerprint" to Icons.Filled.Fingerprint,
         "phone" to Icons.Filled.Smartphone,
+        "undo" to Icons.AutoMirrored.Filled.Undo,
+        "redo" to Icons.AutoMirrored.Filled.Redo,
+        "history" to Icons.Filled.History,
         "bolt" to Icons.Filled.Bolt,
         "info" to Icons.Filled.Info,
         "mail" to Icons.Filled.Email,

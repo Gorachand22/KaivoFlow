@@ -29,7 +29,7 @@ interface ExpressionEvaluator {
         val trimmed = template.trim()
         if (!trimmed.contains("{{")) return template
         val single = SINGLE_EXPRESSION.matchEntire(trimmed)
-        if (single != null) return evaluate(single.groupValues[1], scope)
+        if (single != null) return evaluate(single.groupValues[1].trim(), scope)
         return interpolateAll(template, scope)
     }
 
@@ -38,7 +38,7 @@ interface ExpressionEvaluator {
         var cursor = 0
         for (m in MULTI_EXPRESSION.findAll(template)) {
             sb.append(template, cursor, m.range.first)
-            val value = evaluate(m.groupValues[1], scope)
+            val value = evaluate(m.groupValues[1].trim(), scope)
             sb.append(Values.asString(value))
             cursor = m.range.last + 1
         }
@@ -47,8 +47,8 @@ interface ExpressionEvaluator {
     }
 
     companion object {
-        private val SINGLE_EXPRESSION = Regex("""^\{\{([\s\S]*?)}}$""")
-        private val MULTI_EXPRESSION = Regex("""\{\{([\s\S]*?)}}""")
+        private val SINGLE_EXPRESSION = Regex("""^\{{2,3}([\s\S]*?)\}{2,3}$""")
+        private val MULTI_EXPRESSION = Regex("""\{{2,3}([\s\S]*?)\}{2,3}""")
     }
 }
 
@@ -97,12 +97,20 @@ class ScopeBuilder(
 
         val previous = stepOutputs.mapValues { (_, items) -> items.mapIndexed { i, d -> d.json + ("index" to i) } }
 
+        val envMap = buildMap<String, Any?> {
+            runCatching { putAll(System.getenv()) }
+            put("OS", "Android")
+            put("PLATFORM", "KaivoFlow")
+            put("TIMEZONE", timezone)
+        }
+
         return mapOf(
             "json" to first,
             "items" to input.map { it.json },
             "item" to first,
             "index" to index,
             "vars" to flowVars,
+            "env" to envMap,
             "now" to now.toString(),
             "today" to atZone.toLocalDate().toString(),
             "run" to mapOf(

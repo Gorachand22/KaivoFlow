@@ -27,6 +27,8 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.OutlinedTextField
@@ -42,11 +44,17 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.AnnotatedString
+import android.widget.Toast
+import com.kaivoflow.core.model.RunStatus
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -79,13 +87,23 @@ import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+import com.kaivoflow.core.data.CredentialRepository
+import com.kaivoflow.core.data.DataTableRepository
+import com.kaivoflow.core.model.CredentialItem
+import com.kaivoflow.core.model.DataTable
+import com.kaivoflow.core.model.DataTableColumn
+import com.kaivoflow.core.model.DataTableRow
 import java.util.UUID
 import javax.inject.Inject
+
+enum class DashboardTab {
+    Flows, Credentials, Variables, DataTables
+}
 
 /**
  * Flows home. Sovereign visual workflow automation dashboard.
  * Supports Organizing Flows into Spaces/Groups (Projects), managing Group Variables ($vars),
- * and executing workflows.
+ * Credentials, Data Tables, and executing workflows.
  */
 @HiltViewModel
 class FlowListViewModel @Inject constructor(
@@ -93,6 +111,8 @@ class FlowListViewModel @Inject constructor(
     private val runRepository: RunRepository,
     private val groupRepository: WorkflowGroupRepository,
     private val variableRepository: WorkflowVariableRepository,
+    private val credentialRepository: CredentialRepository,
+    private val dataTableRepository: DataTableRepository,
     private val scheduler: FlowScheduler,
 ) : ViewModel() {
 
@@ -111,10 +131,54 @@ class FlowListViewModel @Inject constructor(
     private val _showVariablesDialog = MutableStateFlow(false)
     val showVariablesDialog: StateFlow<Boolean> = _showVariablesDialog.asStateFlow()
 
+    private val _showCreateVariableDialog = MutableStateFlow(false)
+    val showCreateVariableDialog: StateFlow<Boolean> = _showCreateVariableDialog.asStateFlow()
+
     private val _movingFlowId = MutableStateFlow<String?>(null)
     val movingFlowId: StateFlow<String?> = _movingFlowId.asStateFlow()
 
+    private val _currentTab = MutableStateFlow(DashboardTab.Flows)
+    val currentTab: StateFlow<DashboardTab> = _currentTab.asStateFlow()
+
+    private val _variableSearchQuery = MutableStateFlow("")
+    val variableSearchQuery: StateFlow<String> = _variableSearchQuery.asStateFlow()
+
+    private val _credentialSearchQuery = MutableStateFlow("")
+    val credentialSearchQuery: StateFlow<String> = _credentialSearchQuery.asStateFlow()
+
+    private val _showCreateCredentialDialog = MutableStateFlow(false)
+    val showCreateCredentialDialog: StateFlow<Boolean> = _showCreateCredentialDialog.asStateFlow()
+
+    val credentials: StateFlow<List<CredentialItem>> = combine(
+        credentialRepository.observeCredentials(),
+        flowRepository.observeSummaries(),
+    ) { credList, flows ->
+        credList.map { cred ->
+            cred.copy(usedInFlowCount = 0)
+        }
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+
+    private val _dataTableSearchQuery = MutableStateFlow("")
+    val dataTableSearchQuery: StateFlow<String> = _dataTableSearchQuery.asStateFlow()
+
+    private val _showCreateDataTableDialog = MutableStateFlow(false)
+    val showCreateDataTableDialog: StateFlow<Boolean> = _showCreateDataTableDialog.asStateFlow()
+
+    private val _activeDataTable = MutableStateFlow<DataTable?>(null)
+    val activeDataTable: StateFlow<DataTable?> = _activeDataTable.asStateFlow()
+
+    val dataTables: StateFlow<List<DataTable>> = dataTableRepository.observeTables()
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+
+    @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
+    val activeTableRows: StateFlow<List<DataTableRow>> = _activeDataTable.flatMapLatest { table ->
+        if (table != null) dataTableRepository.observeRows(table.id) else flowOf(emptyList())
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+
     val groups: StateFlow<List<WorkflowGroup>> = groupRepository.observeAll()
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+
+    val allVariables: StateFlow<List<WorkflowVariable>> = variableRepository.observeAll()
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
     @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
@@ -124,7 +188,7 @@ class FlowListViewModel @Inject constructor(
 
     val state: StateFlow<FlowListUiState> = combine(
         flowRepository.observeSummaries(),
-        runRepository.observeRecent(20),
+        runRepository.observeRecent(50),
     ) { flows, runs ->
         FlowListUiState(
             flows = flows,
@@ -135,6 +199,14 @@ class FlowListViewModel @Inject constructor(
 
     init {
         viewModelScope.launch { runCatching { scheduler.rescheduleAll() } }
+    }
+
+    fun setTab(tab: DashboardTab) {
+        _currentTab.value = tab
+    }
+
+    fun setVariableSearchQuery(query: String) {
+        _variableSearchQuery.value = query
     }
 
     fun selectGroup(groupId: String?) {
@@ -157,6 +229,14 @@ class FlowListViewModel @Inject constructor(
         _showVariablesDialog.value = false
     }
 
+    fun openCreateVariableDialog() {
+        _showCreateVariableDialog.value = true
+    }
+
+    fun closeCreateVariableDialog() {
+        _showCreateVariableDialog.value = false
+    }
+
     fun openMoveFlowDialog(flowId: String) {
         _movingFlowId.value = flowId
     }
@@ -165,12 +245,13 @@ class FlowListViewModel @Inject constructor(
         _movingFlowId.value = null
     }
 
-    fun createGroup(name: String, description: String = "") {
+    fun createGroup(name: String, description: String = "", color: String = "amber") {
         viewModelScope.launch {
             val group = WorkflowGroup(
                 id = UUID.randomUUID().toString(),
                 name = name.trim(),
                 description = description.trim(),
+                color = color,
             )
             groupRepository.save(group)
             _selectedGroupId.value = group.id
@@ -197,23 +278,80 @@ class FlowListViewModel @Inject constructor(
         }
     }
 
-    fun saveVariable(key: String, value: String) {
-        val groupId = _selectedGroupId.value ?: return
+    fun saveVariable(key: String, value: String, groupId: String? = null) {
         viewModelScope.launch {
             variableRepository.save(
                 WorkflowVariable(
                     id = UUID.randomUUID().toString(),
-                    groupId = groupId,
+                    groupId = null, // Unified sovereign single-user
                     key = key.trim(),
                     value = value,
                 )
             )
+            closeCreateVariableDialog()
         }
     }
 
     fun deleteVariable(variableId: String) {
         viewModelScope.launch {
             variableRepository.delete(variableId)
+        }
+    }
+
+    fun setCredentialSearchQuery(query: String) { _credentialSearchQuery.value = query }
+    fun openCreateCredentialDialog() { _showCreateCredentialDialog.value = true }
+    fun closeCreateCredentialDialog() { _showCreateCredentialDialog.value = false }
+
+    fun saveCredential(type: String, name: String, fields: Map<String, String>) {
+        viewModelScope.launch {
+            credentialRepository.save(null, type, name.trim(), fields)
+            closeCreateCredentialDialog()
+        }
+    }
+
+    fun deleteCredential(id: String) {
+        viewModelScope.launch {
+            credentialRepository.delete(id)
+        }
+    }
+
+    fun setDataTableSearchQuery(query: String) { _dataTableSearchQuery.value = query }
+    fun openCreateDataTableDialog() { _showCreateDataTableDialog.value = true }
+    fun closeCreateDataTableDialog() { _showCreateDataTableDialog.value = false }
+
+    fun createDataTable(name: String, description: String, columns: List<DataTableColumn>) {
+        viewModelScope.launch {
+            dataTableRepository.createTable(name, description, columns)
+            closeCreateDataTableDialog()
+        }
+    }
+
+    fun deleteDataTable(id: String) {
+        viewModelScope.launch {
+            dataTableRepository.deleteTable(id)
+            if (_activeDataTable.value?.id == id) {
+                _activeDataTable.value = null
+            }
+        }
+    }
+
+    fun viewDataTable(table: DataTable) {
+        _activeDataTable.value = table
+    }
+
+    fun closeDataTable() {
+        _activeDataTable.value = null
+    }
+
+    fun insertTableRow(tableId: String, data: Map<String, Any?>) {
+        viewModelScope.launch {
+            dataTableRepository.insertRow(tableId, data)
+        }
+    }
+
+    fun deleteTableRow(rowId: String) {
+        viewModelScope.launch {
+            dataTableRepository.deleteRow(rowId)
         }
     }
 
@@ -270,13 +408,37 @@ class FlowListViewModel @Inject constructor(
     fun toggleFavorite(id: String, favorite: Boolean) {
         viewModelScope.launch { flowRepository.setFavorite(id, favorite) }
     }
+
+    fun toggleFlowActive(id: String) {
+        viewModelScope.launch {
+            val flow = flowRepository.flow(id) ?: return@launch
+            val next = !flow.isActive
+            val updated = flow.copy(isActive = next, updatedAt = System.currentTimeMillis())
+            flowRepository.save(updated)
+            if (next) {
+                runCatching { scheduler.schedule(updated) }
+            } else {
+                runCatching { scheduler.cancel(updated.id) }
+            }
+        }
+    }
 }
 
 data class FlowListUiState(
     val flows: List<FlowSummary> = emptyList(),
     val recentRuns: List<RunRecord> = emptyList(),
     val lastRunByFlow: Map<String, RunRecord> = emptyMap(),
-)
+) {
+    val totalExecutions: Int get() = recentRuns.size
+    val failedExecutions: Int get() = recentRuns.count { it.status == RunStatus.Failed }
+    val failureRate: Int get() = if (recentRuns.isEmpty()) 0 else (failedExecutions * 100) / recentRuns.size
+    val avgRunTimeFormatted: String get() {
+        if (recentRuns.isEmpty()) return "0s"
+        val totalMs = recentRuns.sumOf { ((it.finishedAt ?: it.startedAt) - it.startedAt).coerceAtLeast(0L) }
+        val avgMs = totalMs / recentRuns.size
+        return if (avgMs < 1000) "${avgMs}ms" else "${avgMs / 1000}s"
+    }
+}
 
 @Composable
 fun FlowListScreen(
@@ -290,10 +452,22 @@ fun FlowListScreen(
     val groups by viewModel.groups.collectAsStateWithLifecycle()
     val selectedGroupId by viewModel.selectedGroupId.collectAsStateWithLifecycle()
     val groupVariables by viewModel.groupVariables.collectAsStateWithLifecycle()
+    val allVariables by viewModel.allVariables.collectAsStateWithLifecycle()
+    val credentials by viewModel.credentials.collectAsStateWithLifecycle()
+    val credentialSearchQuery by viewModel.credentialSearchQuery.collectAsStateWithLifecycle()
+    val showCreateCredential by viewModel.showCreateCredentialDialog.collectAsStateWithLifecycle()
+    val dataTables by viewModel.dataTables.collectAsStateWithLifecycle()
+    val dataTableSearchQuery by viewModel.dataTableSearchQuery.collectAsStateWithLifecycle()
+    val showCreateDataTable by viewModel.showCreateDataTableDialog.collectAsStateWithLifecycle()
+    val activeDataTable by viewModel.activeDataTable.collectAsStateWithLifecycle()
+    val activeTableRows by viewModel.activeTableRows.collectAsStateWithLifecycle()
+    val currentTab by viewModel.currentTab.collectAsStateWithLifecycle()
+    val variableSearchQuery by viewModel.variableSearchQuery.collectAsStateWithLifecycle()
     val creating by viewModel.isCreating.collectAsStateWithLifecycle()
     val showTemplates by viewModel.showTemplates.collectAsStateWithLifecycle()
     val showCreateGroup by viewModel.showCreateGroupDialog.collectAsStateWithLifecycle()
     val showVariables by viewModel.showVariablesDialog.collectAsStateWithLifecycle()
+    val showCreateVariable by viewModel.showCreateVariableDialog.collectAsStateWithLifecycle()
     val movingFlowId by viewModel.movingFlowId.collectAsStateWithLifecycle()
     val colors = KaivoTheme.colors
 
@@ -323,15 +497,17 @@ fun FlowListScreen(
                 Row(
                     Modifier
                         .fillMaxWidth()
-                        .padding(horizontal = 16.dp, vertical = 16.dp),
+                        .padding(horizontal = 16.dp, vertical = 12.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
                     Column(Modifier.weight(1f)) {
-                        Text("KaivoFlow", style = androidx.compose.material3.MaterialTheme.typography.displayLarge, color = colors.inkPrimary)
+                        Text("Overview", style = androidx.compose.material3.MaterialTheme.typography.displayLarge, color = colors.inkPrimary)
                         Text(
-                            if (filteredFlows.isEmpty()) "Your automations live here" else "${filteredFlows.size} Flows",
-                            style = androidx.compose.material3.MaterialTheme.typography.bodyMedium,
+                            "All the workflows, credentials, variables and data tables in your workspace",
+                            style = androidx.compose.material3.MaterialTheme.typography.bodySmall,
                             color = colors.inkSecondary,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
                         )
                     }
                     IconPill("history", "Run history", onOpenHistory)
@@ -339,174 +515,152 @@ fun FlowListScreen(
                     IconPill("settings", "Settings", onOpenSettings)
                 }
 
-                // Transfer & Templates Action Buttons
-                Row(
-                    Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = KaivoTheme.spacing.md, vertical = 4.dp),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                ) {
-                    GhostButton(
-                        text = stringResource(R.string.transfer_import_button),
-                        icon = "download",
-                        onClick = onImport,
-                        modifier = Modifier.weight(1f),
-                    )
-                    GhostButton(
-                        text = "Templates",
-                        icon = "sparkles",
-                        onClick = { viewModel.showTemplates() },
-                        modifier = Modifier.weight(1f),
-                    )
-                }
+                // Top Metrics Bar (n8n sovereign stats: Prod executions, Failed, Failure rate, Run time)
+                DashboardMetricsOverview(
+                    totalExecutions = state.totalExecutions,
+                    failedExecutions = state.failedExecutions,
+                    failureRate = state.failureRate,
+                    runTimeFormatted = state.avgRunTimeFormatted,
+                )
 
                 Spacer(Modifier.height(8.dp))
 
-                // Group / Spaces Filter Chips
+                // Navigation Tabs
                 LazyRow(
-                    contentPadding = PaddingValues(horizontal = 16.dp),
+                    Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp),
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
                     item {
-                        GroupFilterChip(
-                            label = "All Flows (${state.flows.size})",
-                            isSelected = selectedGroupId == null,
-                            onClick = { viewModel.selectGroup(null) },
-                        )
-                    }
-                    items(groups, key = { it.id }) { group ->
-                        val count = state.flows.count { it.groupId == group.id }
-                        GroupFilterChip(
-                            label = "${group.name} ($count)",
-                            isSelected = selectedGroupId == group.id,
-                            onClick = { viewModel.selectGroup(group.id) },
+                        DashboardTabPill(
+                            label = "Workflows (${state.flows.size})",
+                            isSelected = currentTab == DashboardTab.Flows,
+                            onClick = { viewModel.setTab(DashboardTab.Flows) },
                         )
                     }
                     item {
-                        Box(
+                        DashboardTabPill(
+                            label = "Credentials (${credentials.size})",
+                            isSelected = currentTab == DashboardTab.Credentials,
+                            onClick = { viewModel.setTab(DashboardTab.Credentials) },
+                        )
+                    }
+                    item {
+                        DashboardTabPill(
+                            label = "Variables (${allVariables.size})",
+                            isSelected = currentTab == DashboardTab.Variables,
+                            onClick = { viewModel.setTab(DashboardTab.Variables) },
+                        )
+                    }
+                    item {
+                        DashboardTabPill(
+                            label = "Data tables (${dataTables.size})",
+                            isSelected = currentTab == DashboardTab.DataTables,
+                            onClick = { viewModel.setTab(DashboardTab.DataTables) },
+                        )
+                    }
+                }
+
+                Spacer(Modifier.height(8.dp))
+
+                when (currentTab) {
+                    DashboardTab.Flows -> {
+                        // Transfer & Templates Action Buttons
+                        Row(
                             Modifier
-                                .clip(KaivoShapes.chip)
-                                .background(colors.surfaceElevated.copy(alpha = 0.5f))
-                                .border(1.dp, colors.hairline, KaivoShapes.chip)
-                                .clickable(onClick = viewModel::openCreateGroupDialog)
-                                .padding(horizontal = 12.dp, vertical = 7.dp),
-                            contentAlignment = Alignment.Center,
+                                .fillMaxWidth()
+                                .padding(horizontal = KaivoTheme.spacing.md, vertical = 4.dp),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
                         ) {
-                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                Icon(KaivoIcons.icon("add"), contentDescription = null, tint = colors.royalGold, modifier = Modifier.size(14.dp))
-                                Spacer(Modifier.width(4.dp))
-                                Text("New Group", style = androidx.compose.material3.MaterialTheme.typography.labelMedium, color = colors.royalGold)
-                            }
-                        }
-                    }
-                }
-
-                // Selected Group Header Banner (with Variables and Management options)
-                if (selectedGroup != null) {
-                    Spacer(Modifier.height(8.dp))
-                    Box(
-                        Modifier
-                            .fillMaxWidth()
-                            .padding(horizontal = 16.dp)
-                            .clip(KaivoShapes.stepCard)
-                            .background(colors.surfaceCard)
-                            .border(1.dp, colors.hairline, KaivoShapes.stepCard)
-                            .padding(12.dp),
-                    ) {
-                        Column {
-                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                Icon(KaivoIcons.icon("group"), contentDescription = null, tint = colors.royalGold, modifier = Modifier.size(18.dp))
-                                Spacer(Modifier.width(8.dp))
-                                Text(
-                                    selectedGroup.name,
-                                    style = androidx.compose.material3.MaterialTheme.typography.titleMedium,
-                                    color = colors.inkPrimary,
-                                    modifier = Modifier.weight(1f),
-                                )
-                                Box(
-                                    Modifier
-                                        .clip(CircleShape)
-                                        .clickable { viewModel.deleteGroup(selectedGroup.id) }
-                                        .padding(4.dp),
-                                ) {
-                                    Icon(KaivoIcons.icon("delete"), contentDescription = "Delete Group", tint = colors.statusError.copy(alpha = 0.8f), modifier = Modifier.size(18.dp))
-                                }
-                            }
-                            if (selectedGroup.description.isNotBlank()) {
-                                Spacer(Modifier.height(4.dp))
-                                Text(selectedGroup.description, style = androidx.compose.material3.MaterialTheme.typography.bodySmall, color = colors.inkSecondary)
-                            }
-                            Spacer(Modifier.height(8.dp))
-                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                Box(
-                                    Modifier
-                                        .clip(KaivoShapes.chip)
-                                        .background(colors.surfaceElevated)
-                                        .border(1.dp, colors.royalGold.copy(alpha = 0.3f), KaivoShapes.chip)
-                                        .clickable(onClick = viewModel::openVariablesDialog)
-                                        .padding(horizontal = 10.dp, vertical = 6.dp),
-                                    contentAlignment = Alignment.Center,
-                                ) {
-                                    Row(verticalAlignment = Alignment.CenterVertically) {
-                                        Icon(KaivoIcons.icon("variable"), contentDescription = null, tint = colors.royalGold, modifier = Modifier.size(14.dp))
-                                        Spacer(Modifier.width(6.dp))
-                                        Text("Variables (${groupVariables.size})", style = androidx.compose.material3.MaterialTheme.typography.labelSmall, color = colors.inkPrimary)
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-
-                // Main Flow List or Empty State
-                if (filteredFlows.isEmpty()) {
-                    EmptyFlows(
-                        isCreating = creating,
-                        onCreate = { viewModel.createFlow(onOpenFlow) },
-                    )
-                } else {
-                    LazyColumn(
-                        contentPadding = PaddingValues(16.dp),
-                        verticalArrangement = Arrangement.spacedBy(12.dp),
-                        modifier = Modifier.weight(1f),
-                    ) {
-                        items(filteredFlows, key = { it.id }) { flow ->
-                            val flowGroup = groups.firstOrNull { it.id == flow.groupId }
-                            FlowRowCard(
-                                flow = flow,
-                                groupName = if (selectedGroupId == null) flowGroup?.name else null,
-                                lastRun = state.lastRunByFlow[flow.id],
-                                onOpen = { onOpenFlow(flow.id) },
-                                onExport = { onExport(flow.id) },
-                                onBackup = { onBackup(flow.id) },
-                                onDuplicate = { viewModel.duplicate(flow.id, onOpenFlow) },
-                                onMoveGroup = { viewModel.openMoveFlowDialog(flow.id) },
-                                onDelete = { viewModel.delete(flow.id) },
-                                onToggleFavorite = { viewModel.toggleFavorite(flow.id, !flow.isFavorite) },
+                            GhostButton(
+                                text = stringResource(R.string.transfer_import_button),
+                                icon = "download",
+                                onClick = onImport,
+                                modifier = Modifier.weight(1f),
+                            )
+                            GhostButton(
+                                text = "Templates",
+                                icon = "sparkles",
+                                onClick = { viewModel.showTemplates() },
+                                modifier = Modifier.weight(1f),
                             )
                         }
+
+                        // Main Flow List or Empty State
+                        if (state.flows.isEmpty()) {
+                            EmptyFlows(
+                                isCreating = creating,
+                                onCreate = { viewModel.createFlow(onOpenFlow) },
+                            )
+                        } else {
+                            LazyColumn(
+                                contentPadding = PaddingValues(16.dp),
+                                verticalArrangement = Arrangement.spacedBy(12.dp),
+                                modifier = Modifier.weight(1f),
+                            ) {
+                                items(state.flows, key = { it.id }) { flow ->
+                                    FlowRowCard(
+                                        flow = flow,
+                                        groupName = null,
+                                        lastRun = state.lastRunByFlow[flow.id],
+                                        onOpen = { onOpenFlow(flow.id) },
+                                        onExport = { onExport(flow.id) },
+                                        onDelete = { viewModel.delete(flow.id) },
+                                        onToggleFavorite = { viewModel.toggleFavorite(flow.id, !flow.isFavorite) },
+                                        onToggleActive = { viewModel.toggleFlowActive(flow.id) },
+                                    )
+                                }
+                            }
+
+                            // Bottom Bar Action: compact, original-sized centered "+ New Flow"
+                            Box(
+                                Modifier
+                                    .fillMaxWidth()
+                                    .padding(vertical = 16.dp),
+                                contentAlignment = Alignment.Center,
+                            ) {
+                                GoldButton(
+                                    text = if (creating) "Creating…" else "New Flow",
+                                    icon = "add",
+                                    enabled = !creating,
+                                    onClick = { viewModel.createFlow(onOpenFlow) },
+                                )
+                            }
+                        }
                     }
 
-                    // Bottom Bar Actions: "New Group" on Left, "+ New Flow" on Right
-                    Row(
-                        Modifier
-                            .fillMaxWidth()
-                            .padding(16.dp),
-                        horizontalArrangement = Arrangement.spacedBy(12.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        GhostButton(
-                            text = "New Group",
-                            icon = "group",
-                            onClick = viewModel::openCreateGroupDialog,
+                    DashboardTab.Credentials -> {
+                        CredentialsDashboardView(
+                            credentials = credentials,
+                            searchQuery = credentialSearchQuery,
+                            onSearchChange = viewModel::setCredentialSearchQuery,
+                            onCreateCredential = viewModel::openCreateCredentialDialog,
+                            onDeleteCredential = viewModel::deleteCredential,
                             modifier = Modifier.weight(1f),
                         )
-                        GoldButton(
-                            text = if (creating) "Creating…" else "New Flow",
-                            icon = "add",
-                            enabled = !creating,
-                            onClick = { viewModel.createFlow(onOpenFlow) },
+                    }
+
+                    DashboardTab.Variables -> {
+                        VariablesDashboardView(
+                            variables = allVariables,
+                            searchQuery = variableSearchQuery,
+                            onSearchChange = viewModel::setVariableSearchQuery,
+                            onCreateVariable = viewModel::openCreateVariableDialog,
+                            onDeleteVariable = viewModel::deleteVariable,
+                            modifier = Modifier.weight(1f),
+                        )
+                    }
+
+                    DashboardTab.DataTables -> {
+                        DataTablesDashboardView(
+                            tables = dataTables,
+                            searchQuery = dataTableSearchQuery,
+                            onSearchChange = viewModel::setDataTableSearchQuery,
+                            onCreateTable = viewModel::openCreateDataTableDialog,
+                            onViewTable = viewModel::viewDataTable,
+                            onDeleteTable = viewModel::deleteDataTable,
                             modifier = Modifier.weight(1f),
                         )
                     }
@@ -521,10 +675,43 @@ fun FlowListScreen(
                 )
             }
 
+            if (showCreateCredential) {
+                CreateCredentialDialog(
+                    onDismiss = viewModel::closeCreateCredentialDialog,
+                    onSave = viewModel::saveCredential,
+                )
+            }
+
+            if (showCreateDataTable) {
+                CreateDataTableDialog(
+                    onDismiss = viewModel::closeCreateDataTableDialog,
+                    onCreate = viewModel::createDataTable,
+                )
+            }
+
+            activeDataTable?.let { table ->
+                DataTableDetailSheet(
+                    table = table,
+                    rows = activeTableRows,
+                    onAddRow = { data -> viewModel.insertTableRow(table.id, data) },
+                    onDeleteRow = viewModel::deleteTableRow,
+                    onDismiss = viewModel::closeDataTable,
+                )
+            }
+
             if (showCreateGroup) {
                 CreateWorkflowGroupDialog(
                     onDismiss = viewModel::closeCreateGroupDialog,
                     onCreate = viewModel::createGroup,
+                )
+            }
+
+            if (showCreateVariable) {
+                CreateVariableDialog(
+                    onSave = { key, value ->
+                        viewModel.saveVariable(key, value)
+                    },
+                    onDismiss = viewModel::closeCreateVariableDialog,
                 )
             }
 
@@ -558,35 +745,49 @@ fun FlowListScreen(
 private fun GroupFilterChip(
     label: String,
     isSelected: Boolean,
+    colorName: String? = null,
     onClick: () -> Unit,
 ) {
     val colors = KaivoTheme.colors
+    val accentColor = colorName?.let { workflowGroupColor(it) } ?: colors.royalGold
     Box(
         Modifier
             .clip(KaivoShapes.chip)
-            .background(if (isSelected) colors.royalGold else colors.surfaceCard)
-            .border(1.dp, if (isSelected) colors.royalGold else colors.hairline, KaivoShapes.chip)
+            .background(if (isSelected) accentColor else colors.surfaceCard)
+            .border(1.dp, if (isSelected) accentColor else colors.hairline, KaivoShapes.chip)
             .clickable(onClick = onClick)
             .padding(horizontal = 14.dp, vertical = 7.dp),
         contentAlignment = Alignment.Center,
     ) {
-        Text(
-            text = label,
-            style = androidx.compose.material3.MaterialTheme.typography.labelMedium,
-            color = if (isSelected) colors.canvasVoid else colors.inkSecondary,
-            maxLines = 1,
-        )
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            if (colorName != null && !isSelected) {
+                Box(
+                    Modifier
+                        .size(6.dp)
+                        .clip(CircleShape)
+                        .background(accentColor),
+                )
+                Spacer(Modifier.width(6.dp))
+            }
+            Text(
+                text = label,
+                style = androidx.compose.material3.MaterialTheme.typography.labelMedium,
+                color = if (isSelected) colors.canvasVoid else colors.inkSecondary,
+                maxLines = 1,
+            )
+        }
     }
 }
 
 @Composable
 private fun CreateWorkflowGroupDialog(
     onDismiss: () -> Unit,
-    onCreate: (String, String) -> Unit,
+    onCreate: (String, String, String) -> Unit,
 ) {
     val colors = KaivoTheme.colors
     var name by remember { mutableStateOf("") }
     var description by remember { mutableStateOf("") }
+    var color by remember { mutableStateOf("amber") }
 
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -631,11 +832,34 @@ private fun CreateWorkflowGroupDialog(
                     ),
                     modifier = Modifier.fillMaxWidth(),
                 )
+                Spacer(Modifier.height(12.dp))
+                Text("Group Color", style = androidx.compose.material3.MaterialTheme.typography.labelMedium, color = colors.inkMuted)
+                Spacer(Modifier.height(6.dp))
+                val tones = listOf("amber", "amethyst", "emerald", "sapphire", "rose", "gold")
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    tones.forEach { tone ->
+                        val toneColor = workflowGroupColor(tone)
+                        val isToneSelected = color.equals(tone, ignoreCase = true)
+                        Box(
+                            Modifier
+                                .size(32.dp)
+                                .clip(CircleShape)
+                                .background(toneColor)
+                                .border(if (isToneSelected) 2.5.dp else 1.dp, if (isToneSelected) Color.White else Color.Transparent, CircleShape)
+                                .clickable { color = tone },
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            if (isToneSelected) {
+                                Icon(KaivoIcons.icon("check"), null, tint = Color.White, modifier = Modifier.size(16.dp))
+                            }
+                        }
+                    }
+                }
             }
         },
         confirmButton = {
             Button(
-                onClick = { if (name.isNotBlank()) onCreate(name, description) },
+                onClick = { if (name.isNotBlank()) onCreate(name, description, color) },
                 colors = ButtonDefaults.buttonColors(containerColor = colors.royalGold, contentColor = colors.canvasVoid),
                 shape = KaivoShapes.chip,
             ) {
@@ -648,6 +872,16 @@ private fun CreateWorkflowGroupDialog(
             }
         },
     )
+}
+
+internal fun workflowGroupColor(colorName: String): Color = when (colorName.lowercase()) {
+    "amber" -> Color(0xFFF59E0B)
+    "amethyst", "purple" -> Color(0xFF8B5CF6)
+    "emerald", "green" -> Color(0xFF10B981)
+    "sapphire", "blue" -> Color(0xFF3B82F6)
+    "rose", "red" -> Color(0xFFF43F5E)
+    "gold" -> Color(0xFFD4AF37)
+    else -> Color(0xFFD4AF37)
 }
 
 @Composable
@@ -680,7 +914,7 @@ private fun GroupVariablesDialog(
                     .verticalScroll(rememberScrollState()),
             ) {
                 Text(
-                    "Store values referenced across your workflows with {{ \$vars.KEY }}.",
+                    "Group variables override global variables with the same key. Use {{ \$vars.KEY }} in expressions.",
                     style = androidx.compose.material3.MaterialTheme.typography.bodySmall,
                     color = colors.inkSecondary,
                 )
@@ -695,7 +929,7 @@ private fun GroupVariablesDialog(
                             .padding(14.dp),
                         contentAlignment = Alignment.Center,
                     ) {
-                        Text("No variables yet.", style = androidx.compose.material3.MaterialTheme.typography.bodySmall, color = colors.inkMuted)
+                        Text("No variables in this group yet.", style = androidx.compose.material3.MaterialTheme.typography.bodySmall, color = colors.inkMuted)
                     }
                 } else {
                     Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -719,6 +953,9 @@ private fun GroupVariablesDialog(
                                         overflow = TextOverflow.Ellipsis,
                                     )
                                 }
+                                Spacer(Modifier.width(6.dp))
+                                VariablesUsageBadge(keyName = variable.key)
+                                Spacer(Modifier.width(6.dp))
                                 Box(
                                     Modifier
                                         .clip(CircleShape)
@@ -733,12 +970,12 @@ private fun GroupVariablesDialog(
                 }
 
                 Spacer(Modifier.height(16.dp))
-                Text("Add Variable", style = androidx.compose.material3.MaterialTheme.typography.titleSmall, color = colors.inkPrimary)
+                Text("Add Group Variable", style = androidx.compose.material3.MaterialTheme.typography.titleSmall, color = colors.inkPrimary)
                 Spacer(Modifier.height(8.dp))
                 OutlinedTextField(
                     value = newKey,
-                    onValueChange = { newKey = it },
-                    label = { Text("Key (e.g. API_URL)") },
+                    onValueChange = { newKey = it.uppercase() },
+                    label = { Text("Key (e.g. CLIENT_ID)") },
                     singleLine = true,
                     shape = KaivoShapes.chip,
                     colors = OutlinedTextFieldDefaults.colors(
@@ -767,8 +1004,9 @@ private fun GroupVariablesDialog(
                 Spacer(Modifier.height(8.dp))
                 Button(
                     onClick = {
-                        if (newKey.isNotBlank()) {
-                            onAddVariable(newKey, newValue)
+                        val trimmedKey = newKey.trim().uppercase()
+                        if (trimmedKey.isNotBlank()) {
+                            onAddVariable(trimmedKey, newValue)
                             newKey = ""
                             newValue = ""
                         }
@@ -784,6 +1022,432 @@ private fun GroupVariablesDialog(
         confirmButton = {
             TextButton(onClick = onDismiss, colors = ButtonDefaults.textButtonColors(contentColor = colors.inkPrimary)) {
                 Text("Close")
+            }
+        },
+    )
+}
+
+@Composable
+fun VariablesUsageBadge(
+    keyName: String,
+    modifier: Modifier = Modifier,
+) {
+    val clipboardManager = LocalClipboardManager.current
+    val context = LocalContext.current
+    val usageSyntax = "\$vars.$keyName"
+
+    Box(
+        modifier
+            .clip(KaivoShapes.chip)
+            .background(Color(0xFF064E3B).copy(alpha = 0.5f))
+            .border(1.dp, Color(0xFF10B981).copy(alpha = 0.4f), KaivoShapes.chip)
+            .clickable {
+                clipboardManager.setText(AnnotatedString(usageSyntax))
+                Toast.makeText(context, "Copied \"$usageSyntax\" to clipboard", Toast.LENGTH_SHORT).show()
+            }
+            .padding(horizontal = 6.dp, vertical = 3.dp),
+        contentAlignment = Alignment.Center,
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Icon(
+                KaivoIcons.icon("clipboard"),
+                contentDescription = "Copy syntax",
+                tint = Color(0xFF10B981),
+                modifier = Modifier.size(11.dp),
+            )
+            Spacer(Modifier.width(3.dp))
+            Text(
+                usageSyntax,
+                style = androidx.compose.material3.MaterialTheme.typography.labelSmall.copy(
+                    fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
+                ),
+                color = Color(0xFF34D399),
+                maxLines = 1,
+                softWrap = false,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
+    }
+}
+
+@Composable
+private fun DashboardMetricsOverview(
+    totalExecutions: Int,
+    failedExecutions: Int,
+    failureRate: Int,
+    runTimeFormatted: String,
+) {
+    val colors = KaivoTheme.colors
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 16.dp, vertical = 2.dp),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        MetricItem(title = "Executions", value = "$totalExecutions", modifier = Modifier.weight(1f))
+        MetricItem(title = "Failed", value = "$failedExecutions", isError = failedExecutions > 0, modifier = Modifier.weight(1f))
+        MetricItem(title = "Failure rate", value = "$failureRate%", modifier = Modifier.weight(1f))
+        MetricItem(title = "Run time", value = runTimeFormatted, modifier = Modifier.weight(1f))
+    }
+}
+
+@Composable
+private fun MetricItem(
+    title: String,
+    value: String,
+    isError: Boolean = false,
+    modifier: Modifier = Modifier,
+) {
+    val colors = KaivoTheme.colors
+    Box(
+        modifier
+            .clip(KaivoShapes.chip)
+            .background(colors.surfaceElevated.copy(alpha = 0.4f))
+            .border(1.dp, colors.hairline, KaivoShapes.chip)
+            .padding(horizontal = 6.dp, vertical = 4.dp),
+        contentAlignment = Alignment.Center,
+    ) {
+        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+            Text(
+                title,
+                style = androidx.compose.material3.MaterialTheme.typography.labelSmall,
+                color = colors.inkSecondary,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+            Spacer(Modifier.height(1.dp))
+            Text(
+                value,
+                style = androidx.compose.material3.MaterialTheme.typography.titleMedium,
+                color = if (isError) colors.statusError else colors.royalGold,
+            )
+        }
+    }
+}
+
+@Composable
+private fun DashboardTabPill(
+    label: String,
+    isSelected: Boolean,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val colors = KaivoTheme.colors
+    Box(
+        modifier
+            .clip(KaivoShapes.chip)
+            .background(if (isSelected) colors.royalGold.copy(alpha = 0.15f) else colors.surfaceElevated.copy(alpha = 0.3f))
+            .border(1.dp, if (isSelected) colors.royalGold else colors.hairline, KaivoShapes.chip)
+            .clickable(onClick = onClick)
+            .padding(horizontal = 10.dp, vertical = 6.dp),
+        contentAlignment = Alignment.Center,
+    ) {
+        Text(
+            label,
+            style = androidx.compose.material3.MaterialTheme.typography.labelMedium,
+            color = if (isSelected) colors.royalGold else colors.inkSecondary,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
+    }
+}
+
+@Composable
+private fun VariablesDashboardView(
+    variables: List<WorkflowVariable>,
+    searchQuery: String,
+    onSearchChange: (String) -> Unit,
+    onCreateVariable: () -> Unit,
+    onDeleteVariable: (String) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val colors = KaivoTheme.colors
+
+    val filtered = remember(variables, searchQuery) {
+        if (searchQuery.isBlank()) variables
+        else variables.filter {
+            it.key.contains(searchQuery, ignoreCase = true) ||
+                it.value.contains(searchQuery, ignoreCase = true)
+        }
+    }
+
+    Column(modifier = modifier.fillMaxSize()) {
+        // Search & Action Header
+        Row(
+            Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp, vertical = 6.dp),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            OutlinedTextField(
+                value = searchQuery,
+                onValueChange = onSearchChange,
+                placeholder = { Text("Search variables…", style = androidx.compose.material3.MaterialTheme.typography.bodySmall) },
+                singleLine = true,
+                leadingIcon = {
+                    Icon(KaivoIcons.icon("search"), contentDescription = null, tint = colors.inkMuted, modifier = Modifier.size(18.dp))
+                },
+                trailingIcon = {
+                    if (searchQuery.isNotEmpty()) {
+                        IconButton(onClick = { onSearchChange("") }) {
+                            Icon(KaivoIcons.icon("close"), contentDescription = "Clear", tint = colors.inkMuted, modifier = Modifier.size(16.dp))
+                        }
+                    }
+                },
+                shape = KaivoShapes.chip,
+                colors = OutlinedTextFieldDefaults.colors(
+                    focusedBorderColor = colors.royalGold,
+                    unfocusedBorderColor = colors.hairline,
+                    focusedTextColor = colors.inkPrimary,
+                    unfocusedTextColor = colors.inkPrimary,
+                ),
+                modifier = Modifier.weight(1f),
+            )
+            GoldButton(
+                text = "New",
+                icon = "add",
+                onClick = onCreateVariable,
+            )
+        }
+
+        Spacer(Modifier.height(4.dp))
+
+        if (filtered.isEmpty()) {
+            Box(
+                Modifier
+                    .fillMaxWidth()
+                    .weight(1f)
+                    .padding(32.dp),
+                contentAlignment = Alignment.Center,
+            ) {
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    Box(
+                        Modifier
+                            .size(64.dp)
+                            .clip(CircleShape)
+                            .background(colors.royalGold.copy(alpha = 0.12f)),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Icon(KaivoIcons.icon("variable"), contentDescription = null, tint = colors.royalGold, modifier = Modifier.size(32.dp))
+                    }
+                    Spacer(Modifier.height(16.dp))
+                    Text(
+                        if (searchQuery.isNotBlank()) "No variables match \"$searchQuery\"" else "No variables yet",
+                        style = androidx.compose.material3.MaterialTheme.typography.titleMedium,
+                        color = colors.inkPrimary,
+                    )
+                    Spacer(Modifier.height(6.dp))
+                    Text(
+                        "Variables store environment constants and secrets accessed anywhere via {{ \$vars.KEY }}.",
+                        style = androidx.compose.material3.MaterialTheme.typography.bodySmall,
+                        color = colors.inkMuted,
+                        textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+                    )
+                    Spacer(Modifier.height(20.dp))
+                    GoldButton(
+                        text = "Create variable",
+                        icon = "add",
+                        onClick = onCreateVariable,
+                    )
+                }
+            }
+        } else {
+            // Table Header
+            Row(
+                Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 24.dp, vertical = 4.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text("KEY", style = androidx.compose.material3.MaterialTheme.typography.labelSmall, color = colors.royalGold, modifier = Modifier.weight(1.4f))
+                Text("VALUE", style = androidx.compose.material3.MaterialTheme.typography.labelSmall, color = colors.inkMuted, modifier = Modifier.weight(1.4f))
+                Text("SYNTAX", style = androidx.compose.material3.MaterialTheme.typography.labelSmall, color = colors.inkMuted, modifier = Modifier.weight(2f))
+                Spacer(Modifier.width(36.dp))
+            }
+
+            LazyColumn(
+                contentPadding = PaddingValues(horizontal = 16.dp, vertical = 4.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+                modifier = Modifier.weight(1f),
+            ) {
+                items(filtered, key = { it.id }) { variable ->
+                    VariableRowItem(
+                        variable = variable,
+                        onDelete = { onDeleteVariable(variable.id) },
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun VariableRowItem(
+    variable: WorkflowVariable,
+    onDelete: () -> Unit,
+) {
+    val colors = KaivoTheme.colors
+    val valuePreview = remember(variable.value) {
+        if (variable.value.length > 20) {
+            "${variable.value.take(10)}…${variable.value.takeLast(4)}"
+        } else {
+            variable.value
+        }
+    }
+
+    Box(
+        Modifier
+            .fillMaxWidth()
+            .clip(KaivoShapes.stepCard)
+            .background(colors.surfaceCard)
+            .border(1.dp, colors.hairline, KaivoShapes.stepCard)
+            .padding(horizontal = 12.dp, vertical = 8.dp),
+    ) {
+        Row(
+            Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            // Key column
+            Column(Modifier.weight(1.4f)) {
+                Text(
+                    variable.key,
+                    style = androidx.compose.material3.MaterialTheme.typography.titleSmall,
+                    color = colors.royalGold,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+
+            // Value column
+            Column(Modifier.weight(1.4f).padding(horizontal = 4.dp)) {
+                Text(
+                    valuePreview,
+                    style = androidx.compose.material3.MaterialTheme.typography.bodySmall.copy(
+                        fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
+                    ),
+                    color = colors.inkSecondary,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+
+            // Syntax pill column
+            Box(Modifier.weight(2f).padding(horizontal = 4.dp)) {
+                VariablesUsageBadge(keyName = variable.key)
+            }
+
+            // Delete action
+            IconButton(
+                onClick = onDelete,
+                modifier = Modifier.size(32.dp),
+            ) {
+                Icon(
+                    KaivoIcons.icon("delete"),
+                    contentDescription = "Delete variable",
+                    tint = colors.statusError.copy(alpha = 0.8f),
+                    modifier = Modifier.size(16.dp),
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun CreateVariableDialog(
+    onSave: (key: String, value: String) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    val colors = KaivoTheme.colors
+    var key by remember { mutableStateOf("") }
+    var value by remember { mutableStateOf("") }
+    var keyError by remember { mutableStateOf<String?>(null) }
+
+    fun validateAndSave() {
+        val trimmedKey = key.trim().uppercase()
+        if (trimmedKey.isEmpty()) {
+            keyError = "Key is required"
+            return
+        }
+        if (!trimmedKey.matches(Regex("^[A-Z0-9_]+$"))) {
+            keyError = "Only letters, numbers, and underscores allowed"
+            return
+        }
+        onSave(trimmedKey, value)
+    }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        containerColor = colors.surfaceAtelier,
+        shape = KaivoShapes.stepCard,
+        title = {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(KaivoIcons.icon("variable"), contentDescription = null, tint = colors.royalGold, modifier = Modifier.size(20.dp))
+                Spacer(Modifier.width(8.dp))
+                Text("Create Variable", style = androidx.compose.material3.MaterialTheme.typography.titleMedium, color = colors.inkPrimary)
+            }
+        },
+        text = {
+            Column(
+                Modifier
+                    .fillMaxWidth()
+                    .verticalScroll(rememberScrollState()),
+            ) {
+                Text(
+                    "Define a variable accessible in your workflows via {{ \$vars.KEY }}.",
+                    style = androidx.compose.material3.MaterialTheme.typography.bodySmall,
+                    color = colors.inkSecondary,
+                )
+                Spacer(Modifier.height(12.dp))
+
+                OutlinedTextField(
+                    value = key,
+                    onValueChange = {
+                        key = it.uppercase()
+                        keyError = null
+                    },
+                    label = { Text("Key (e.g. CLIENT_ID)") },
+                    isError = keyError != null,
+                    supportingText = keyError?.let { { Text(it, color = colors.statusError) } },
+                    singleLine = true,
+                    shape = KaivoShapes.chip,
+                    colors = OutlinedTextFieldDefaults.colors(
+                        focusedBorderColor = colors.royalGold,
+                        unfocusedBorderColor = colors.hairline,
+                        focusedTextColor = colors.inkPrimary,
+                        unfocusedTextColor = colors.inkPrimary,
+                    ),
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                Spacer(Modifier.height(8.dp))
+
+                OutlinedTextField(
+                    value = value,
+                    onValueChange = { value = it },
+                    label = { Text("Value") },
+                    shape = KaivoShapes.chip,
+                    colors = OutlinedTextFieldDefaults.colors(
+                        focusedBorderColor = colors.royalGold,
+                        unfocusedBorderColor = colors.hairline,
+                        focusedTextColor = colors.inkPrimary,
+                        unfocusedTextColor = colors.inkPrimary,
+                    ),
+                    modifier = Modifier.fillMaxWidth(),
+                )
+            }
+        },
+        confirmButton = {
+            Button(
+                onClick = ::validateAndSave,
+                colors = ButtonDefaults.buttonColors(containerColor = colors.royalGold, contentColor = colors.canvasVoid),
+                shape = KaivoShapes.chip,
+            ) {
+                Text("Create")
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss, colors = ButtonDefaults.textButtonColors(contentColor = colors.inkSecondary)) {
+                Text("Cancel")
             }
         },
     )
@@ -920,49 +1584,87 @@ private fun FlowRowCard(
     lastRun: RunRecord?,
     onOpen: () -> Unit,
     onExport: () -> Unit,
-    onBackup: () -> Unit,
-    onDuplicate: () -> Unit,
-    onMoveGroup: () -> Unit,
     onDelete: () -> Unit,
     onToggleFavorite: () -> Unit,
+    onToggleActive: () -> Unit,
 ) {
     val colors = KaivoTheme.colors
+    var showMenu by remember { mutableStateOf(false) }
     var showDeleteConfirm by remember { mutableStateOf(false) }
     Column(
         Modifier
             .fillMaxWidth()
             .clip(KaivoShapes.stepCard)
             .background(colors.surfaceCard)
-            .border(1.dp, colors.hairline, KaivoShapes.stepCard)
+            .border(1.dp, if (flow.isFavorite) colors.royalGold.copy(alpha = 0.5f) else colors.hairline, KaivoShapes.stepCard)
             .clickable(onClick = onOpen)
             .padding(16.dp)
             .semantics { contentDescription = "${flow.name}, ${flow.stepCount} Steps" },
     ) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
+        Row(
+            Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
             Box(
                 Modifier
-                    .size(36.dp)
+                    .size(40.dp)
                     .clip(KaivoShapes.medallion)
                     .background(Brush.radialGradient(listOf(colors.royalGold.copy(alpha = 0.3f), colors.royalGold.copy(alpha = 0.08f)))),
                 contentAlignment = Alignment.Center,
             ) {
-                Icon(KaivoIcons.icon("bolt"), null, tint = colors.royalGold, modifier = Modifier.size(18.dp))
+                Icon(KaivoIcons.icon("bolt"), null, tint = colors.royalGold, modifier = Modifier.size(20.dp))
             }
             Spacer(Modifier.width(12.dp))
             Column(Modifier.weight(1f)) {
-                Text(
-                    flow.name,
-                    style = androidx.compose.material3.MaterialTheme.typography.titleMedium,
-                    color = colors.inkPrimary,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        flow.name,
+                        style = androidx.compose.material3.MaterialTheme.typography.titleMedium,
+                        color = colors.inkPrimary,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                    if (flow.isFavorite) {
+                        Spacer(Modifier.width(6.dp))
+                        Icon(
+                            KaivoIcons.icon("bookmark"),
+                            contentDescription = "Pinned",
+                            tint = colors.royalGold,
+                            modifier = Modifier.size(15.dp),
+                        )
+                    }
+                }
+                Spacer(Modifier.height(2.dp))
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text(
                         "${flow.stepCount} Steps",
                         style = androidx.compose.material3.MaterialTheme.typography.bodyMedium,
                         color = colors.inkSecondary,
                     )
+                    if (flow.isActive) {
+                        Spacer(Modifier.width(8.dp))
+                        Row(
+                            Modifier
+                                .clip(CircleShape)
+                                .background(colors.royalGold.copy(alpha = 0.15f))
+                                .border(1.dp, colors.royalGold.copy(alpha = 0.4f), CircleShape)
+                                .padding(horizontal = 7.dp, vertical = 2.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Box(
+                                Modifier
+                                    .size(6.dp)
+                                    .clip(CircleShape)
+                                    .background(colors.royalGold),
+                            )
+                            Spacer(Modifier.width(4.dp))
+                            Text(
+                                "24/7 Active",
+                                style = androidx.compose.material3.MaterialTheme.typography.labelSmall,
+                                color = colors.royalGold,
+                            )
+                        }
+                    }
                     if (groupName != null) {
                         Spacer(Modifier.width(6.dp))
                         Text(
@@ -973,51 +1675,124 @@ private fun FlowRowCard(
                     }
                 }
             }
-            Box(Modifier.clip(CircleShape).clickable(onClick = onToggleFavorite).padding(6.dp)) {
-                Icon(
-                    KaivoIcons.icon("bookmark"),
-                    if (flow.isFavorite) "Remove from favourites" else "Add to favourites",
-                    tint = if (flow.isFavorite) colors.royalGold else colors.inkMuted,
-                    modifier = Modifier.size(18.dp),
-                )
+
+            // 3-Dot Overflow Menu
+            Box {
+                Box(
+                    Modifier
+                        .size(36.dp)
+                        .clip(CircleShape)
+                        .clickable { showMenu = true },
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Icon(
+                        KaivoIcons.icon("more"),
+                        contentDescription = "Options",
+                        tint = colors.inkSecondary,
+                        modifier = Modifier.size(20.dp),
+                    )
+                }
+
+                DropdownMenu(
+                    expanded = showMenu,
+                    onDismissRequest = { showMenu = false },
+                    modifier = Modifier
+                        .background(colors.surfaceElevated)
+                        .border(1.dp, colors.hairline, KaivoShapes.chip),
+                ) {
+                    // 1. Publish / Unpublish (24/7 background execution)
+                    DropdownMenuItem(
+                        text = {
+                            Text(
+                                if (flow.isActive) "Unpublish (Stop 24/7)" else "Publish (Run 24/7)",
+                                color = if (flow.isActive) colors.inkPrimary else colors.royalGold,
+                                style = androidx.compose.material3.MaterialTheme.typography.labelMedium,
+                            )
+                        },
+                        leadingIcon = {
+                            Icon(
+                                KaivoIcons.icon(if (flow.isActive) "pause" else "play"),
+                                contentDescription = null,
+                                tint = if (flow.isActive) colors.inkSecondary else colors.royalGold,
+                                modifier = Modifier.size(18.dp),
+                            )
+                        },
+                        onClick = {
+                            showMenu = false
+                            onToggleActive()
+                        },
+                    )
+
+                    // 2. Pin / Unpin
+                    DropdownMenuItem(
+                        text = {
+                            Text(
+                                if (flow.isFavorite) "Unpin" else "Pin",
+                                color = colors.inkPrimary,
+                                style = androidx.compose.material3.MaterialTheme.typography.labelMedium,
+                            )
+                        },
+                        leadingIcon = {
+                            Icon(
+                                KaivoIcons.icon("bookmark"),
+                                contentDescription = null,
+                                tint = if (flow.isFavorite) colors.royalGold else colors.inkSecondary,
+                                modifier = Modifier.size(18.dp),
+                            )
+                        },
+                        onClick = {
+                            showMenu = false
+                            onToggleFavorite()
+                        },
+                    )
+
+                    // 3. Export
+                    DropdownMenuItem(
+                        text = {
+                            Text(
+                                "Export",
+                                color = colors.inkPrimary,
+                                style = androidx.compose.material3.MaterialTheme.typography.labelMedium,
+                            )
+                        },
+                        leadingIcon = {
+                            Icon(
+                                KaivoIcons.icon("download"),
+                                contentDescription = null,
+                                tint = colors.royalGold,
+                                modifier = Modifier.size(18.dp),
+                            )
+                        },
+                        onClick = {
+                            showMenu = false
+                            onExport()
+                        },
+                    )
+
+                    // 4. Delete
+                    DropdownMenuItem(
+                        text = {
+                            Text(
+                                "Delete",
+                                color = colors.statusError,
+                                style = androidx.compose.material3.MaterialTheme.typography.labelMedium,
+                            )
+                        },
+                        leadingIcon = {
+                            Icon(
+                                KaivoIcons.icon("delete"),
+                                contentDescription = null,
+                                tint = colors.statusError,
+                                modifier = Modifier.size(18.dp),
+                            )
+                        },
+                        onClick = {
+                            showMenu = false
+                            showDeleteConfirm = true
+                        },
+                    )
+                }
             }
-            Box(Modifier.clip(CircleShape).clickable(onClick = onMoveGroup).padding(6.dp)) {
-                Icon(
-                    KaivoIcons.icon("group"),
-                    "Move to Group",
-                    tint = colors.inkMuted,
-                    modifier = Modifier.size(18.dp),
-                )
-            }
-            Box(Modifier.clip(CircleShape).clickable(onClick = onDuplicate).padding(6.dp)) {
-                Icon(
-                    KaivoIcons.icon("clipboard"),
-                    "Duplicate Flow",
-                    tint = colors.inkMuted,
-                    modifier = Modifier.size(18.dp),
-                )
-            }
-            Box(Modifier.clip(CircleShape).clickable(onClick = { showDeleteConfirm = true }).padding(6.dp)) {
-                Icon(
-                    KaivoIcons.icon("delete"),
-                    "Delete Flow",
-                    tint = colors.statusError.copy(alpha = 0.8f),
-                    modifier = Modifier.size(18.dp),
-                )
-            }
-        }
-        Spacer(Modifier.height(KaivoTheme.spacing.xs))
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            GhostButton(
-                text = stringResource(R.string.transfer_export_button),
-                onClick = onExport,
-                modifier = Modifier.weight(1f),
-            )
-            GhostButton(
-                text = stringResource(R.string.transfer_backup_button),
-                onClick = onBackup,
-                modifier = Modifier.weight(1f),
-            )
         }
         if (lastRun != null) {
             Spacer(Modifier.height(10.dp))

@@ -3,7 +3,11 @@ package com.kaivoflow.core.data
 import com.kaivoflow.core.engine.CredentialProvider
 import com.kaivoflow.core.engine.OAuth2TokenManager
 import com.kaivoflow.core.engine.OAuth2TokenStore
+import com.kaivoflow.core.model.CredentialItem
 import com.kaivoflow.core.model.CredentialRef
+import com.kaivoflow.core.model.DataTable
+import com.kaivoflow.core.model.DataTableColumn
+import com.kaivoflow.core.model.DataTableRow
 import com.kaivoflow.core.model.Flow
 import com.kaivoflow.core.model.RunRecord
 import com.kaivoflow.core.model.RunStatus
@@ -12,6 +16,7 @@ import com.kaivoflow.core.model.WorkflowVariable
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow as FlowStream
+import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.withContext
 import java.util.UUID
@@ -26,6 +31,7 @@ data class FlowSummary(
     val lastRunStatus: String?,
     val lastRunAt: Long?,
     val groupId: String? = null,
+    val isActive: Boolean = false,
 )
 
 interface FlowRepository {
@@ -51,6 +57,7 @@ class RoomFlowRepository(
     override fun observeSummaries(): FlowStream<List<FlowSummary>> =
         flowDao.observeAll().map { entities ->
             entities.map {
+                val active = runCatching { JsonCodec.decodeFlow(it.flowJson)?.isActive == true }.getOrDefault(false)
                 FlowSummary(
                     id = it.id,
                     name = it.name,
@@ -60,6 +67,7 @@ class RoomFlowRepository(
                     lastRunStatus = it.lastRunStatus,
                     lastRunAt = it.lastRunAt,
                     groupId = it.groupId,
+                    isActive = active,
                 )
             }
         }
@@ -189,6 +197,8 @@ class RoomRunRepository(
 /** Credentials: encrypted at rest, exposed to the engine only through [CredentialProvider]. */
 interface CredentialRepository : CredentialProvider {
     fun observeRefs(): FlowStream<List<CredentialRef>>
+    fun observeCredentials(): FlowStream<List<CredentialItem>>
+    suspend fun getFields(id: String): Map<String, String>?
     suspend fun save(id: String?, type: String, label: String, fields: Map<String, String>): String
     suspend fun delete(id: String)
 }
@@ -220,6 +230,25 @@ class EncryptedCredentialRepository(
     override fun observeRefs(): FlowStream<List<CredentialRef>> =
         credentialDao.observeAll().map { list -> list.map { CredentialRef(it.id, it.type, it.label) } }
 
+    override fun observeCredentials(): FlowStream<List<CredentialItem>> =
+        credentialDao.observeAll().map { list ->
+            list.map { entity ->
+                CredentialItem(
+                    id = entity.id,
+                    type = entity.type,
+                    name = entity.label,
+                    createdAt = entity.createdAt,
+                    updatedAt = entity.createdAt,
+                    usedInFlowCount = 0,
+                )
+            }
+        }.flowOn(io)
+
+    override suspend fun getFields(id: String): Map<String, String>? = withContext(io) {
+        val entity = credentialDao.byId(id) ?: return@withContext null
+        runCatching { decrypt(entity.cipherText) }.getOrNull()
+    }
+
     override suspend fun save(id: String?, type: String, label: String, fields: Map<String, String>): String =
         withContext(io) {
             val credentialId = id ?: UUID.randomUUID().toString()
@@ -239,6 +268,155 @@ class EncryptedCredentialRepository(
         }
 
     override suspend fun delete(id: String) = withContext(io) { credentialDao.delete(id) }
+}
+
+/**
+ * Sovereign Data Tables Repository.
+ * Provides durable, typed tabular data storage directly on the phone.
+ */
+interface DataTableRepository {
+    fun observeTables(): FlowStream<List<DataTable>>
+    suspend fun tableById(id: String): DataTable?
+    suspend fun createTable(name: String, description: String = "", columns: List<DataTableColumn>): String
+    suspend fun deleteTable(id: String)
+
+    fun observeRows(tableId: String): FlowStream<List<DataTableRow>>
+    suspend fun rowsForTable(tableId: String): List<DataTableRow>
+    suspend fun insertRow(tableId: String, data: Map<String, Any?>): String
+    suspend fun deleteRow(rowId: String)
+}
+
+class RoomDataTableRepository(
+    private val dataTableDao: DataTableDao,
+    private val io: CoroutineDispatcher = Dispatchers.IO,
+) : DataTableRepository {
+
+    override fun observeTables(): FlowStream<List<DataTable>> =
+        dataTableDao.observeAll().map { list ->
+            list.map { entity ->
+                val columns = parseColumns(entity.columnsJson)
+                val count = dataTableDao.rowCount(entity.id)
+                DataTable(
+                    id = entity.id,
+                    name = entity.name,
+                    description = entity.description,
+                    columns = columns,
+                    rowCount = count,
+                    createdAt = entity.createdAt,
+                    updatedAt = entity.updatedAt,
+                )
+            }
+        }.flowOn(io)
+
+    override suspend fun tableById(id: String): DataTable? = withContext(io) {
+        val entity = dataTableDao.byId(id) ?: return@withContext null
+        val columns = parseColumns(entity.columnsJson)
+        val count = dataTableDao.rowCount(id)
+        DataTable(
+            id = entity.id,
+            name = entity.name,
+            description = entity.description,
+            columns = columns,
+            rowCount = count,
+            createdAt = entity.createdAt,
+            updatedAt = entity.updatedAt,
+        )
+    }
+
+    override suspend fun createTable(name: String, description: String, columns: List<DataTableColumn>): String =
+        withContext(io) {
+            val id = UUID.randomUUID().toString()
+            val now = System.currentTimeMillis()
+            val columnsJson = serializeColumns(columns)
+            dataTableDao.upsertTable(
+                DataTableEntity(
+                    id = id,
+                    name = name.trim(),
+                    description = description.trim(),
+                    columnsJson = columnsJson,
+                    createdAt = now,
+                    updatedAt = now,
+                )
+            )
+            id
+        }
+
+    override suspend fun deleteTable(id: String): Unit = withContext(io) {
+        dataTableDao.deleteRowsForTable(id)
+        dataTableDao.deleteTable(id)
+    }
+
+    override fun observeRows(tableId: String): FlowStream<List<DataTableRow>> =
+        dataTableDao.observeRows(tableId).map { list ->
+            list.map { entity ->
+                DataTableRow(
+                    id = entity.id,
+                    tableId = entity.tableId,
+                    data = parseRowData(entity.dataJson),
+                    createdAt = entity.createdAt,
+                    updatedAt = entity.updatedAt,
+                )
+            }
+        }.flowOn(io)
+
+    override suspend fun rowsForTable(tableId: String): List<DataTableRow> = withContext(io) {
+        dataTableDao.rowsForTable(tableId).map { entity ->
+            DataTableRow(
+                id = entity.id,
+                tableId = entity.tableId,
+                data = parseRowData(entity.dataJson),
+                createdAt = entity.createdAt,
+                updatedAt = entity.updatedAt,
+            )
+        }
+    }
+
+    override suspend fun insertRow(tableId: String, data: Map<String, Any?>): String = withContext(io) {
+        val rowId = UUID.randomUUID().toString()
+        val now = System.currentTimeMillis()
+        val dataJson = JsonCodec.toJson(data)?.toString() ?: "{}"
+        dataTableDao.upsertRow(
+            DataTableRowEntity(
+                id = rowId,
+                tableId = tableId,
+                dataJson = dataJson,
+                createdAt = now,
+                updatedAt = now,
+            )
+        )
+        val table = dataTableDao.byId(tableId)
+        if (table != null) {
+            dataTableDao.upsertTable(table.copy(updatedAt = now))
+        }
+        rowId
+    }
+
+    override suspend fun deleteRow(rowId: String): Unit = withContext(io) {
+        dataTableDao.deleteRow(rowId)
+    }
+
+    private fun serializeColumns(columns: List<DataTableColumn>): String {
+        val list = columns.map { mapOf("id" to it.id, "name" to it.name, "type" to it.type) }
+        return JsonCodec.toJson(list)?.toString() ?: "[]"
+    }
+
+    private fun parseColumns(json: String): List<DataTableColumn> {
+        val element = runCatching { kotlinx.serialization.json.Json.parseToJsonElement(json) }.getOrNull() ?: return emptyList()
+        val list = JsonCodec.fromJson(element) as? List<*> ?: return emptyList()
+        return list.mapNotNull { item ->
+            val map = item as? Map<*, *> ?: return@mapNotNull null
+            DataTableColumn(
+                id = map["id"]?.toString() ?: UUID.randomUUID().toString(),
+                name = map["name"]?.toString() ?: "",
+                type = map["type"]?.toString() ?: "string",
+            )
+        }
+    }
+
+    private fun parseRowData(json: String): Map<String, Any?> {
+        val element = runCatching { kotlinx.serialization.json.Json.parseToJsonElement(json) }.getOrNull() ?: return emptyMap()
+        return (JsonCodec.fromJsonMap(element) as? Map<String, Any?>) ?: emptyMap()
+    }
 }
 
 /**

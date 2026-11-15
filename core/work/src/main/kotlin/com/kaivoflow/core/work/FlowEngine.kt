@@ -4,6 +4,7 @@ import android.content.Context
 import com.kaivoflow.core.data.CredentialRepository
 import com.kaivoflow.core.data.FlowRepository
 import com.kaivoflow.core.data.RunRepository
+import com.kaivoflow.core.data.WorkflowVariableRepository
 import com.kaivoflow.core.engine.ActiveRunRegistry
 import com.kaivoflow.core.engine.ExecutionMode
 import com.kaivoflow.core.engine.FlowInvoker
@@ -31,6 +32,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.collections.immutable.toImmutableList
+import kotlinx.collections.immutable.toImmutableMap
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import javax.inject.Inject
@@ -53,6 +55,7 @@ class FlowEngine @Inject constructor(
     private val http: KtorHttpGateway,
     private val deviceGateway: AndroidDeviceGateway,
     private val notifications: RunNotifications,
+    private val variableRepository: WorkflowVariableRepository,
 ) {
     private val expressionEvaluator: com.kaivoflow.core.engine.ExpressionEvaluator by lazy {
         // QuickJS if it loads, built-in evaluator if the device refuses the native library.
@@ -61,6 +64,15 @@ class FlowEngine @Inject constructor(
     }
 
     private val registry: NodeRegistry by lazy { NodeCatalog.registry(deviceGateway) }
+
+    suspend fun resolveEffectiveFlow(flow: Flow): Flow {
+        val scopedVars = runCatching { variableRepository.resolveVariables(flow.groupId) }.getOrNull().orEmpty()
+        return if (scopedVars.isNotEmpty()) {
+            flow.copy(vars = (scopedVars + flow.vars).toImmutableMap())
+        } else {
+            flow
+        }
+    }
 
     /**
      * Original Sub-Flow composition: a Step can run another saved Flow and receive its terminal
@@ -75,8 +87,9 @@ class FlowEngine @Inject constructor(
             }
             val flow = flowRepository.flow(flowId)
                 ?: throw KaivoException("The Flow this Step points to no longer exists ($flowId).")
+            val effective = resolveEffectiveFlow(flow)
             val record = runner.run(
-                flow = flow,
+                flow = effective,
                 trigger = RunTrigger(kind = "subflow", items = items.toImmutableList()),
                 options = RunOptions(mode = ExecutionMode.Production, ignoreFrozen = true, subFlowDepth = depth),
             )
@@ -138,15 +151,15 @@ class FlowEngine @Inject constructor(
             )
         }
 
-
         return try {
+            val effectiveFlow = resolveEffectiveFlow(flow)
             val wrapped: (RunEvent) -> Unit = { event ->
                 _events.value = event
-                notifications.onRunEvent(flow, event)
+                notifications.onRunEvent(effectiveFlow, event)
                 onEvent(event)
             }
-            val record = runner.run(flow, trigger, RunOptions(mode = mode), wrapped)
-            persist(flow, record)
+            val record = runner.run(effectiveFlow, trigger, RunOptions(mode = mode), wrapped)
+            persist(effectiveFlow, record)
             record
         } catch (e: CancellationException) {
             throw e
@@ -157,8 +170,10 @@ class FlowEngine @Inject constructor(
     }
 
     /** "Test Step" from the inspector: runs exactly one Step, persists nothing. */
-    suspend fun testStep(flow: Flow, stepId: String, input: List<com.kaivoflow.core.model.FlowData>): StepRun =
-        runner.testStep(flow, stepId, input) { _events.value = it }
+    suspend fun testStep(flow: Flow, stepId: String, input: List<com.kaivoflow.core.model.FlowData>): StepRun {
+        val effectiveFlow = resolveEffectiveFlow(flow)
+        return runner.testStep(effectiveFlow, stepId, input) { _events.value = it }
+    }
 
     fun cancel(flowId: String) {
         activeRuns.cancel(flowId)

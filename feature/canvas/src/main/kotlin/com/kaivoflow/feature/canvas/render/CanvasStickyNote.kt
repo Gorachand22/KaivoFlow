@@ -3,7 +3,10 @@ package com.kaivoflow.feature.canvas.render
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.detectDragGestures
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -24,6 +27,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.input.pointer.positionChange
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.dp
@@ -40,26 +44,35 @@ fun CanvasStickyNote(
     pixelScale: Float,
     density: Density,
     zoom: Float,
-    onEdit: () -> Unit,
-    onDelete: () -> Unit,
-    onDrag: (dx: Float, dy: Float) -> Unit,
+    isPressed: Boolean = false,
+    currentPos: Pair<Float, Float>? = null,
+    onEdit: () -> Unit = {},
+    onDelete: () -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     val colors = KaivoTheme.colors
     val jewelColor = jewelToneColor(note.color)
+    val posX = currentPos?.first ?: note.x
+    val posY = currentPos?.second ?: note.y
 
     Box(
         modifier
             .graphicsLayer {
-                translationX = note.x * pixelScale
-                translationY = note.y * pixelScale
+                translationX = posX * pixelScale
+                translationY = posY * pixelScale
+                val s = if (isPressed) 1.03f else 1f
+                scaleX = s
+                scaleY = s
             }
             .width(note.width.dp)
             .height(note.height.dp)
             .clip(RoundedCornerShape(14.dp))
             .background(colors.surfaceCard)
-            .border(1.dp, jewelColor.copy(alpha = 0.5f), RoundedCornerShape(14.dp))
-            .clickable(onClick = onEdit),
+            .border(
+                width = if (isPressed) 2.dp else 1.dp,
+                color = if (isPressed) jewelColor else jewelColor.copy(alpha = 0.5f),
+                shape = RoundedCornerShape(14.dp)
+            ),
     ) {
         Column {
             // Note Header Bar (Drag handle + Title + Actions)
@@ -68,14 +81,6 @@ fun CanvasStickyNote(
                     .fillMaxWidth()
                     .height(36.dp)
                     .background(jewelColor.copy(alpha = 0.15f))
-                    .pointerInput(note.id) {
-                        detectDragGestures { change, dragAmount ->
-                            change.consume()
-                            val dx = with(density) { dragAmount.x.toDp().value / zoom }
-                            val dy = with(density) { dragAmount.y.toDp().value / zoom }
-                            onDrag(dx, dy)
-                        }
-                    }
                     .padding(horizontal = 10.dp),
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.SpaceBetween,
