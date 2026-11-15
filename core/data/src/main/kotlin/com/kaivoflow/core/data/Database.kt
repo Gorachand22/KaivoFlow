@@ -245,7 +245,7 @@ interface DataTableDao {
         DataTableRowEntity::class,
     ],
     version = 3,
-    exportSchema = false,
+    exportSchema = true,
 )
 abstract class KaivoDatabase : RoomDatabase() {
     abstract fun flowDao(): FlowDao

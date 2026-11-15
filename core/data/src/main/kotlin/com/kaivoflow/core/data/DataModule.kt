@@ -19,7 +19,7 @@ object DatabaseModule {
     @Singleton
     fun provideDatabase(@ApplicationContext context: Context): KaivoDatabase =
         Room.databaseBuilder(context, KaivoDatabase::class.java, KaivoDatabase.NAME)
-            .fallbackToDestructiveMigration()
+            .addMigrations(*ALL_MIGRATIONS)
             .build()
 
     @Provides fun flowDao(db: KaivoDatabase): FlowDao = db.flowDao()

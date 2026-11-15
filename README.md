@@ -7,11 +7,11 @@
 
 ## What is KaivoFlow?
 
-KaivoFlow brings visual workflow automation directly to your Android device. You design **Flows** of **Steps** connected by **Streams**, and execute them on-demand or in response to real-world triggers (**Sparks**). The current catalog has **87 original executors**:
+KaivoFlow brings visual workflow automation directly to your Android device. You design **Flows** of **Steps** connected by **Streams**, and execute them on-demand or in response to real-world triggers (**Sparks**). The catalog registers **87 executors** in `NodeCatalog` (counted from the registry list; `NodeCatalogTest` checks ids are unique). The audit in `docs/audit/` documents known correctness gaps in several of them, so treat the list below as what is registered, not what is fully reliable:
 
 * **Sparks:** Manual, Cron/recurring schedules, local webhooks, incoming SMS, notification listener, battery state, Share Sheet, geofence, Bluetooth, Wi-Fi, headset and phone-restarted events.
 * **Logic & Flow Control:** If/Else, Switch, Merge, Filter, Dedupe, For-Each batching, Wait, Stop, Error Handler, Sort, Limit, Compare Lists, Local Table, Run Details and Pass Through.
-* **Transformations & Developer Tools:** Set/Edit fields, JSON parse/stringify, templates, date parsing/formatting/shifting/time-zone conversion, aggregation, sandboxed JavaScript, cryptography, Math, Text Tools, Number Summary, Split Items, URL Tools, CSV, XML, HTML, Markdown, iCal, Binary Tools, Upload a File, Quick Chart, Random Value, Token Tools, One-Time Code and PDF Text.
+* **Transformations & Developer Tools:** Set/Edit fields, JSON parse/stringify, templates, date parsing/formatting/shifting/time-zone conversion, aggregation, Code (not yet functional), cryptography, Math, Text Tools, Number Summary, Split Items, URL Tools, CSV, XML, HTML, Markdown, iCal, Binary Tools, Upload a File, Quick Chart, Random Value, Token Tools, One-Time Code and PDF Text.
 * **AI & Intelligence:** Multi-provider AI chat (Gemini, local Ollama, OpenAI-compatible endpoints), structured extraction and classification.
 * **Device & Hardware:** Notifications, SMS, clipboard read/write, deep-link launcher, Text-to-Speech, haptics, file persistence, battery/network status, toast, share sheet, torch, volume, location, Wi-Fi details, contact lookup and calendar events.
 * **SaaS / Protocols:** Universal HTTP with binary multipart and base64 transport, Google Sheets, Notion, Telegram, Slack, Discord, Weather, RSS/Atom, GraphQL, WebDAV-style file requests and bounded TCP/TLS messages.
@@ -35,7 +35,7 @@ The project is structured into 13 modular Gradle components:
 |---|---|
 | `:core:model` | Immutable domain models (`Flow`, `StepNode`, `StreamEdge`, `FlowData`, `BinaryDataRef`, `RunRecord`, `ScheduleMath`). |
 | `:core:engine` | FlowRunner, DAG validation, port liveness, retries, expressions/parameters, `FlowInvoker` and `OAuth2TokenManager`. |
-| `:core:expressions` | Sandboxed expression runtime (`{{ $json.field }}`, `{{ $now }}`, arithmetic, string helpers). |
+| `:core:expressions` | Expression runtime, **under reconstruction**: field lookup such as `{{ $json.field }}` and `{{ $now }}` work today, but arithmetic is not yet available and neither is the Code step. A new parser and evaluator is planned in Phase 2 of [docs/ROADMAP.md](docs/ROADMAP.md). |
 | `:core:nodes` | 87 built-in Step executors, pure-JVM parsers/formatters, composition/connector/poll tools and the single `NodeCatalog` registry. |
 | `:core:data` | Room database, DAOs, repositories, wrapped JSON codec, `.structure` and `.kaivoflow` bundles, encrypted credential/token store. |
 | `:core:network` | Ktor/OkHttp gateway for HTTP, binary transport, webhooks and AI calls. |
@@ -47,7 +47,7 @@ The project is structured into 13 modular Gradle components:
 | `:feature:settings` | App settings, Privacy Center, Encrypted Credential Vault and connected accounts. |
 | `:app` | Application entry point, `MainActivity`, Navigation graph, Hilt DI root. |
 
-The design principle is strict: decisions about *what happens* live in Android-free pure Kotlin with JVM tests; OS access lives in thin platform adapters. See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the engine blueprint and [PARITY.md](PARITY.md) for the catalog matrix.
+The design principle is strict: decisions about *what happens* live in Android-free pure Kotlin with JVM tests; OS access lives in thin platform adapters. See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the engine blueprint and [docs/audit/](docs/audit/) for the current findings.
 
 ---
 
@@ -73,11 +73,11 @@ gradle :core:nodes:test :core:engine:test :core:data:test
 adb install -r app/build/outputs/apk/debug/app-debug.apk
 ```
 
-> **Verification status:** This cloud-authoring session ran static Kotlin/XML/diff checks only. Gradle compilation, JVM tests, APK assembly and physical-device verification are intentionally left to a local engineer with the Android SDK — follow the step-by-step checklist in [HANDOFF.md](HANDOFF.md).
+> **Verification status:** This cloud-authoring session ran static Kotlin/XML/diff checks only. Gradle compilation, JVM tests, APK assembly and physical-device verification are intentionally left to a local engineer with the Android SDK — see [docs/ROADMAP.md](docs/ROADMAP.md) for the gates and [docs/PROGRESS.md](docs/PROGRESS.md) for status.
 
 ---
 
 ## Developer & Cloud IDE Handoff
 
-For architectural notes, verification responsibilities and the next milestones for AI agents and cloud IDEs, see:
-👉 **[DEVELOPER_HANDOFF.md](DEVELOPER_HANDOFF.md)** · **[BACKLOG.md](BACKLOG.md)** · **[PARITY.md](PARITY.md)** · **[docs/CAPABILITY_GAP.md](docs/CAPABILITY_GAP.md)**
+For plans, status and findings, see:
+👉 **[docs/ROADMAP.md](docs/ROADMAP.md)** · **[docs/PROGRESS.md](docs/PROGRESS.md)** · **[docs/audit/](docs/audit/)**

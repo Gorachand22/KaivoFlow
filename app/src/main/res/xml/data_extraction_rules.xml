@@ -1,20 +1,29 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
-  Backup policy (pillar 4): Flows, Runs and files are user data and may be backed up; the credential
-  vault is excluded outright because its Keystore key never leaves the device, so a restored copy
-  would be unreadable anyway — better to not ship it at all.
+  Backup policy: the Room database (kaivoflow.db) holds Flows, Runs, variables and data tables.
+  Nothing is included for now. Excluded outright:
+  - the credential store: the table lives inside kaivoflow.db as Keystore-encrypted ciphertext and
+    its key never leaves the device, so a restored copy would be unreadable and is not worth shipping;
+    until credentials live in a separate store, the whole database is not backed up, which matches
+    android:allowBackup="false" in the manifest. These rules stay as defence in depth.
+  - files/flows/: plaintext mirror of Flow JSON that can hold inline API keys.
+  - encrypted shared preferences and key material.
 -->
 <data-extraction-rules>
     <cloud-backup>
-        <include domain="database" path="kaivo.db" />
-        <include domain="file" path="flows/" />
-        <exclude domain="sharedpref" path="kaivo_secrets.xml" />
+        <exclude domain="database" path="kaivoflow.db" />
+        <exclude domain="database" path="kaivoflow.db-wal" />
+        <exclude domain="database" path="kaivoflow.db-shm" />
+        <exclude domain="file" path="flows/" />
+        <exclude domain="sharedpref" path="." />
         <exclude domain="file" path="kaivo_keys/" />
     </cloud-backup>
     <device-transfer>
-        <include domain="database" path="kaivo.db" />
-        <include domain="file" path="flows/" />
-        <exclude domain="sharedpref" path="kaivo_secrets.xml" />
+        <exclude domain="database" path="kaivoflow.db" />
+        <exclude domain="database" path="kaivoflow.db-wal" />
+        <exclude domain="database" path="kaivoflow.db-shm" />
+        <exclude domain="file" path="flows/" />
+        <exclude domain="sharedpref" path="." />
         <exclude domain="file" path="kaivo_keys/" />
     </device-transfer>
 </data-extraction-rules>
