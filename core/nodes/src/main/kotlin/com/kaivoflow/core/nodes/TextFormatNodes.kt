@@ -4,7 +4,6 @@ import com.kaivoflow.core.engine.StepContext
 import com.kaivoflow.core.engine.StepExecutionException
 import com.kaivoflow.core.engine.StepExecutor
 import com.kaivoflow.core.engine.StepResult
-import com.kaivoflow.core.engine.ParamResolver
 import com.kaivoflow.core.engine.Values
 import com.kaivoflow.core.model.FlowData
 import com.kaivoflow.core.model.NodeSpec
@@ -94,15 +93,15 @@ class XmlNode : StepExecutor {
         val params = ctx.step.params
         val action = Values.asString(params["action"], "to_json")
         val field = ctx.outputName("result")
-        val resolver = ParamResolver(ctx.evaluator)
         val out = ctx.input.mapIndexed { index, item ->
+            val row = ctx.paramsFor(index)
             val scope = ctx.scope(index)
             val value: Any? = if (action == "to_xml") {
-                val root = Values.asString(resolver.resolveValue(params["rootTag"], scope), "root")
+                val root = Values.asString(row["rootTag"], "root")
                     .replace(Regex("[^A-Za-z0-9_.-]"), "_").ifBlank { "root" }
                 XmlLite.build(item.json, root)
             } else {
-                val text = Values.asString(resolver.resolveValue(params["source"], scope))
+                val text = Values.asString(row["source"])
                 XmlLite.parse(text) ?: throw StepExecutionException(
                     ctx.step.id, ctx.step.name, "the XML could not be read (check for unbalanced tags)"
                 )

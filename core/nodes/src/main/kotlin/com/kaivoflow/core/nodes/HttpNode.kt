@@ -1,7 +1,6 @@
 package com.kaivoflow.core.nodes
 
 import com.kaivoflow.core.engine.HttpRequestSpec
-import com.kaivoflow.core.engine.ParamResolver
 import com.kaivoflow.core.engine.StepContext
 import com.kaivoflow.core.engine.StepExecutionException
 import com.kaivoflow.core.engine.StepExecutor
@@ -84,66 +83,62 @@ class HttpNode : StepExecutor {
     override val requiresNetwork: Boolean get() = true
 
     override suspend fun execute(ctx: StepContext): StepResult {
-        val params = ctx.params()
-        val resolver = ParamResolver(ctx.evaluator)
-        val url = Values.asString(params["url"])
-        if (url.isBlank()) throw StepExecutionException(ctx.step.id, ctx.step.name, "add a URL")
-        if (!url.startsWith("http://") && !url.startsWith("https://")) {
-            throw StepExecutionException(ctx.step.id, ctx.step.name, "the URL must start with http:// or https://")
-        }
-
-        val headers = LinkedHashMap<String, String>()
-        Values.asMap(params["headers"]).forEach { (k, v) -> if (Values.asString(v).isNotBlank()) headers[k] = Values.asString(v) }
-
-        when (Values.asString(params["auth"], "none")) {
-            "bearer" -> headers["Authorization"] = "Bearer ${Values.asString(params["authToken"])}"
-            "header" -> headers[Values.asString(params["authHeaderName"], "Authorization")] = Values.asString(params["authToken"])
-            "basic" -> {
-                val raw = "${Values.asString(params["authUser"])}:${Values.asString(params["authPassword"])}"
-                headers["Authorization"] = "Basic " + java.util.Base64.getEncoder().encodeToString(raw.toByteArray())
-            }
-            "credential" -> {
-                val credential = ctx.credential()
-                val token = credential.bearerToken()
-                if (token.isNotBlank()) {
-                    headers["Authorization"] = if (token.startsWith("Bearer ")) token else "Bearer $token"
-                }
-                credential["header"]?.let { name -> credential["value"]?.let { headers[name] = it } }
-                credential["username"]?.let { user ->
-                    val raw = "$user:${credential["password"].orEmpty()}"
-                    headers["Authorization"] = "Basic " + java.util.Base64.getEncoder().encodeToString(raw.toByteArray())
-                }
-            }
-        }
-
-        val bodyKind = Values.asString(params["bodyKind"], "none")
-        val (body, kind) = when (bodyKind) {
-            "json" -> params["body"] to HttpRequestSpec.BodyKind.Json
-            "raw" -> Values.asString(params["body"]) to HttpRequestSpec.BodyKind.Raw
-            "form" -> Values.asMap(params["form"]) to HttpRequestSpec.BodyKind.Form
-            else -> null to HttpRequestSpec.BodyKind.None
-        }
 
         // One request per input item, so a Flow can loop naturally over a list of URLs.
         val outputs = mutableListOf<FlowData>()
         val sources = ctx.input.ifEmpty { listOf(FlowData()) }
         sources.forEachIndexed { index, item ->
-            val scope = ctx.scope(index)
-            val itemUrl = Values.asString(resolver.resolveValue(params["url"], scope))
-            val itemHeaders = headers.mapValues { (_, v) -> Values.asString(resolver.resolveValue(v, scope)) }
-            val bodyValue = ParamResolver(ctx.evaluator).resolveValue(body, scope)
+            val row = ctx.paramsFor(index)
+            val itemUrl = Values.asString(row["url"])
+            if (itemUrl.isBlank()) throw StepExecutionException(ctx.step.id, ctx.step.name, "add a URL")
+            if (!itemUrl.startsWith("http://") && !itemUrl.startsWith("https://")) {
+                throw StepExecutionException(ctx.step.id, ctx.step.name, "the URL must start with http:// or https://")
+            }
+            val headers = LinkedHashMap<String, String>()
+            Values.asMap(row["headers"]).forEach { (k, v) -> if (Values.asString(v).isNotBlank()) headers[k] = Values.asString(v) }
+
+            when (Values.asString(row["auth"], "none")) {
+                "bearer" -> headers["Authorization"] = "Bearer ${Values.asString(row["authToken"])}"
+                "header" -> headers[Values.asString(row["authHeaderName"], "Authorization")] = Values.asString(row["authToken"])
+                "basic" -> {
+                    val raw = "${Values.asString(row["authUser"])}:${Values.asString(row["authPassword"])}"
+                    headers["Authorization"] = "Basic " + java.util.Base64.getEncoder().encodeToString(raw.toByteArray())
+                }
+                "credential" -> {
+                    val credential = ctx.credential()
+                    val token = credential.bearerToken()
+                    if (token.isNotBlank()) {
+                        headers["Authorization"] = if (token.startsWith("Bearer ")) token else "Bearer $token"
+                    }
+                    credential["header"]?.let { name -> credential["value"]?.let { headers[name] = it } }
+                    credential["username"]?.let { user ->
+                        val raw = "$user:${credential["password"].orEmpty()}"
+                        headers["Authorization"] = "Basic " + java.util.Base64.getEncoder().encodeToString(raw.toByteArray())
+                    }
+                }
+            }
+
+            val bodyKind = Values.asString(row["bodyKind"], "none")
+            val (body, kind) = when (bodyKind) {
+                "json" -> row["body"] to HttpRequestSpec.BodyKind.Json
+                "raw" -> Values.asString(row["body"]) to HttpRequestSpec.BodyKind.Raw
+                "form" -> Values.asMap(row["form"]) to HttpRequestSpec.BodyKind.Form
+                else -> null to HttpRequestSpec.BodyKind.None
+            }
+            val itemHeaders: Map<String, String> = headers
+            val bodyValue = body
 
             val request = HttpRequestSpec(
-                method = Values.asString(params["method"], "GET").uppercase(),
+                method = Values.asString(row["method"], "GET").uppercase(),
                 url = itemUrl,
                 headers = itemHeaders,
-                query = Values.asMap(params["query"]).mapValues { (_, v) -> Values.asString(resolver.resolveValue(v, scope)) }
+                query = Values.asMap(row["query"]).mapValues { (_, v) -> Values.asString(v) }
                     .filterValues { it.isNotBlank() },
                 body = bodyValue,
                 bodyKind = kind,
-                timeoutMs = ((Values.asDouble(params["timeoutSeconds"]) ?: 30.0).coerceIn(1.0, 300.0) * 1000).toLong(),
-                failOnErrorStatus = !Values.asBoolean(params["ignoreHttpErrors"] ?: false),
-                formFields = Values.asMap(params["form"]).mapValues { (_, v) -> Values.asString(resolver.resolveValue(v, scope)) },
+                timeoutMs = ((Values.asDouble(row["timeoutSeconds"]) ?: 30.0).coerceIn(1.0, 300.0) * 1000).toLong(),
+                failOnErrorStatus = !Values.asBoolean(row["ignoreHttpErrors"] ?: false),
+                formFields = Values.asMap(row["form"]).mapValues { (_, v) -> Values.asString(v) },
             )
 
             val response = ctx.http.request(request)
@@ -154,8 +149,8 @@ class HttpNode : StepExecutor {
                 )
             }
 
-            val splitItems = Values.asBoolean(params["splitItems"] ?: true)
-            val outputField = Values.asString(params["outputField"])
+            val splitItems = Values.asBoolean(row["splitItems"] ?: true)
+            val outputField = Values.asString(row["outputField"])
             val payload = response.body ?: response.bodyText
             val entries = if (splitItems && payload is List<*>) payload else listOf(payload)
 

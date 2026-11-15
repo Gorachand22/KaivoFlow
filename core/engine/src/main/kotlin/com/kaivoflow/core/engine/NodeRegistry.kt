@@ -10,7 +10,7 @@ import com.kaivoflow.core.model.StepNode
  */
 class NodeRegistry(catalog: List<StepExecutor>) {
 
-    private val byType: Map<String, StepExecutor> = catalog.associateBy { it.spec.id }
+    private val byType: Map<String, StepExecutor> = catalog.map { SpecBoundExecutor(it) }.associateBy { it.spec.id }
 
     val executors: List<StepExecutor> get() = byType.values.toList()
 
@@ -77,4 +77,10 @@ class NodeRegistry(catalog: List<StepExecutor>) {
         issues += executor.validate(step, spec)
         return issues
     }
+}
+
+/** Hands the executor's own [NodeSpec] to its [StepContext] so parameter resolution can honour field flags. */
+private class SpecBoundExecutor(private val inner: StepExecutor) : StepExecutor by inner {
+    override suspend fun execute(ctx: StepContext): StepResult =
+        inner.execute(if (ctx.spec == null) ctx.copy(spec = inner.spec) else ctx)
 }

@@ -1,7 +1,6 @@
 package com.kaivoflow.core.nodes
 
 import com.kaivoflow.core.engine.HttpRequestSpec
-import com.kaivoflow.core.engine.ParamResolver
 import com.kaivoflow.core.engine.StepContext
 import com.kaivoflow.core.engine.StepExecutionException
 import com.kaivoflow.core.engine.StepExecutor
@@ -45,11 +44,11 @@ class TelegramNode : StepExecutor {
         val credential = ctx.credential()
         val token = credential.bearerToken()
         if (token.isBlank()) throw StepExecutionException(ctx.step.id, ctx.step.name, "the Telegram credential has no bot token")
-        val resolver = ParamResolver(ctx.evaluator)
 
         val sent = ctx.input.mapIndexed { index, item ->
+            val row = ctx.paramsFor(index)
             val scope = ctx.scope(index)
-            val text = Values.asString(resolver.resolveValue(params["text"], scope))
+            val text = Values.asString(row["text"])
             if (text.isBlank()) throw StepExecutionException(ctx.step.id, ctx.step.name, "the message is empty")
             val response = ctx.http.request(
                 HttpRequestSpec(
@@ -57,10 +56,10 @@ class TelegramNode : StepExecutor {
                     url = "https://api.telegram.org/bot$token/sendMessage",
                     headers = mapOf("Content-Type" to "application/json"),
                     body = buildMap<String, Any?> {
-                        put("chat_id", Values.asString(resolver.resolveValue(params["chatId"], scope)))
+                        put("chat_id", Values.asString(row["chatId"]))
                         put("text", text.take(4096))
-                        Values.asString(params["parseMode"]).takeIf { it.isNotBlank() }?.let { put("parse_mode", it) }
-                        if (Values.asBoolean(params["silent"] ?: false)) put("disable_notification", true)
+                        Values.asString(row["parseMode"]).takeIf { it.isNotBlank() }?.let { put("parse_mode", it) }
+                        if (Values.asBoolean(row["silent"] ?: false)) put("disable_notification", true)
                     },
                     timeoutMs = 30_000,
                 )
@@ -96,13 +95,13 @@ class SlackNode : StepExecutor {
 
     override suspend fun execute(ctx: StepContext): StepResult {
         val params = ctx.params()
-        val resolver = ParamResolver(ctx.evaluator)
         val webhook = Values.asString(params["webhookUrl"]).ifBlank {
             ctx.credential().bearerToken()
         }
         if (webhook.isBlank()) throw StepExecutionException(ctx.step.id, ctx.step.name, "add the Slack webhook URL")
 
         ctx.input.forEachIndexed { index, item ->
+            val row = ctx.paramsFor(index)
             val scope = ctx.scope(index)
             val response = ctx.http.request(
                 HttpRequestSpec(
@@ -110,8 +109,8 @@ class SlackNode : StepExecutor {
                     url = webhook,
                     headers = mapOf("Content-Type" to "application/json"),
                     body = buildMap<String, Any?> {
-                        put("text", Values.asString(resolver.resolveValue(params["text"], scope)))
-                        Values.asString(resolver.resolveValue(params["channel"], scope)).takeIf { it.isNotBlank() }
+                        put("text", Values.asString(row["text"]))
+                        Values.asString(row["channel"]).takeIf { it.isNotBlank() }
                             ?.let { put("channel", it) }
                     },
                     timeoutMs = 30_000,
@@ -144,10 +143,10 @@ class DiscordNode : StepExecutor {
 
     override suspend fun execute(ctx: StepContext): StepResult {
         val params = ctx.params()
-        val resolver = ParamResolver(ctx.evaluator)
         val webhook = Values.asString(params["webhookUrl"]).ifBlank { ctx.credential().bearerToken() }
         if (webhook.isBlank()) throw StepExecutionException(ctx.step.id, ctx.step.name, "add the Discord webhook URL")
         ctx.input.forEachIndexed { index, item ->
+            val row = ctx.paramsFor(index)
             val scope = ctx.scope(index)
             val response = ctx.http.request(
                 HttpRequestSpec(
@@ -155,8 +154,8 @@ class DiscordNode : StepExecutor {
                     url = webhook,
                     headers = mapOf("Content-Type" to "application/json"),
                     body = buildMap<String, Any?> {
-                        put("content", Values.asString(resolver.resolveValue(params["content"], scope)).take(2000))
-                        Values.asString(params["username"]).takeIf { it.isNotBlank() }?.let { put("username", it) }
+                        put("content", Values.asString(row["content"]).take(2000))
+                        Values.asString(row["username"]).takeIf { it.isNotBlank() }?.let { put("username", it) }
                     },
                     timeoutMs = 30_000,
                 )
@@ -288,21 +287,21 @@ class NotionNode : StepExecutor {
         val credential = ctx.credential()
         val token = credential.bearerToken()
         if (token.isBlank()) throw StepExecutionException(ctx.step.id, ctx.step.name, "add a Notion integration token")
-        val resolver = ParamResolver(ctx.evaluator)
 
         ctx.input.forEachIndexed { index, item ->
+            val row = ctx.paramsFor(index)
             val scope = ctx.scope(index)
             val properties = LinkedHashMap<String, Any?>()
             properties["title"] = mapOf(
-                "title" to listOf(mapOf("text" to mapOf("content" to Values.asString(resolver.resolveValue(params["title"], scope)))))
+                "title" to listOf(mapOf("text" to mapOf("content" to Values.asString(row["title"]))))
             )
-            Values.asMap(params["properties"]).forEach { (key, raw) ->
-                val text = Values.asString(resolver.resolveValue(raw, scope))
+            Values.asMap(row["properties"]).forEach { (key, raw) ->
+                val text = Values.asString(raw)
                 if (text.isNotBlank()) {
                     properties[key] = mapOf("rich_text" to listOf(mapOf("text" to mapOf("content" to text))))
                 }
             }
-            val contentText = Values.asString(resolver.resolveValue(params["content"], scope))
+            val contentText = Values.asString(row["content"])
             val response = ctx.http.request(
                 HttpRequestSpec(
                     method = "POST",
@@ -313,7 +312,7 @@ class NotionNode : StepExecutor {
                         "Notion-Version" to "2022-06-28",
                     ),
                     body = buildMap<String, Any?> {
-                        put("parent", mapOf("database_id" to Values.asString(params["databaseId"])))
+                        put("parent", mapOf("database_id" to Values.asString(row["databaseId"])))
                         put("properties", properties)
                         if (contentText.isNotBlank()) {
                             put(

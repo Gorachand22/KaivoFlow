@@ -44,7 +44,8 @@ class SetFieldsNode : StepExecutor {
     )
 
     override suspend fun execute(ctx: StepContext): StepResult {
-        val raw = ctx.params()
+        // Raw (unresolved) params: each field template is resolved once per item below.
+        val raw = ctx.step.params
         val fields = when (val value = raw["fields"]) {
             is Map<*, *> -> value.entries.associate { it.key.toString() to it.value }
             is List<*> -> value.mapNotNull { entry ->
@@ -192,11 +193,9 @@ class TemplateNode : StepExecutor {
 
     override suspend fun execute(ctx: StepContext): StepResult {
         val params = ctx.params()
-        val template = Values.asString(params["template"])
         val field = Values.asString(params["outputField"], "text")
-        val resolver = ParamResolver(ctx.evaluator)
         val out = ctx.input.mapIndexed { index, item ->
-            val value = resolver.resolveValue(template, ctx.scope(index))
+            val value = ctx.paramsFor(index)["template"]
             item.copy(json = item.json + (field to value))
         }
         return ctx.output(out)
@@ -255,32 +254,32 @@ class DateNode : StepExecutor {
         val action = Values.asString(params["action"], "format")
         val field = Values.asString(params["outputField"], "date")
         val out = ctx.input.mapIndexed { index, item ->
+            val row = ctx.paramsFor(index)
             val scope = ctx.scope(index)
-            val resolver = ParamResolver(ctx.evaluator)
-            val rawDate = Values.asString(resolver.resolveValue(params["source"], scope))
+            val rawDate = Values.asString(row["source"])
             val zone = runCatching { ZoneId.of(values(scope, "run.timezone")) }.getOrDefault(ZoneId.systemDefault())
             val base = parseInstant(rawDate, zone)
 
             val result: Any? = when (action) {
                 "parse" -> base.toString()
                 "shift" -> {
-                    val amount = (Values.asDouble(params["amount"]) ?: 1.0).toLong()
-                    val unit = Values.asString(params["unit"], "days")
+                    val amount = (Values.asDouble(row["amount"]) ?: 1.0).toLong()
+                    val unit = Values.asString(row["unit"], "days")
                     shift(base, amount, unit).toString()
                 }
                 "diff" -> {
-                    val otherRaw = Values.asString(resolver.resolveValue(params["other"], scope)).ifBlank { rawDate }
+                    val otherRaw = Values.asString(row["other"]).ifBlank { rawDate }
                     val other = parseInstant(otherRaw, zone)
-                    diff(base, other, Values.asString(params["unit"], "days"))
+                    diff(base, other, Values.asString(row["unit"], "days"))
                 }
                 "timezone" -> {
-                    val rawZone = Values.asString(resolver.resolveValue(params["targetZone"], scope)).ifBlank { "UTC" }
+                    val rawZone = Values.asString(row["targetZone"]).ifBlank { "UTC" }
                     val targetZone = runCatching { ZoneId.of(rawZone) }.getOrElse {
                         throw StepExecutionException(ctx.step.id, ctx.step.name, "\"$rawZone\" is not a time zone KaivoFlow understands")
                     }
-                    render(base, Values.asString(params["pattern"], "dd MMM yyyy"), targetZone, ctx)
+                    render(base, Values.asString(row["pattern"], "dd MMM yyyy"), targetZone, ctx)
                 }
-                else -> render(base, Values.asString(params["pattern"], "dd MMM yyyy"), zone, ctx)
+                else -> render(base, Values.asString(row["pattern"], "dd MMM yyyy"), zone, ctx)
             }
             item.copy(json = item.json + (field to result))
         }
@@ -528,18 +527,18 @@ class CryptoNode : StepExecutor {
         val params = ctx.params()
         val action = Values.asString(params["action"], "sha256")
         val field = Values.asString(params["outputField"], "hash")
-        val resolver = ParamResolver(ctx.evaluator)
 
         val out = ctx.input.mapIndexed { index, item ->
+            val row = ctx.paramsFor(index)
             val scope = ctx.scope(index)
-            val inputStr = Values.asString(resolver.resolveValue(params["input"], scope))
+            val inputStr = Values.asString(row["input"])
             val result: String = when (action) {
                 "uuid" -> java.util.UUID.randomUUID().toString()
                 "md5" -> hashString("MD5", inputStr)
                 "sha1" -> hashString("SHA-1", inputStr)
                 "sha256" -> hashString("SHA-256", inputStr)
                 "hmac256" -> {
-                    val key = Values.asString(resolver.resolveValue(params["secretKey"], scope))
+                    val key = Values.asString(row["secretKey"])
                     hmacSha256(key, inputStr)
                 }
                 "base64_encode" -> java.util.Base64.getEncoder().encodeToString(inputStr.toByteArray(Charsets.UTF_8))

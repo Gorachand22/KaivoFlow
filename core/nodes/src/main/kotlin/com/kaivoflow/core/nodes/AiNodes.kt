@@ -1,7 +1,6 @@
 package com.kaivoflow.core.nodes
 
 import com.kaivoflow.core.engine.HttpRequestSpec
-import com.kaivoflow.core.engine.ParamResolver
 import com.kaivoflow.core.engine.StepContext
 import com.kaivoflow.core.engine.StepExecutionException
 import com.kaivoflow.core.engine.StepExecutor
@@ -248,14 +247,14 @@ class AiChatNode : StepExecutor {
 
     override suspend fun execute(ctx: StepContext): StepResult {
         val params = ctx.params()
-        val resolver = ParamResolver(ctx.evaluator)
         val outputs = ctx.input.mapIndexed { index, item ->
+            val row = ctx.paramsFor(index)
             val scope = ctx.scope(index)
-            val prompt = Values.asString(resolver.resolveValue(params["prompt"], scope))
+            val prompt = Values.asString(row["prompt"])
             if (prompt.isBlank()) throw StepExecutionException(ctx.step.id, ctx.step.name, "the prompt is empty")
-            val system = Values.asString(resolver.resolveValue(params["system"], scope))
-            val result = AiClient.chat(ctx, params, prompt, system, jsonMode = false)
-            val field = Values.asString(params["outputField"], "answer")
+            val system = Values.asString(row["system"])
+            val result = AiClient.chat(ctx, row, prompt, system, jsonMode = false)
+            val field = Values.asString(row["outputField"], "answer")
             item.copy(json = item.json + (field to result.text))
         }
         return ctx.output(outputs)
@@ -291,11 +290,11 @@ class AiExtractNode : StepExecutor {
         catch (e: IllegalArgumentException) {
             throw StepExecutionException(ctx.step.id, ctx.step.name, e.message ?: "the field types are invalid")
         }
-        val resolver = ParamResolver(ctx.evaluator)
         val outputs = ctx.input.mapIndexed { index, item ->
+            val row = ctx.paramsFor(index)
             val scope = ctx.scope(index)
-            val text = Values.asString(resolver.resolveValue(params["text"], scope))
-            val extra = Values.asString(params["instructions"])
+            val text = Values.asString(row["text"])
+            val extra = Values.asString(row["instructions"])
             val prompt = buildString {
                 appendLine("Extract data from the text below.")
                 appendLine("Return ONLY a JSON object with exactly these keys and types: ${Values.stringify(schema)}")
@@ -305,7 +304,7 @@ class AiExtractNode : StepExecutor {
                 appendLine("TEXT:")
                 append(text.take(12_000))
             }
-            val result = AiClient.chat(ctx, params, prompt, "You are a precise data extraction engine. Reply with JSON only.", jsonMode = true)
+            val result = AiClient.chat(ctx, row, prompt, "You are a precise data extraction engine. Reply with JSON only.", jsonMode = true)
             val extracted = result.json as? Map<*, *>
                 ?: throw StepExecutionException(
                     ctx.step.id, ctx.step.name,
@@ -314,7 +313,7 @@ class AiExtractNode : StepExecutor {
             AiExtractionSchema.validate(schema, extracted)?.let { problem ->
                 throw StepExecutionException(ctx.step.id, ctx.step.name, problem)
             }
-            if (Values.asBoolean(params["mergeIntoItem"] ?: true)) {
+            if (Values.asBoolean(row["mergeIntoItem"] ?: true)) {
                 item.copy(json = Values.deepMerge(item.json, extracted) as Map<String, Any?>)
             } else {
                 FlowData(Values.asMap(extracted))
@@ -345,16 +344,16 @@ class AiClassifyNode : StepExecutor {
 
     override suspend fun execute(ctx: StepContext): StepResult {
         val params = ctx.params()
-        val resolver = ParamResolver(ctx.evaluator)
         val labels = Values.asString(params["labels"]).split(',').map { it.trim() }.filter { it.isNotBlank() }
         if (labels.isEmpty()) throw StepExecutionException(ctx.step.id, ctx.step.name, "add at least one label")
         val outputs = MutableList(spec.outputs) { mutableListOf<FlowData>() }
         val field = Values.asString(params["outputField"], "label")
 
         ctx.input.forEachIndexed { index, item ->
+            val row = ctx.paramsFor(index)
             val scope = ctx.scope(index)
-            val text = Values.asString(resolver.resolveValue(params["text"], scope))
-            val instructions = Values.asString(resolver.resolveValue(params["instructions"], scope))
+            val text = Values.asString(row["text"])
+            val instructions = Values.asString(row["instructions"])
             val prompt = buildString {
                 appendLine("Classify the text into exactly one of these labels: ${labels.joinToString(", ")}")
                 appendLine("If none fits, answer \"other\".")

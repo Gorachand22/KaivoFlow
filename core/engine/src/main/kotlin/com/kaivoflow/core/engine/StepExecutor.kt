@@ -41,10 +41,18 @@ data class StepContext(
     val flowInvoker: FlowInvoker? = null,
     /** How many Sub-Flows are already below this Run; used to stop recursive composition. */
     val subFlowDepth: Int = 0,
+    /** Spec of the executor running this Step; lets the resolver honour `supportsExpression`. Bound by [NodeRegistry]. */
+    val spec: NodeSpec? = null,
 ) {
-    /** Resolves params with expressions applied. Executors call this instead of touching raw maps. */
-    fun params(): Map<String, Any?> =
-        ParamResolver(evaluator).resolveParams(step, scope())
+    /**
+     * Step-level params, resolved against item 0. Use only for values that must not depend on an
+     * item (operation, credential, mode). Executors that process items one by one use [paramsFor].
+     */
+    fun params(): Map<String, Any?> = paramsFor(0)
+
+    /** Params resolved against the item at [index]; fields with supportsExpression=false are passed through verbatim. */
+    fun paramsFor(index: Int): Map<String, Any?> =
+        ParamResolver(evaluator).resolveParams(step, scope(index), spec)
 
     fun scope(index: Int = 0): Map<String, Any?> = ScopeBuilder(
         flowVars = flow.vars,

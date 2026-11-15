@@ -1,7 +1,6 @@
 package com.kaivoflow.core.nodes
 
 import com.kaivoflow.core.engine.HttpRequestSpec
-import com.kaivoflow.core.engine.ParamResolver
 import com.kaivoflow.core.engine.StepContext
 import com.kaivoflow.core.engine.StepExecutionException
 import com.kaivoflow.core.engine.StepExecutor
@@ -276,34 +275,34 @@ class BinaryUploadNode(private val gateway: DeviceGateway = NoopDeviceGateway) :
     override suspend fun execute(ctx: StepContext): StepResult {
         val params = ctx.step.params
         val field = ctx.outputName("response")
-        val resolver = ParamResolver(ctx.evaluator)
         val out = ctx.input.mapIndexed { index, item ->
+            val row = ctx.paramsFor(index)
             val scope = ctx.scope(index)
-            val url = Values.asString(resolver.resolveValue(params["url"], scope))
+            val url = Values.asString(row["url"])
             if (!url.startsWith("http://") && !url.startsWith("https://")) {
                 throw StepExecutionException(ctx.step.id, ctx.step.name, "the endpoint must start with http:// or https://")
             }
-            val binaryKey = Values.asString(resolver.resolveValue(params["binaryField"], scope), "data")
+            val binaryKey = Values.asString(row["binaryField"], "data")
             val ref = item.binaryRef(binaryKey) ?: item.binary?.values?.firstOrNull()
                 ?: throw StepExecutionException(ctx.step.id, ctx.step.name, "this item has no attachment to upload")
-            val headers = Values.asMap(params["headers"]).entries.associate { (key, raw) ->
-                key to Values.asString(resolver.resolveValue(raw, scope))
+            val headers = Values.asMap(row["headers"]).entries.associate { (key, raw) ->
+                key to Values.asString(raw)
             }
-            val formFields = Values.asMap(params["extraFields"]).entries.associate { (key, raw) ->
-                key to Values.asString(resolver.resolveValue(raw, scope))
+            val formFields = Values.asMap(row["extraFields"]).entries.associate { (key, raw) ->
+                key to Values.asString(raw)
             }
             val base64 = gateway.loadBinary(ref.uri)
                 ?: throw StepExecutionException(ctx.step.id, ctx.step.name, "the attachment could not be opened on this device")
-            val timeout = (Values.asDouble(params["timeoutSeconds"]) ?: 30.0)
+            val timeout = (Values.asDouble(row["timeoutSeconds"]) ?: 30.0)
                 .coerceIn(1.0, 120.0).toLong() * 1000L
             val response = ctx.http.request(
                 HttpRequestSpec(
-                    method = Values.asString(params["method"], "POST").uppercase(),
+                    method = Values.asString(row["method"], "POST").uppercase(),
                     url = url,
                     headers = headers,
                     bodyKind = HttpRequestSpec.BodyKind.Multipart,
                     binaryUpload = com.kaivoflow.core.engine.BinaryUploadSpec(
-                        field = Values.asString(resolver.resolveValue(params["formField"], scope), "file"),
+                        field = Values.asString(row["formField"], "file"),
                         fileName = ref.fileName,
                         mimeType = ref.mimeType,
                         base64 = base64,

@@ -19,6 +19,7 @@ import java.io.ByteArrayOutputStream
 import java.net.InetSocketAddress
 import java.net.Socket
 import java.net.SocketTimeoutException
+import javax.net.ssl.SSLSocket
 import javax.net.ssl.SSLSocketFactory
 
 /** Read an RSS or Atom feed into ordinary items. */
@@ -316,7 +317,19 @@ class TcpNode : StepExecutor {
         ctx: StepContext,
     ): SocketReply = runCatching {
         val socket: Socket = if (useTls) {
-            SSLSocketFactory.getDefault().createSocket().apply { connect(InetSocketAddress(host, port), timeoutMs) }
+            val plain = Socket()
+            try {
+                plain.connect(InetSocketAddress(host, port), timeoutMs)
+                plain.soTimeout = timeoutMs
+                // Layered over the connected socket so SNI and hostname verification use `host`.
+                val tls = (SSLSocketFactory.getDefault() as SSLSocketFactory).createSocket(plain, host, port, true) as SSLSocket
+                tls.sslParameters = tls.sslParameters.apply { endpointIdentificationAlgorithm = "HTTPS" }
+                tls.startHandshake()
+                tls
+            } catch (e: Throwable) {
+                runCatching { plain.close() }
+                throw e
+            }
         } else {
             Socket().apply { connect(InetSocketAddress(host, port), timeoutMs) }
         }

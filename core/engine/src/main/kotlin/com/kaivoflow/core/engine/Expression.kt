@@ -1,6 +1,7 @@
 package com.kaivoflow.core.engine
 
 import com.kaivoflow.core.model.FlowData
+import com.kaivoflow.core.model.NodeSpec
 import com.kaivoflow.core.model.StepNode
 
 /**
@@ -68,8 +69,12 @@ class ParamResolver(private val evaluator: ExpressionEvaluator) {
         }
     }
 
-    fun resolveParams(step: StepNode, scope: Map<String, Any?>): Map<String, Any?> =
-        step.params.entries.associate { (key, raw) -> key to resolveValue(raw, scope) }
+    fun resolveParams(step: StepNode, scope: Map<String, Any?>, spec: NodeSpec? = null): Map<String, Any?> {
+        val literal = spec?.params?.filter { !it.supportsExpression }?.map { it.key }?.toSet().orEmpty()
+        return step.params.entries.associate { (key, raw) ->
+            key to resolveValue(raw, scope, supportsExpression = key !in literal)
+        }
+    }
 
     fun resolveString(value: Any?, scope: Map<String, Any?>, field: String): String {
         val resolved = resolveValue(value, scope) ?: return ""
@@ -97,20 +102,12 @@ class ScopeBuilder(
 
         val previous = stepOutputs.mapValues { (_, items) -> items.mapIndexed { i, d -> d.json + ("index" to i) } }
 
-        val envMap = buildMap<String, Any?> {
-            runCatching { putAll(System.getenv()) }
-            put("OS", "Android")
-            put("PLATFORM", "KaivoFlow")
-            put("TIMEZONE", timezone)
-        }
-
         return mapOf(
             "json" to first,
             "items" to input.map { it.json },
             "item" to first,
             "index" to index,
-            "vars" to flowVars,
-            "env" to envMap,
+            "vars" to flowVars.toMap(),
             "now" to now.toString(),
             "today" to atZone.toLocalDate().toString(),
             "run" to mapOf(

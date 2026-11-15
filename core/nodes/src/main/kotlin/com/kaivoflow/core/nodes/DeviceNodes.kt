@@ -1,6 +1,5 @@
 package com.kaivoflow.core.nodes
 
-import com.kaivoflow.core.engine.ParamResolver
 import com.kaivoflow.core.engine.StepContext
 import com.kaivoflow.core.engine.StepExecutionException
 import com.kaivoflow.core.engine.StepExecutor
@@ -109,13 +108,13 @@ class NotificationSendNode(private val gateway: DeviceGateway) : StepExecutor {
 
     override suspend fun execute(ctx: StepContext): StepResult {
         val params = ctx.params()
-        val resolver = ParamResolver(ctx.evaluator)
         ctx.input.forEachIndexed { index, item ->
+            val row = ctx.paramsFor(index)
             val scope = ctx.scope(index)
-            val title = Values.asString(resolver.resolveValue(params["title"], scope)).ifBlank { "KaivoFlow" }
-            val body = Values.asString(resolver.resolveValue(params["body"], scope))
-            gateway.sendNotification(title, body, Values.asString(params["channel"], "default"),
-                Values.asString(params["deepLink"]).ifBlank { null })
+            val title = Values.asString(row["title"]).ifBlank { "KaivoFlow" }
+            val body = Values.asString(row["body"])
+            gateway.sendNotification(title, body, Values.asString(row["channel"], "default"),
+                Values.asString(row["deepLink"]).ifBlank { null })
         }
         return ctx.output(ctx.input)
     }
@@ -142,13 +141,13 @@ class SmsSendNode(private val gateway: DeviceGateway) : StepExecutor {
             throw StepExecutionException(ctx.step.id, ctx.step.name, "KaivoFlow does not have SMS permission. Open Settings → Privacy centre to grant it.")
         }
         val params = ctx.params()
-        val resolver = ParamResolver(ctx.evaluator)
         ctx.input.forEachIndexed { index, item ->
+            val row = ctx.paramsFor(index)
             val scope = ctx.scope(index)
-            val to = Values.asString(resolver.resolveValue(params["to"], scope))
+            val to = Values.asString(row["to"])
             if (to.isBlank()) throw StepExecutionException(ctx.step.id, ctx.step.name, "no phone number to send to")
-            gateway.sendSms(to, Values.asString(resolver.resolveValue(params["body"], scope)),
-                (Values.asDouble(params["simSlot"]) ?: 0.0).toInt())
+            gateway.sendSms(to, Values.asString(row["body"]),
+                (Values.asDouble(row["simSlot"]) ?: 0.0).toInt())
         }
         return ctx.output(ctx.input)
     }
@@ -166,8 +165,7 @@ class ClipboardNode(private val gateway: DeviceGateway) : StepExecutor {
     )
 
     override suspend fun execute(ctx: StepContext): StepResult {
-        val resolver = ParamResolver(ctx.evaluator)
-        val text = Values.asString(resolver.resolveValue(ctx.params()["text"], ctx.scope()))
+        val text = Values.asString(ctx.params()["text"])
         gateway.copyToClipboard(text)
         return ctx.output(ctx.input)
     }
@@ -189,8 +187,7 @@ class OpenLinkNode(private val gateway: DeviceGateway) : StepExecutor {
 
     override suspend fun execute(ctx: StepContext): StepResult {
         val params = ctx.params()
-        val resolver = ParamResolver(ctx.evaluator)
-        val uri = Values.asString(resolver.resolveValue(params["uri"], ctx.scope()))
+        val uri = Values.asString(params["uri"])
         if (uri.isBlank()) throw StepExecutionException(ctx.step.id, ctx.step.name, "add a URL or deep link")
         gateway.openUrlOrApp(uri, Values.asString(params["packageName"]).ifBlank { null })
         return ctx.output(ctx.input)
@@ -213,8 +210,7 @@ class SpeakNode(private val gateway: DeviceGateway) : StepExecutor {
 
     override suspend fun execute(ctx: StepContext): StepResult {
         val params = ctx.params()
-        val resolver = ParamResolver(ctx.evaluator)
-        val text = Values.asString(resolver.resolveValue(params["text"], ctx.scope()))
+        val text = Values.asString(params["text"])
         if (text.isBlank()) throw StepExecutionException(ctx.step.id, ctx.step.name, "there is nothing to say")
         gateway.speak(text, Values.asString(params["language"], "en-IN"))
         return ctx.output(ctx.input)
@@ -267,14 +263,18 @@ class FileNode(private val gateway: DeviceGateway) : StepExecutor {
     override suspend fun execute(ctx: StepContext): StepResult {
         val params = ctx.params()
         val fileName = Values.asString(params["fileName"], "state.json")
+        try {
+            UserFileStore.checkName(fileName)
+        } catch (e: IllegalArgumentException) {
+            throw StepExecutionException(ctx.step.id, ctx.step.name, e.message ?: "invalid file name")
+        }
         return if (Values.asString(params["action"], "write") == "read") {
             val content = gateway.readFile(fileName)
                 ?: throw StepExecutionException(ctx.step.id, ctx.step.name, "there is no saved file called $fileName yet")
             val value = if (Values.asBoolean(params["parse"] ?: true)) JsonLite.parse(content) ?: content else content
             ctx.output(listOf(com.kaivoflow.core.model.FlowData(mapOf("content" to value))))
         } else {
-            val resolver = ParamResolver(ctx.evaluator)
-            val content = Values.asString(resolver.resolveValue(params["content"], ctx.scope()))
+            val content = Values.asString(params["content"])
             gateway.writeFile(fileName, content.ifBlank { Values.stringify(ctx.input.map { it.json }) })
             ctx.output(ctx.input)
         }

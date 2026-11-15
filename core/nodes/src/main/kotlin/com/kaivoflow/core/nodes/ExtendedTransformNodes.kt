@@ -409,9 +409,10 @@ class UrlNode : StepExecutor {
         val field = ctx.outputName("url")
         val resolver = com.kaivoflow.core.engine.ParamResolver(ctx.evaluator)
         val out = ctx.input.mapIndexed { index, item ->
+            val row = ctx.paramsFor(index)
             val scope = ctx.scope(index)
             if (action == "build") {
-                val base = Values.asString(resolver.resolveValue(params["base"], scope))
+                val base = Values.asString(row["base"])
                 if (base.isBlank()) throw StepExecutionException(ctx.step.id, ctx.step.name, "add a base address")
                 val query = Values.asMap(params["query"]).entries.mapNotNull { (key, raw) ->
                     val value = Values.asString(resolver.resolveValue(raw, scope))
@@ -422,7 +423,7 @@ class UrlNode : StepExecutor {
                 val url = base + (if (query.isEmpty()) "" else separator + query.joinToString("&"))
                 item.copy(json = item.json + (field to url))
             } else {
-                val text = Values.asString(resolver.resolveValue(params["url"], scope))
+                val text = Values.asString(row["url"])
                 val parsed = runCatching { URI(text) }.getOrElse {
                     throw StepExecutionException(ctx.step.id, ctx.step.name, "\"$text\" is not a valid link")
                 }
