@@ -27,6 +27,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Switch
@@ -45,8 +46,11 @@ import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.window.Dialog
 import com.kaivoflow.core.expressions.FallbackExpressionEvaluator
 import kotlinx.coroutines.delay
 import com.kaivoflow.core.design.BadgeKind
@@ -204,18 +208,6 @@ fun StepInspectorSheet(
                         },
                     )
                 }
-            }
-
-            Spacer(Modifier.height(8.dp))
-            // Expression accessory bar — appears only while a field is focused.
-            if (focusedField != null) {
-                ExpressionAccessoryBar(
-                    field = focusedField!!,
-                    currentValue = params[focusedField]?.toString().orEmpty(),
-                    scope = liveScope,
-                    previousStepNames = previousStepNames,
-                    onInsert = { snippet -> onParamChange(focusedField!!, snippet) },
-                )
             }
 
             Row(
@@ -394,20 +386,23 @@ private data class EvaluationPreview(
 private fun evaluatePreview(raw: String, scope: Map<String, Any?>): EvaluationPreview {
     val trimmed = raw.trim()
     if (!trimmed.contains("{{")) return EvaluationPreview(null)
+    if (!trimmed.contains("}}")) {
+        return EvaluationPreview("…typing expression", isWarning = true)
+    }
     val inside = trimmed.substringAfter("{{").substringBefore("}}").trim()
     if (inside.endsWith(".") || inside == "$" || inside.isEmpty()) {
-        return EvaluationPreview("…waiting for property name", isWarning = true)
+        return EvaluationPreview("…waiting for property", isWarning = true)
     }
     return try {
         val evaluator = FallbackExpressionEvaluator()
         val result = evaluator.interpolate(trimmed, scope)
         if (result == null) {
-            EvaluationPreview("null / undefined", isWarning = true)
+            EvaluationPreview("null", isWarning = true)
         } else {
-            EvaluationPreview(result.toString())
+            EvaluationPreview(result.toString().take(60))
         }
     } catch (e: Exception) {
-        EvaluationPreview(e.message?.take(50) ?: "Syntax error", isError = true)
+        EvaluationPreview(e.message?.take(40) ?: "Incomplete expression", isWarning = true)
     }
 }
 
@@ -490,17 +485,71 @@ private fun ParamField(
             }
         }
 
+        ParamType.Secret -> {
+            var passwordVisible by remember { mutableStateOf(false) }
+            val strVal = Values.asString(value)
+            Column(Modifier.fillMaxWidth()) {
+                OutlinedTextField(
+                    value = strVal,
+                    onValueChange = { onChange(param.key, it) },
+                    label = { Text(param.label) },
+                    placeholder = { if (param.placeholder.isNotBlank()) Text(param.placeholder) else Text("Enter key or token") },
+                    modifier = Modifier.fillMaxWidth().onFocusChanged { onFocusChange(param.key, it.isFocused) },
+                    singleLine = true,
+                    shape = KaivoShapes.chip,
+                    visualTransformation = if (passwordVisible) VisualTransformation.None else PasswordVisualTransformation(),
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
+                    trailingIcon = {
+                        IconButton(onClick = { passwordVisible = !passwordVisible }) {
+                            Icon(
+                                KaivoIcons.icon(if (passwordVisible) "close" else "bolt"),
+                                contentDescription = if (passwordVisible) "Hide" else "Show",
+                                tint = colors.inkMuted,
+                                modifier = Modifier.size(18.dp)
+                            )
+                        }
+                    },
+                    supportingText = if (param.hint.isNotBlank()) ({ Text(param.hint) }) else null,
+                )
+            }
+        }
+
         ParamType.Multiline, ParamType.Json, ParamType.Code, ParamType.Expression, ParamType.KeyValue -> {
+            var showExpressionPicker by remember { mutableStateOf(false) }
             val strVal = Values.asString(value)
             val preview = remember(strVal, scope) {
                 if (strVal.contains("{{")) evaluatePreview(strVal, scope) else null
             }
 
             Column(Modifier.fillMaxWidth()) {
+                Row(
+                    Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text(param.label, style = androidx.compose.material3.MaterialTheme.typography.titleSmall, color = colors.inkPrimary)
+                    if (param.supportsExpression) {
+                        Box(
+                            modifier = Modifier
+                                .clip(KaivoShapes.pill)
+                                .background(colors.surfaceElevated)
+                                .border(1.dp, colors.royalGold.copy(alpha = 0.4f), KaivoShapes.pill)
+                                .clickable { showExpressionPicker = true }
+                                .padding(horizontal = 12.dp, vertical = 6.dp),
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            Text(
+                                "fx",
+                                style = androidx.compose.material3.MaterialTheme.typography.labelSmall.copy(fontFamily = KaivoTheme.type.monoFamily),
+                                color = colors.royalGold,
+                            )
+                        }
+                    }
+                }
+                Spacer(Modifier.height(4.dp))
                 OutlinedTextField(
                     value = strVal,
                     onValueChange = { onChange(param.key, it) },
-                    label = { Text(param.label) },
                     placeholder = { if (param.placeholder.isNotBlank()) Text(param.placeholder) },
                     modifier = Modifier
                         .fillMaxWidth()
@@ -520,19 +569,60 @@ private fun ParamField(
                     ExpressionPreviewBadge(preview)
                 }
             }
+
+            if (showExpressionPicker) {
+                ExpressionPickerDialog(
+                    scope = scope,
+                    onInsert = { snippet ->
+                        val newVal = if (strVal.isBlank()) snippet else "$strVal $snippet"
+                        onChange(param.key, newVal)
+                        showExpressionPicker = false
+                    },
+                    onDismiss = { showExpressionPicker = false },
+                )
+            }
         }
 
         else -> {
+            var showExpressionPicker by remember { mutableStateOf(false) }
             val strVal = Values.asString(value)
+            val isSecret = param.key.contains("credential", ignoreCase = true) ||
+                param.key.contains("secret", ignoreCase = true) ||
+                param.key.contains("password", ignoreCase = true)
+
             val preview = remember(strVal, scope) {
-                if (strVal.contains("{{")) evaluatePreview(strVal, scope) else null
+                if (!isSecret && strVal.contains("{{")) evaluatePreview(strVal, scope) else null
             }
 
             Column(Modifier.fillMaxWidth()) {
+                Row(
+                    Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text(param.label, style = androidx.compose.material3.MaterialTheme.typography.titleSmall, color = colors.inkPrimary)
+                    if (param.supportsExpression && !isSecret) {
+                        Box(
+                            modifier = Modifier
+                                .clip(KaivoShapes.pill)
+                                .background(colors.surfaceElevated)
+                                .border(1.dp, colors.royalGold.copy(alpha = 0.4f), KaivoShapes.pill)
+                                .clickable { showExpressionPicker = true }
+                                .padding(horizontal = 12.dp, vertical = 6.dp),
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            Text(
+                                "fx",
+                                style = androidx.compose.material3.MaterialTheme.typography.labelSmall.copy(fontFamily = KaivoTheme.type.monoFamily),
+                                color = colors.royalGold,
+                            )
+                        }
+                    }
+                }
+                Spacer(Modifier.height(4.dp))
                 OutlinedTextField(
                     value = strVal,
                     onValueChange = { onChange(param.key, it) },
-                    label = { Text(param.label) },
                     placeholder = { if (param.placeholder.isNotBlank()) Text(param.placeholder) },
                     modifier = Modifier
                         .fillMaxWidth()
@@ -548,184 +638,184 @@ private fun ParamField(
                     ExpressionPreviewBadge(preview)
                 }
             }
+
+            if (showExpressionPicker) {
+                ExpressionPickerDialog(
+                    scope = scope,
+                    onInsert = { snippet ->
+                        val newVal = if (strVal.isBlank()) snippet else "$strVal $snippet"
+                        onChange(param.key, newVal)
+                        showExpressionPicker = false
+                    },
+                    onDismiss = { showExpressionPicker = false },
+                )
+            }
         }
     }
 }
 
-private data class ExpressionSuggestion(
-    val label: String,
-    val detail: String? = null,
-    val snippet: String,
-)
-
 @Composable
-private fun ExpressionAccessoryBar(
-    field: String,
-    currentValue: String,
+private fun ExpressionPickerDialog(
     scope: Map<String, Any?>,
-    previousStepNames: List<String>,
     onInsert: (String) -> Unit,
+    onDismiss: () -> Unit,
 ) {
     val colors = KaivoTheme.colors
-    val trimmed = currentValue.trim()
-    val preview = remember(currentValue, scope) {
-        if (currentValue.contains("{{")) evaluatePreview(currentValue, scope) else null
-    }
+    var selectedSection by remember { mutableStateOf("json") }
 
-    val varsMap = (scope["vars"] as? Map<*, *>)?.keys?.mapNotNull { it?.toString() } ?: emptyList()
-    val envMap = (scope["env"] as? Map<*, *>)?.keys?.mapNotNull { it?.toString() } ?: emptyList()
-    val jsonMap = (scope["json"] as? Map<*, *>)?.keys?.mapNotNull { it?.toString() } ?: emptyList()
+    val jsonMap = (scope["json"] as? Map<*, *>) ?: emptyMap<Any?, Any?>()
+    val varsMap = (scope["vars"] as? Map<*, *>) ?: emptyMap<Any?, Any?>()
+    val envMap = (scope["env"] as? Map<*, *>) ?: emptyMap<Any?, Any?>()
 
-    val suggestions = remember(currentValue, varsMap, envMap, jsonMap, previousStepNames) {
-        when {
-            trimmed.contains("\$vars.") || trimmed.endsWith("\$vars") -> {
-                varsMap.map { key ->
-                    val resolvedVal = (scope["vars"] as? Map<*, *>)?.get(key)?.toString()?.take(25)
-                    val varPattern = Regex("""\$\{'\$'}vars\.\w*""")
-                    ExpressionSuggestion(
-                        label = key,
-                        detail = resolvedVal,
-                        snippet = if (trimmed.contains("{{") && !trimmed.contains("}}")) {
-                            trimmed.replace(varPattern, "\$vars.$key") + "}}"
-                        } else if (trimmed.contains("\$vars.")) {
-                            trimmed.replace(varPattern, "\$vars.$key")
-                        } else {
-                            "{{ \$vars.$key }}"
-                        }
-                    )
-                }
-            }
-            trimmed.contains("\$env.") || trimmed.endsWith("\$env") -> {
-                envMap.map { key ->
-                    val resolvedVal = (scope["env"] as? Map<*, *>)?.get(key)?.toString()?.take(25)
-                    val envPattern = Regex("""\$\{'\$'}env\.\w*""")
-                    ExpressionSuggestion(
-                        label = key,
-                        detail = resolvedVal,
-                        snippet = if (trimmed.contains("{{") && !trimmed.contains("}}")) {
-                            trimmed.replace(envPattern, "\$env.$key") + "}}"
-                        } else if (trimmed.contains("\$env.")) {
-                            trimmed.replace(envPattern, "\$env.$key")
-                        } else {
-                            "{{ \$env.$key }}"
-                        }
-                    )
-                }
-            }
-            trimmed.contains("\$json.") || trimmed.endsWith("\$json") -> {
-                jsonMap.map { key ->
-                    val resolvedVal = (scope["json"] as? Map<*, *>)?.get(key)?.toString()?.take(25)
-                    val jsonPattern = Regex("""\$\{'\$'}json\.\w*""")
-                    ExpressionSuggestion(
-                        label = key,
-                        detail = resolvedVal,
-                        snippet = if (trimmed.contains("{{") && !trimmed.contains("}}")) {
-                            trimmed.replace(jsonPattern, "\$json.$key") + "}}"
-                        } else if (trimmed.contains("\$json.")) {
-                            trimmed.replace(jsonPattern, "\$json.$key")
-                        } else {
-                            "{{ \$json.$key }}"
-                        }
-                    )
-                }
-            }
-            trimmed.contains("\$step") -> {
-                previousStepNames.map { stepName ->
-                    ExpressionSuggestion(
-                        label = stepName,
-                        detail = "Step output",
-                        snippet = "{{ \$step(\"$stepName\") }}"
-                    )
-                }
-            }
-            else -> {
-                listOf(
-                    ExpressionSuggestion("{{ \$vars. }}", "${varsMap.size} vars", "{{ \$vars. }}"),
-                    ExpressionSuggestion("{{ \$env. }}", "${envMap.size} env keys", "{{ \$env. }}"),
-                    ExpressionSuggestion("{{ \$json. }}", "${jsonMap.size} fields", "{{ \$json. }}"),
-                    ExpressionSuggestion("{{ \$now }}", "Current time", "{{ \$now }}"),
-                    ExpressionSuggestion("{{ \$today }}", "Today's date", "{{ \$today }}"),
-                ) + previousStepNames.map {
-                    ExpressionSuggestion("{{ \$step(\"$it\") }}", "Output from $it", "{{ \$step(\"$it\") }}")
-                }
-            }
-        }
-    }
-
-    Column(
-        Modifier
-            .fillMaxWidth()
-            .background(colors.surfaceElevated.copy(alpha = 0.95f))
-            .border(1.dp, colors.hairline)
-            .padding(horizontal = 12.dp, vertical = 8.dp),
-    ) {
-        Row(
-            Modifier.fillMaxWidth(),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.SpaceBetween,
+    Dialog(onDismissRequest = onDismiss) {
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clip(KaivoShapes.stepCard)
+                .background(colors.surfaceAtelier)
+                .border(1.dp, colors.hairline, KaivoShapes.stepCard)
+                .padding(16.dp),
         ) {
-            Text(
-                when {
-                    trimmed.contains("\$vars.") -> "Variables (tap to complete):"
-                    trimmed.contains("\$env.") -> "Environment (tap to complete):"
-                    trimmed.contains("\$json.") -> "Input fields (tap to complete):"
-                    else -> "Expressions for $field:"
-                },
-                style = androidx.compose.material3.MaterialTheme.typography.labelMedium,
-                color = colors.inkMuted,
-            )
-            if (preview?.value != null) {
-                Box(
-                    Modifier
-                        .clip(KaivoShapes.pill)
-                        .background(
-                            if (preview.isError) colors.statusError.copy(alpha = 0.15f)
-                            else if (preview.isWarning) colors.royalGold.copy(alpha = 0.12f)
-                            else colors.royalGold.copy(alpha = 0.2f)
-                        )
-                        .padding(horizontal = 8.dp, vertical = 2.dp),
+            Column(Modifier.fillMaxWidth()) {
+                Row(
+                    Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    Text(
-                        text = if (preview.isError) "⚠ ${preview.value}" else "✦ ${preview.value}",
-                        style = androidx.compose.material3.MaterialTheme.typography.labelSmall.copy(fontFamily = KaivoTheme.type.monoFamily),
-                        color = if (preview.isError) colors.statusError else colors.royalGold,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                    )
+                    Column {
+                        Text("Insert Expression", style = androidx.compose.material3.MaterialTheme.typography.titleMedium, color = colors.inkPrimary)
+                        Text("Tap to insert into field", style = androidx.compose.material3.MaterialTheme.typography.bodySmall, color = colors.inkMuted)
+                    }
+                    IconButton(onClick = onDismiss, modifier = Modifier.size(28.dp)) {
+                        Icon(KaivoIcons.icon("close"), contentDescription = "Close", tint = colors.inkMuted, modifier = Modifier.size(16.dp))
+                    }
                 }
-            }
-        }
-        Spacer(Modifier.height(6.dp))
-        LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp), state = rememberLazyListState()) {
-            items(suggestions) { item ->
-                Box(
-                    modifier = Modifier
-                        .clip(KaivoShapes.chip)
-                        .background(colors.surfaceElevated)
-                        .border(1.dp, colors.imperialAmethyst.copy(alpha = 0.45f), KaivoShapes.chip)
-                        .clickable { onInsert(item.snippet) }
-                        .padding(horizontal = 10.dp, vertical = 6.dp),
+                Spacer(Modifier.height(12.dp))
+
+                Row(
+                    Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
                 ) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Text(
-                            text = item.label,
-                            style = androidx.compose.material3.MaterialTheme.typography.labelMedium.copy(
-                                fontFamily = KaivoTheme.type.monoFamily,
-                            ),
-                            color = colors.royalGold,
-                        )
-                        if (item.detail != null) {
-                            Spacer(Modifier.width(6.dp))
+                    val tabs = listOf("json" to "Input (\$json)", "vars" to "Variables (\$vars)", "env" to "Environment (\$env)", "time" to "Time")
+                    tabs.forEach { (id, label) ->
+                        val active = selectedSection == id
+                        Box(
+                            modifier = Modifier
+                                .clip(KaivoShapes.pill)
+                                .background(if (active) colors.royalGold.copy(alpha = 0.2f) else colors.surfaceElevated)
+                                .border(1.dp, if (active) colors.royalGold.copy(alpha = 0.6f) else colors.hairline, KaivoShapes.pill)
+                                .clickable { selectedSection = id }
+                                .padding(horizontal = 12.dp, vertical = 6.dp),
+                        ) {
                             Text(
-                                text = "= ${item.detail}",
+                                label,
                                 style = androidx.compose.material3.MaterialTheme.typography.labelSmall,
-                                color = colors.inkMuted,
-                                maxLines = 1,
+                                color = if (active) colors.royalGold else colors.inkSecondary,
+                            )
+                        }
+                    }
+                }
+                Spacer(Modifier.height(12.dp))
+
+                Column(
+                    Modifier
+                        .fillMaxWidth()
+                        .heightIn(max = 260.dp)
+                        .verticalScroll(rememberScrollState()),
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    when (selectedSection) {
+                        "json" -> {
+                            if (jsonMap.isEmpty()) {
+                                Text("No items from previous step yet. Run the flow to populate items.", style = androidx.compose.material3.MaterialTheme.typography.bodySmall, color = colors.inkMuted, modifier = Modifier.padding(vertical = 16.dp))
+                            } else {
+                                jsonMap.forEach { (k, v) ->
+                                    val keyStr = k.toString()
+                                    val valStr = v?.toString()?.take(30) ?: "null"
+                                    ExpressionItemRow(
+                                        syntax = "{{ \$json.$keyStr }}",
+                                        preview = valStr,
+                                        onClick = { onInsert("{{ \$json.$keyStr }}") },
+                                    )
+                                }
+                            }
+                        }
+                        "vars" -> {
+                            if (varsMap.isEmpty()) {
+                                Text("No workflow variables declared yet.", style = androidx.compose.material3.MaterialTheme.typography.bodySmall, color = colors.inkMuted, modifier = Modifier.padding(vertical = 16.dp))
+                            } else {
+                                varsMap.forEach { (k, v) ->
+                                    val keyStr = k.toString()
+                                    val valStr = v?.toString()?.take(30) ?: "null"
+                                    ExpressionItemRow(
+                                        syntax = "{{ \$vars.$keyStr }}",
+                                        preview = valStr,
+                                        onClick = { onInsert("{{ \$vars.$keyStr }}") },
+                                    )
+                                }
+                            }
+                        }
+                        "env" -> {
+                            envMap.forEach { (k, v) ->
+                                val keyStr = k.toString()
+                                val valStr = v?.toString()?.take(30) ?: ""
+                                ExpressionItemRow(
+                                    syntax = "{{ \$env.$keyStr }}",
+                                    preview = valStr,
+                                    onClick = { onInsert("{{ \$env.$keyStr }}") },
+                                )
+                            }
+                        }
+                        "time" -> {
+                            ExpressionItemRow(
+                                syntax = "{{ \$now }}",
+                                preview = "Current timestamp",
+                                onClick = { onInsert("{{ \$now }}") },
+                            )
+                            ExpressionItemRow(
+                                syntax = "{{ \$today }}",
+                                preview = "Current date",
+                                onClick = { onInsert("{{ \$today }}") },
                             )
                         }
                     }
                 }
             }
+        }
+    }
+}
+
+@Composable
+private fun ExpressionItemRow(
+    syntax: String,
+    preview: String,
+    onClick: () -> Unit,
+) {
+    val colors = KaivoTheme.colors
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .clip(KaivoShapes.chip)
+            .background(colors.surfaceElevated)
+            .border(1.dp, colors.hairline, KaivoShapes.chip)
+            .clickable(onClick = onClick)
+            .padding(horizontal = 12.dp, vertical = 8.dp),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(
+            syntax,
+            style = androidx.compose.material3.MaterialTheme.typography.labelMedium.copy(fontFamily = KaivoTheme.type.monoFamily),
+            color = colors.royalGold,
+        )
+        if (preview.isNotBlank()) {
+            Text(
+                preview,
+                style = androidx.compose.material3.MaterialTheme.typography.labelSmall,
+                color = colors.inkMuted,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
         }
     }
 }

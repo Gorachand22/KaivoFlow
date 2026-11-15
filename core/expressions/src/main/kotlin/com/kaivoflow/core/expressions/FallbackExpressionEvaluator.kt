@@ -48,10 +48,12 @@ class FallbackExpressionEvaluator : ExpressionEvaluator {
 
     private fun evaluateDollar(expression: String, scope: Map<String, Any?>): Any? {
         val cursor = Cursor(expression, 1) // skip '$'
+        cursor.skipSpaces()
         val name = cursor.readIdentifier()
             ?: throw ExpressionUnsupportedException(expression)
 
         // Function-style helpers.
+        cursor.skipSpaces()
         if (cursor.peek() == '(') {
             cursor.advance() // consume '('
             val args = cursor.readArguments(scope) { code, sc -> evaluate(code, sc) }
@@ -70,6 +72,7 @@ class FallbackExpressionEvaluator : ExpressionEvaluator {
         }
 
         val root = scope[name] ?: return null
+        cursor.skipSpaces()
         // `${'$'}length` used bare, e.g. {{ ${'$'}length }}
         if (name == "length" && cursor.atEnd()) return lengthOf(Values.asList(scope["items"]))
         return readPath(root, cursor, expression)
@@ -88,15 +91,20 @@ class FallbackExpressionEvaluator : ExpressionEvaluator {
     private fun readPath(root: Any?, cursor: Cursor, expression: String): Any? {
         var current = root
         while (!cursor.atEnd()) {
+            cursor.skipSpaces()
+            if (cursor.atEnd()) break
             current = when (cursor.peek()) {
                 '.' -> {
                     cursor.advance()
+                    cursor.skipSpaces()
                     val key = cursor.readIdentifier() ?: throw ExpressionUnsupportedException(expression)
                     Values.deepGet(current, key)
                 }
                 '[' -> {
                     cursor.advance()
+                    cursor.skipSpaces()
                     val key = cursor.readIndexOrKey()
+                    cursor.skipSpaces()
                     cursor.expect(']')
                     Values.deepGet(current, key)
                 }
@@ -104,10 +112,20 @@ class FallbackExpressionEvaluator : ExpressionEvaluator {
             }
             if (current == null) {
                 // Consume the rest of the path so the cursor invariant holds, then stop.
-                while (!cursor.atEnd() && (cursor.peek() == '.' || cursor.peek() == '[')) {
-                    if (cursor.peek() == '.') { cursor.advance(); cursor.readIdentifier() } else {
-                        cursor.advance(); cursor.readIndexOrKey(); cursor.expect(']')
-                    }
+                while (!cursor.atEnd()) {
+                    cursor.skipSpaces()
+                    if (cursor.atEnd()) break
+                    if (cursor.peek() == '.') {
+                        cursor.advance()
+                        cursor.skipSpaces()
+                        cursor.readIdentifier()
+                    } else if (cursor.peek() == '[') {
+                        cursor.advance()
+                        cursor.skipSpaces()
+                        cursor.readIndexOrKey()
+                        cursor.skipSpaces()
+                        cursor.expect(']')
+                    } else break
                 }
                 return null
             }
@@ -131,11 +149,13 @@ class FallbackExpressionEvaluator : ExpressionEvaluator {
         fun peek(): Char? = if (atEnd()) null else source[index]
         fun advance() { index++ }
         fun expect(c: Char) {
+            skipSpaces()
             if (peek() != c) throw ExpressionUnsupportedException(source)
             index++
         }
 
         fun readIdentifier(): String? {
+            skipSpaces()
             val start = index
             while (!atEnd() && (source[index].isLetterOrDigit() || source[index] == '_' || source[index] == '$')) index++
             return if (index > start) source.substring(start, index) else null
@@ -198,7 +218,7 @@ class FallbackExpressionEvaluator : ExpressionEvaluator {
             return args
         }
 
-        private fun skipSpaces() { while (!atEnd() && source[index].isWhitespace()) index++ }
+        fun skipSpaces() { while (!atEnd() && source[index].isWhitespace()) index++ }
     }
 }
 

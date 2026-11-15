@@ -81,4 +81,17 @@ class FallbackExpressionEvaluatorTest {
         assertEquals("Bearer 13033585986-h3vcrcf6", resolvedId)
         assertEquals("GOCSPX-j6VMrhs73ljcT", resolvedSecret)
     }
+
+    @Test
+    fun `tolerates arbitrary whitespace inside dollar expressions`() {
+        val testScope = mapOf(
+            "json" to mapOf("amount" to 500, "status" to "done"),
+            "vars" to mapOf("token" to "xyz123"),
+        )
+        // Space between $ and identifier: e.g. {{$ json}}
+        assertEquals(mapOf("amount" to 500, "status" to "done"), evaluator.interpolate("{{$ json}}", testScope))
+        assertEquals(mapOf("amount" to 500, "status" to "done"), evaluator.interpolate("{{ \$json }}", testScope))
+        assertEquals(500, evaluator.interpolate("{{ \$json . amount }}", testScope))
+        assertEquals("xyz123", evaluator.interpolate("{{ \$vars . token }}", testScope))
+    }
 }
