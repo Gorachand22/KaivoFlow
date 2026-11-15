@@ -58,7 +58,7 @@ data class ParamSpec(
     val options: ImmutableList<ParamOption> = persistentListOf(),
     /** Only show this field when the sibling param equals one of these values. */
     val showWhen: Map<String, List<Any?>> = emptyMap(),
-    val supportsExpression: Boolean = type != ParamType.Secret,
+    val supportsExpression: Boolean = type != ParamType.Secret && type != ParamType.Code,
     val advanced: Boolean = false,
 )
 

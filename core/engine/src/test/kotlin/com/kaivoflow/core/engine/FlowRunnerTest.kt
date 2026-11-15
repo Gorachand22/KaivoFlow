@@ -293,7 +293,7 @@ class FlowRunnerTest {
     fun `events are emitted in a coherent order`() = runBlocking {
         val events = mutableListOf<RunEvent>()
         val flow = flowOf(step("t", "trigger.manual"), step("a", "test.pass", y = 10f), streams = listOf(s("t", "a")))
-        runner().run(flow, RunTrigger(items = listOf(item()).toImmutableList())) { events += it }
+        runner().run(flow, RunTrigger(items = listOf(item()).toImmutableList()), onEvent = { events += it })
 
         assertTrue(events.first() is RunEvent.RunStarted)
         assertTrue(events.last() is RunEvent.RunFinished)

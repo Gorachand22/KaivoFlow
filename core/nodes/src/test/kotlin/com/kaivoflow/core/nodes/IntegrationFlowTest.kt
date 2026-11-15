@@ -103,7 +103,8 @@ class IntegrationFlowTest {
         val record: RunRecord = runner(http, devices).run(
             flow,
             RunTrigger(kind = "schedule", items = persistentListOf(FlowData()).toImmutableList()),
-        ) { events += it }
+            onEvent = { events += it },
+        )
 
         assertEquals(RunStatus.Succeeded, record.status)
         assertEquals(4, record.stepRuns.size)
