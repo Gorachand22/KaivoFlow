@@ -7,8 +7,6 @@ import com.kaivoflow.core.nodes.TriggerSpecs
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
-import javax.inject.Inject
-import dagger.hilt.android.AndroidEntryPoint
 
 /**
  * Re-registers schedules after a reboot or an app update.
@@ -17,11 +15,7 @@ import dagger.hilt.android.AndroidEntryPoint
  * drop our jobs — re-enqueueing on boot is the difference between "my morning digest works" and
  * "it worked once".
  */
-@AndroidEntryPoint
 class BootReceiver : BroadcastReceiver() {
-
-    @Inject lateinit var scheduler: FlowScheduler
-    @Inject lateinit var runNotifications: RunNotifications
 
     override fun onReceive(context: Context, intent: Intent) {
         val action = intent.action ?: return
@@ -32,7 +26,9 @@ class BootReceiver : BroadcastReceiver() {
             action != Intent.ACTION_TIME_CHANGED
         ) return
 
-        runNotifications.ensureChannels()
+        val entry = ReceiverEntryPoints.of(context)
+        val scheduler = entry.scheduler()
+        entry.runNotifications().ensureChannels()
         val pending = goAsync()
         CoroutineScope(Dispatchers.IO).launch {
             try {

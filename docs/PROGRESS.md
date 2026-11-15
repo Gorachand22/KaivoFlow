@@ -14,7 +14,7 @@ Keep the Velvet Obsidian and Champagne Gold design identity.
 | Phase | Goal | Status |
 |---|---|---|
 | 0 | Audit of the existing code base against n8n behaviour | Done (8 reports, top P0s verified in code) |
-| 1 | Stop the bleeding: data loss, secrets, per-item params, scheduler, run persistence (see [ROADMAP.md](ROADMAP.md)) | Next |
+| 1 | Stop the bleeding: data loss, secrets, per-item params, scheduler, run persistence (see [ROADMAP.md](ROADMAP.md)) | Code complete, waiting for owner build and phone gate ([PHASE1_CHECKLIST.md](PHASE1_CHECKLIST.md)) |
 | 2 | Data and expression core: item lineage, real expression parser, parameter schema | Not started |
 | 3 | Node set rebuild: n8n-class logic nodes, HTTP depth, declarative integration spec | Not started |
 | 4 | Editor UX: schema-driven inspector, data views, pin data, re-run from step | Not started |
@@ -43,3 +43,6 @@ Keep the Velvet Obsidian and Champagne Gold design identity.
   never started, scheduler ignores `isActive`). Roadmap written in [ROADMAP.md](ROADMAP.md).
   Gradle cannot run in the cloud sandbox, so model, engine, nodes, expressions and codec were compiled with bundled Kotlin
   jars: 204 of 209 tests pass (5 need Room). The app modules have never been compiled by anyone.
+- 2026-11-16: Phase 1 implemented on branch `claude/phase-1-foundation` (per-item params, secrets not expanded,
+  `$vars` instead of `$env`, Room migrations, backup rules, scheduler and Run lifecycle, event queue, webhook security,
+  SMS and battery Sparks, credential picker, receivers via Hilt EntryPoint). 185 JVM tests pass. Android modules are not compiled yet.

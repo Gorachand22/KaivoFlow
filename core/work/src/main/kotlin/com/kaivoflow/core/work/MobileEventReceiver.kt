@@ -11,11 +11,9 @@ import android.net.wifi.WifiManager
 import android.os.Build
 import androidx.core.content.ContextCompat
 import com.kaivoflow.core.nodes.TriggerSpecs
-import dagger.hilt.android.AndroidEntryPoint
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
-import javax.inject.Inject
 
 /**
  * Turns phone-wide broadcasts into seeded Runs for the mobile-native Sparks.
@@ -24,13 +22,13 @@ import javax.inject.Inject
  * single fail-closed gate — and it never starts a Run directly. Every event goes through
  * [FlowScheduler.dispatchTrigger], which fans out to matching, enabled Sparks only.
  */
-@AndroidEntryPoint
 class MobileEventReceiver : BroadcastReceiver() {
 
-    @Inject lateinit var scheduler: FlowScheduler
+    private lateinit var scheduler: FlowScheduler
 
     override fun onReceive(context: Context, intent: Intent) {
         val action = intent.action ?: return
+        scheduler = ReceiverEntryPoints.of(context).scheduler()
         if (action != ACTION_GEOFENCE &&
             action != WifiManager.NETWORK_STATE_CHANGED_ACTION &&
             action != BluetoothDevice.ACTION_ACL_CONNECTED &&
