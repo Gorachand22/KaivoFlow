@@ -70,6 +70,10 @@ class CanvasViewModel @Inject constructor(
     private val _state = MutableStateFlow(CanvasUiState())
     val state: StateFlow<CanvasUiState> = _state.asStateFlow()
 
+    /** Saved credentials (id, type, label only; never the secret). Null until the first load. */
+    private val _credentialRefs = MutableStateFlow<List<com.kaivoflow.core.model.CredentialRef>?>(null)
+    val credentialRefs: StateFlow<List<com.kaivoflow.core.model.CredentialRef>?> = _credentialRefs.asStateFlow()
+
     private val _promptEvents = Channel<String>(Channel.BUFFERED)
     private var flow: Flow = Flow(id = flowId, name = "Flow")
     private var runJob: Job? = null
@@ -86,6 +90,9 @@ class CanvasViewModel @Inject constructor(
     private val redoStack = ArrayDeque<CanvasSnapshot>()
 
     init {
+        viewModelScope.launch {
+            credentials.observeRefs().collect { _credentialRefs.value = it }
+        }
         viewModelScope.launch {
             flowRepository.observeFlow(flowId).collect { loaded ->
                 if (loaded == null) return@collect

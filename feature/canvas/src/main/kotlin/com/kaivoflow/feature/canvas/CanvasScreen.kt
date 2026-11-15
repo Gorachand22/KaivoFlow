@@ -88,9 +88,11 @@ import kotlinx.coroutines.delay
 fun CanvasScreen(
     onBack: () -> Unit,
     onOpenRunHistory: () -> Unit,
+    onOpenCredentials: () -> Unit = {},
     viewModel: CanvasViewModel = hiltViewModel(),
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
+    val credentialRefs by viewModel.credentialRefs.collectAsStateWithLifecycle()
     val colors = KaivoTheme.colors
     val sizes = KaivoTheme.sizes
     val motion = KaivoTheme.motion
@@ -770,6 +772,8 @@ fun CanvasScreen(
                     connectedStreams = state.streams,
                     allSteps = state.steps,
                     vars = state.vars,
+                    credentials = credentialRefs,
+                    onAddCredential = onOpenCredentials,
                     onTab = viewModel::setInspectorTab,
                     onParamChange = { key, value -> viewModel.updateParam(step.id, key, value) },
                     onRename = { viewModel.renameStep(step.id, it) },

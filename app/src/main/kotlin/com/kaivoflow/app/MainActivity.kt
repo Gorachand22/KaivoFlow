@@ -130,6 +130,7 @@ private fun KaivoNavHost(
             CanvasScreen(
                 onBack = { navController.popBackStack() },
                 onOpenRunHistory = { navController.navigate(Routes.History) },
+                onOpenCredentials = { navController.navigate(Routes.Credentials) },
             )
         }
         composable(Routes.Settings) {

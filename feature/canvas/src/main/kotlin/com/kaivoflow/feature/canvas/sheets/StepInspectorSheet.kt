@@ -66,6 +66,7 @@ import com.kaivoflow.core.design.SheetDragHandle
 import com.kaivoflow.core.design.StatusBadge
 import com.kaivoflow.core.design.StepMedallion
 import com.kaivoflow.core.engine.Values
+import com.kaivoflow.core.model.CredentialRef
 import com.kaivoflow.core.model.FlowData
 import com.kaivoflow.core.model.NodeSpec
 import com.kaivoflow.core.model.ParamSpec
@@ -95,6 +96,8 @@ fun StepInspectorSheet(
     connectedStreams: List<StreamEdgeUiModel> = emptyList(),
     allSteps: List<StepNodeUiModel> = emptyList(),
     vars: Map<String, Any?> = emptyMap(),
+    credentials: List<CredentialRef>? = null,
+    onAddCredential: () -> Unit = {},
     onTab: (InspectorTab) -> Unit,
     onParamChange: (String, Any?) -> Unit,
     onRename: (String) -> Unit,
@@ -112,17 +115,8 @@ fun StepInspectorSheet(
 
     val liveScope = remember(vars, inspector.inputItems) {
         val inputFirst = inspector.inputItems.firstOrNull()?.json ?: emptyMap()
-        val envMap = buildMap<String, Any?> {
-            runCatching { putAll(System.getenv()) }
-            put("OS", "Android")
-            put("PLATFORM", "KaivoFlow")
-            put("TIMEZONE", java.time.ZoneId.systemDefault().id)
-            put("DEVICE", android.os.Build.MODEL)
-            put("USER", "SingleUser")
-        }
         mapOf(
             "vars" to vars,
-            "env" to envMap,
             "json" to inputFirst,
             "items" to inspector.inputItems.map { it.json },
             "item" to inputFirst,
@@ -189,6 +183,8 @@ fun StepInspectorSheet(
                         connectedStreams = connectedStreams,
                         allSteps = allSteps,
                         scope = liveScope,
+                        credentials = credentials,
+                        onAddCredential = onAddCredential,
                         onNameChange = {
                             name = it
                             onRename(it)
@@ -253,6 +249,8 @@ private fun ConfigureTab(
     connectedStreams: List<StreamEdgeUiModel>,
     allSteps: List<StepNodeUiModel>,
     scope: Map<String, Any?>,
+    credentials: List<CredentialRef>?,
+    onAddCredential: () -> Unit,
     onNameChange: (String) -> Unit,
     onParamChange: (String, Any?) -> Unit,
     onFocusChange: (String, Boolean) -> Unit,
@@ -353,6 +351,8 @@ private fun ConfigureTab(
                 param = param,
                 value = params[param.key],
                 scope = scope,
+                credentials = credentials,
+                onAddCredential = onAddCredential,
                 onChange = onParamChange,
                 onFocusChange = onFocusChange,
             )
@@ -443,6 +443,198 @@ private fun ParamField(
     param: ParamSpec,
     value: Any?,
     scope: Map<String, Any?>,
+    credentials: List<CredentialRef>?,
+    onAddCredential: () -> Unit,
+    onChange: (String, Any?) -> Unit,
+    onFocusChange: (String, Boolean) -> Unit,
+) {
+    val colors = KaivoTheme.colors
+    when {
+        isCredentialParam(param) -> CredentialPickerField(
+            param = param,
+            selectedId = Values.asString(value),
+            credentials = credentials,
+            onSelect = { onChange(param.key, it) },
+            onAddCredential = onAddCredential,
+        )
+        else -> ParamFieldBody(param, value, scope, onChange, onFocusChange)
+    }
+}
+
+/**
+ * A credential reference field. [ParamType] has no dedicated Credential member, and the engine
+ * reads the id from the param named `credential` (StepExecutor.credential()), so a Secret-typed
+ * param with that key is the spec-level signal.
+ */
+private fun isCredentialParam(param: ParamSpec): Boolean =
+    param.type == ParamType.Secret && param.key == "credential"
+
+private const val SECRET_PLAIN_TEXT_HINT = "Stored in plain text in this Flow. Use a saved credential instead."
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun CredentialPickerField(
+    param: ParamSpec,
+    selectedId: String,
+    credentials: List<CredentialRef>?,
+    onSelect: (String) -> Unit,
+    onAddCredential: () -> Unit,
+) {
+    val colors = KaivoTheme.colors
+    var open by remember { mutableStateOf(false) }
+    val selected = credentials?.firstOrNull { it.id == selectedId }
+    // Only warn once the vault list has loaded, so a slow first load never flashes a false alarm.
+    val missing = credentials != null && selectedId.isNotBlank() && selected == null
+
+    Column(Modifier.fillMaxWidth()) {
+        Text(param.label, style = androidx.compose.material3.MaterialTheme.typography.titleSmall, color = colors.inkPrimary)
+        Spacer(Modifier.height(4.dp))
+        Row(
+            Modifier
+                .fillMaxWidth()
+                .clip(KaivoShapes.chip)
+                .background(colors.surfaceElevated)
+                .border(1.dp, if (missing) colors.statusWarning.copy(alpha = 0.6f) else colors.hairline, KaivoShapes.chip)
+                .clickable { open = true }
+                .padding(horizontal = 14.dp, vertical = 12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Icon(KaivoIcons.icon("key"), contentDescription = null, tint = colors.royalGold, modifier = Modifier.size(18.dp))
+            Spacer(Modifier.width(10.dp))
+            Column(Modifier.weight(1f)) {
+                Text(
+                    when {
+                        selected != null -> selected.label
+                        selectedId.isBlank() -> "None selected"
+                        else -> "Missing credential"
+                    },
+                    style = androidx.compose.material3.MaterialTheme.typography.bodyMedium,
+                    color = if (selected != null) colors.inkPrimary else colors.inkMuted,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                if (selected != null) {
+                    Text(
+                        selected.type,
+                        style = androidx.compose.material3.MaterialTheme.typography.labelSmall,
+                        color = colors.inkSecondary,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
+            }
+            Text("Change", style = androidx.compose.material3.MaterialTheme.typography.labelMedium, color = colors.royalGold)
+        }
+        if (missing) {
+            Spacer(Modifier.height(6.dp))
+            StatusBadge("⚠ Credential no longer exists. Pick another.", BadgeKind.Warning)
+        }
+        if (param.hint.isNotBlank()) {
+            Spacer(Modifier.height(4.dp))
+            Text(param.hint, style = androidx.compose.material3.MaterialTheme.typography.bodySmall, color = colors.inkSecondary)
+        }
+    }
+
+    if (open) {
+        ModalBottomSheet(
+            onDismissRequest = { open = false },
+            sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
+            containerColor = colors.surfaceAtelier,
+            dragHandle = {
+                Column(Modifier.fillMaxWidth().padding(vertical = 10.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+                    SheetDragHandle()
+                }
+            },
+        ) {
+            Column(
+                Modifier
+                    .fillMaxWidth()
+                    .navigationBarsPadding()
+                    .padding(horizontal = 16.dp),
+            ) {
+                Text("Choose a credential", style = androidx.compose.material3.MaterialTheme.typography.titleLarge, color = colors.inkPrimary)
+                Spacer(Modifier.height(12.dp))
+                Column(
+                    Modifier.heightIn(max = 360.dp).verticalScroll(rememberScrollState()),
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    CredentialChoiceRow(
+                        title = "None",
+                        subtitle = "Run this Step without a credential",
+                        selected = selectedId.isBlank(),
+                        onClick = {
+                            onSelect("")
+                            open = false
+                        },
+                    )
+                    credentials.orEmpty().forEach { ref ->
+                        CredentialChoiceRow(
+                            title = ref.label,
+                            subtitle = ref.type,
+                            selected = ref.id == selectedId,
+                            onClick = {
+                                onSelect(ref.id)
+                                open = false
+                            },
+                        )
+                    }
+                    if (credentials != null && credentials.isEmpty()) {
+                        Text(
+                            "No saved credentials yet.",
+                            style = androidx.compose.material3.MaterialTheme.typography.bodyMedium,
+                            color = colors.inkMuted,
+                            modifier = Modifier.padding(vertical = 8.dp),
+                        )
+                    }
+                }
+                Spacer(Modifier.height(12.dp))
+                GhostButton(
+                    text = "Add new",
+                    icon = "add",
+                    onClick = {
+                        open = false
+                        onAddCredential()
+                    },
+                )
+                Spacer(Modifier.height(16.dp))
+            }
+        }
+    }
+}
+
+@Composable
+private fun CredentialChoiceRow(
+    title: String,
+    subtitle: String,
+    selected: Boolean,
+    onClick: () -> Unit,
+) {
+    val colors = KaivoTheme.colors
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .clip(KaivoShapes.chip)
+            .background(if (selected) colors.royalGold.copy(alpha = 0.12f) else colors.surfaceElevated)
+            .border(1.dp, if (selected) colors.royalGold.copy(alpha = 0.6f) else colors.hairline, KaivoShapes.chip)
+            .clickable(onClick = onClick)
+            .padding(horizontal = 14.dp, vertical = 12.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Column(Modifier.weight(1f)) {
+            Text(title, style = androidx.compose.material3.MaterialTheme.typography.titleMedium, color = colors.inkPrimary, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Text(subtitle, style = androidx.compose.material3.MaterialTheme.typography.labelSmall, color = colors.inkSecondary, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        }
+        if (selected) {
+            Icon(KaivoIcons.icon("check"), contentDescription = "Selected", tint = colors.royalGold, modifier = Modifier.size(18.dp))
+        }
+    }
+}
+
+@Composable
+private fun ParamFieldBody(
+    param: ParamSpec,
+    value: Any?,
+    scope: Map<String, Any?>,
     onChange: (String, Any?) -> Unit,
     onFocusChange: (String, Boolean) -> Unit,
 ) {
@@ -509,7 +701,12 @@ private fun ParamField(
                             )
                         }
                     },
-                    supportingText = if (param.hint.isNotBlank()) ({ Text(param.hint) }) else null,
+                    supportingText = {
+                        Column {
+                            if (param.hint.isNotBlank()) Text(param.hint)
+                            Text(SECRET_PLAIN_TEXT_HINT, color = colors.statusWarning)
+                        }
+                    },
                 )
             }
         }
@@ -665,7 +862,6 @@ private fun ExpressionPickerDialog(
 
     val jsonMap = (scope["json"] as? Map<*, *>) ?: emptyMap<Any?, Any?>()
     val varsMap = (scope["vars"] as? Map<*, *>) ?: emptyMap<Any?, Any?>()
-    val envMap = (scope["env"] as? Map<*, *>) ?: emptyMap<Any?, Any?>()
 
     Dialog(onDismissRequest = onDismiss) {
         Box(
@@ -696,7 +892,7 @@ private fun ExpressionPickerDialog(
                     Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
                     horizontalArrangement = Arrangement.spacedBy(6.dp),
                 ) {
-                    val tabs = listOf("json" to "Input (\$json)", "vars" to "Variables (\$vars)", "env" to "Environment (\$env)", "time" to "Time")
+                    val tabs = listOf("json" to "Input (\$json)", "vars" to "Variables (\$vars)", "time" to "Time")
                     tabs.forEach { (id, label) ->
                         val active = selectedSection == id
                         Box(
@@ -753,17 +949,6 @@ private fun ExpressionPickerDialog(
                                         onClick = { onInsert("{{ \$vars.$keyStr }}") },
                                     )
                                 }
-                            }
-                        }
-                        "env" -> {
-                            envMap.forEach { (k, v) ->
-                                val keyStr = k.toString()
-                                val valStr = v?.toString()?.take(30) ?: ""
-                                ExpressionItemRow(
-                                    syntax = "{{ \$env.$keyStr }}",
-                                    preview = valStr,
-                                    onClick = { onInsert("{{ \$env.$keyStr }}") },
-                                )
                             }
                         }
                         "time" -> {
