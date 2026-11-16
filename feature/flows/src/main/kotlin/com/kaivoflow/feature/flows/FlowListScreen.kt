@@ -1,5 +1,7 @@
 package com.kaivoflow.feature.flows
 
+import com.kaivoflow.core.engine.LifecycleState
+
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -1684,7 +1686,6 @@ private fun FlowRowCard(
                         .border(1.dp, colors.hairline, KaivoShapes.chip),
                 ) {
                     // 1. Lifecycle actions (spec 4.4)
-                    val L = com.kaivoflow.core.engine.LifecycleState
                     @Composable
                     fun item(label: String, icon: String, gold: Boolean, action: () -> Unit) {
                         DropdownMenuItem(
@@ -1694,17 +1695,17 @@ private fun FlowRowCard(
                         )
                     }
                     when (flow.lifecycle) {
-                        L.Draft -> item("Publish (Run 24/7)", "play", true, onPublish)
-                        L.Published -> {
+                        LifecycleState.Draft -> item("Publish (Run 24/7)", "play", true, onPublish)
+                        LifecycleState.Published -> {
                             if ((flow.updatedAt > flow.lifecycleSince)) item("Publish changes", "play", true, onPublish)
                             item("Pause", "pause", false, onPause)
                             item("Unpublish (Stop 24/7)", "pause", false, onUnpublish)
                         }
-                        L.Paused -> {
+                        LifecycleState.Paused -> {
                             item("Resume", "play", true, onResume)
                             item("Unpublish (Stop 24/7)", "pause", false, onUnpublish)
                         }
-                        L.Error -> {
+                        LifecycleState.Error -> {
                             item("Fix and retry now", "play", true, onRetry)
                             item("Unpublish (Stop 24/7)", "pause", false, onUnpublish)
                         }
@@ -1883,24 +1884,23 @@ internal fun relativeTime(timestamp: Long): String {
  */
 @Composable
 private fun LifecycleChip(flow: FlowSummary) {
-    val L = com.kaivoflow.core.engine.LifecycleState
     val now = System.currentTimeMillis()
     val timeFmt = remember { java.text.SimpleDateFormat("EEE HH:mm", java.util.Locale.getDefault()) }
     Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
         when (flow.lifecycle) {
-            L.Published -> {
+            LifecycleState.Published -> {
                 StatusBadge("Live", BadgeKind.Success)
                 if (flow.updatedAt > flow.lifecycleSince) StatusBadge("Changes not live", BadgeKind.Gold)
             }
-            L.Paused -> StatusBadge(flow.pausedUntil?.let { "Paused, resumes ${timeFmt.format(java.util.Date(it))}" } ?: "Paused", BadgeKind.Warning)
-            L.Error -> {
+            LifecycleState.Paused -> StatusBadge(flow.pausedUntil?.let { "Paused, resumes ${timeFmt.format(java.util.Date(it))}" } ?: "Paused", BadgeKind.Warning)
+            LifecycleState.Error -> {
                 StatusBadge("Failing", BadgeKind.Error)
                 flow.nextRetryAt?.takeIf { it > now }?.let {
                     val mins = ((it - now) / 60_000L).coerceAtLeast(1)
                     StatusBadge("Retrying in ${mins} min", BadgeKind.Neutral)
                 }
             }
-            L.Draft -> Unit
+            LifecycleState.Draft -> Unit
         }
     }
 }

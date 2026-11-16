@@ -63,6 +63,11 @@ fun DataPanelHeader(
     modifier: Modifier = Modifier,
 ) {
     val side = state.side
+    val runIndex = when (val r = state.run) {
+        RunSelection.Latest -> 0
+        is RunSelection.Specific -> state.runs.indexOfFirst { it.runId == r.runId }
+        RunSelection.Pinned -> -1
+    }
     var searchOpen by remember { mutableStateOf(state.search.isNotEmpty()) }
     var sheet by remember { mutableStateOf<HeaderSheet?>(null) }
 
@@ -89,11 +94,6 @@ fun DataPanelHeader(
             )
         }
         // Row 2: run stepper, count, search.
-        val runIndex = when (val r = state.run) {
-            RunSelection.Latest -> 0
-            is RunSelection.Specific -> state.runs.indexOfFirst { it.runId == r.runId }
-            RunSelection.Pinned -> -1
-        }
         Row(verticalAlignment = Alignment.CenterVertically) {
             if (state.runs.size > 1 && runIndex >= 0) {
                 KaivoIconButton("back", "Older run", {
