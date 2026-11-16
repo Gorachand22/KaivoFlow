@@ -1,6 +1,7 @@
 package com.kaivoflow.core.design
 
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowForward
 import androidx.compose.material.icons.automirrored.filled.Redo
 import androidx.compose.material.icons.automirrored.filled.Undo
 import androidx.compose.material.icons.filled.Add
@@ -12,6 +13,10 @@ import androidx.compose.material.icons.filled.Bolt
 import androidx.compose.material.icons.filled.Bookmark
 import androidx.compose.material.icons.filled.CallSplit
 import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.ChevronRight
+import androidx.compose.material.icons.filled.ExpandMore
+import androidx.compose.material.icons.filled.PushPin
+import androidx.compose.material.icons.filled.UnfoldLess
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Cloud
 import androidx.compose.material.icons.filled.Close
@@ -241,6 +246,13 @@ object KaivoIcons {
         "photoCamera" to Icons.Filled.PhotoCamera,
         "image" to Icons.Filled.Image,
         "audiotrack" to Icons.Filled.Audiotrack,
+        // Data panels.
+        "forward" to Icons.AutoMirrored.Filled.ArrowForward,
+        "chevronRight" to Icons.Filled.ChevronRight,
+        "expandMore" to Icons.Filled.ExpandMore,
+        "unfoldLess" to Icons.Filled.UnfoldLess,
+        "copy" to Icons.Filled.ContentCopy,
+        "pushPin" to Icons.Filled.PushPin,
     )
 
     fun icon(key: String): ImageVector = byKey[key] ?: Icons.Filled.Bolt
