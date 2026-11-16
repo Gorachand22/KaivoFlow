@@ -11,7 +11,9 @@ import com.kaivoflow.core.model.StepCategory
  */
 object NodeCatalog {
 
-    fun executors(devices: DeviceGateway = NoopDeviceGateway): List<StepExecutor> = listOf(
+    fun executors(devices: DeviceGateway = NoopDeviceGateway): List<StepExecutor> = rawExecutors(devices).map { PlacedExecutor(it) }
+
+    private fun rawExecutors(devices: DeviceGateway): List<StepExecutor> = listOf(
         // Sparks
         ManualTriggerNode(),
         ScheduleTriggerNode(),

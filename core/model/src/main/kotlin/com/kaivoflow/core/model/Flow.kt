@@ -147,6 +147,10 @@ data class StepNode(
     val onError: OnErrorPolicy = OnErrorPolicy.Stop,
     val retry: RetryPolicy = RetryPolicy(),
     val timeoutMs: Long? = null,
+    /** Params an alias converter could not map; kept so nothing is lost and a later converter can use them. */
+    val legacyParams: ImmutableMap<String, Any?> = persistentMapOf(),
+    /** Set when a converter produced this Step, so a fixed converter can be re-run safely. */
+    val convertedFrom: ConvertedFrom? = null,
 ) {
     val isTrigger: Boolean get() = type.startsWith("trigger.")
 
@@ -170,6 +174,9 @@ data class StepNode(
         else -> fallback
     }
 }
+
+/** Provenance of a converted Step: the old type id, the converter used and its version. */
+data class ConvertedFrom(val type: String, val converterId: String, val version: Int)
 
 /**
  * A Stream (edge). [fromPort] is the zero-based output index of the source Step, which is how

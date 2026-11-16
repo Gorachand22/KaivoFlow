@@ -1,6 +1,7 @@
 package com.kaivoflow.core.data
 
 import com.kaivoflow.core.model.BinaryDataRef
+import com.kaivoflow.core.model.ConvertedFrom
 import com.kaivoflow.core.model.Flow
 import com.kaivoflow.core.model.FlowData
 import com.kaivoflow.core.model.FlowGroup
@@ -14,6 +15,7 @@ import com.kaivoflow.core.model.StepRun
 import com.kaivoflow.core.model.StepRunStatus
 import com.kaivoflow.core.model.StickyNote
 import com.kaivoflow.core.model.StreamEdge
+import com.kaivoflow.core.nodes.CatalogAliases
 import kotlinx.collections.immutable.toImmutableList
 import kotlinx.collections.immutable.toImmutableMap
 import kotlinx.serialization.json.Json
@@ -86,6 +88,14 @@ object JsonCodec {
                         step.frozenOutput?.let { frozen ->
                             put("frozenOutput", buildJsonArray { frozen.forEach { add(encodeFlowData(it)) } })
                         }
+                        if (step.legacyParams.isNotEmpty()) put("legacyParams", toJson(step.legacyParams) ?: JsonObject(emptyMap()))
+                        step.convertedFrom?.let { from ->
+                            put("convertedFrom", buildJsonObject {
+                                put("type", JsonPrimitive(from.type))
+                                put("converterId", JsonPrimitive(from.converterId))
+                                put("version", JsonPrimitive(from.version))
+                            })
+                        }
                     }
                 )
             }
@@ -136,7 +146,10 @@ object JsonCodec {
         })
     }.toString()
 
-    fun decodeFlow(text: String): Flow? = runCatching {
+    /** Decodes a Flow and normalises old Step ids through the catalog alias map (taxonomy spec 6.2). */
+    fun decodeFlow(text: String): Flow? = decodeFlowRaw(text)?.let { CatalogAliases.normalizer.normalize(it) }
+
+    private fun decodeFlowRaw(text: String): Flow? = runCatching {
         val root = json.parseToJsonElement(text).jsonObject
         Flow(
             id = root.str("id"),
@@ -183,6 +196,11 @@ object JsonCodec {
                     } ?: RetryPolicy(),
                     frozenOutput = (step["frozenOutput"] as? JsonArray)?.map { decodeFlowData(it) }
                         ?.toImmutableList(),
+                    legacyParams = step["legacyParams"]?.let { fromJsonMap(it) }?.toImmutableMap()
+                        ?: kotlinx.collections.immutable.persistentMapOf(),
+                    convertedFrom = (step["convertedFrom"] as? JsonObject)?.let { from ->
+                        ConvertedFrom(from.str("type"), from.str("converterId"), from.long("version").toInt())
+                    },
                 )
             }?.toImmutableList() ?: kotlinx.collections.immutable.persistentListOf(),
             streams = (root["streams"] as? JsonArray)?.mapNotNull { element ->

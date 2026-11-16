@@ -26,11 +26,29 @@ data class NodeSpec(
     /** True when the Step can be the first Step of a Flow. */
     val canStartFlow: Boolean = false,
     val producesItems: Boolean = true,
+    /**
+     * New taxonomy position as a `top/sub` path (see [CategoryTree]). Empty means "not assigned yet".
+     * Metadata only: [category] still drives today's palette until the picker moves to the tree.
+     */
+    val categoryPath: String = "",
+    val lifecycle: Lifecycle = Lifecycle.Stable,
+    /** Connection role; anything other than [NodeRole.Main] is a sub-Step that never has Stream ports. */
+    val role: NodeRole = NodeRole.Main,
+    /** Extra `top/sub` paths this Step is also listed under (a tag, not a second entry). */
+    val alsoIn: ImmutableList<String> = persistentListOf(),
+    /** Ids of Steps this one absorbs; feeds the AliasMap. */
+    val replaces: ImmutableList<String> = persistentListOf(),
 ) {
     val isTrigger: Boolean get() = kind == NodeKind.Trigger
 }
 
 enum class NodeKind { Trigger, Action }
+
+/** Where a Step is in its life. Hidden Steps still run but are not offered in the picker. */
+enum class Lifecycle { Stable, Beta, Legacy, Hidden, Removed }
+
+/** How a Step connects: normal Stream, or an AI sub-Step attached to a parent. */
+enum class NodeRole { Main, AiModel, AiMemory, AiTool, AiParser }
 
 enum class StepCategory(val label: String) {
     Trigger("Phone Triggers"),
