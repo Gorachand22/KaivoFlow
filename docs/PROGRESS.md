@@ -15,8 +15,8 @@ Keep the Velvet Obsidian and Champagne Gold design identity.
 |---|---|---|
 | 0 | Audit of the existing code base against n8n behaviour | Done (8 reports, top P0s verified in code) |
 | 1 | Stop the bleeding: data loss, secrets, per-item params, scheduler, run persistence (see [ROADMAP.md](ROADMAP.md)) | Code complete, waiting for owner build and phone gate ([PHASE1_CHECKLIST.md](PHASE1_CHECKLIST.md)) |
-| 2 | Perfect base app, see [PHASE2_PLAN.md](PHASE2_PLAN.md): 2A structure and picker, 2B data and expression core, 2E always-on engine, 2C node clean-up, 2D inspector and data panels, 2F proof | Planned, specs written |
-| 3 | Node set rebuild: n8n-class logic nodes, HTTP depth, declarative integration spec | Not started |
+| 2 | Perfect base app, see [PHASE2_PLAN.md](PHASE2_PLAN.md): 2A structure and picker, 2B data and expression core, 2E always-on engine, 2C node clean-up, 2D inspector and data panels, 2F proof | 2A to 2E code complete (JVM tests green, Android never compiled); 2F (device matrix, soak, targetSdk) waits for the owner build and [PHASE2_CHECKLIST.md](PHASE2_CHECKLIST.md) |
+| 3 | Node set rebuild: n8n-class logic nodes, HTTP depth, declarative integration spec | Not started; starts after the Phase 2 gate |
 | 4 | Editor UX: schema-driven inspector, data views, pin data, re-run from step | Not started |
 | 5 | Reliability and Android edge: scheduling, reliability center, backup, device nodes | Not started |
 | 6 | AI agent, n8n workflow import, polish and release | Not started |
@@ -48,3 +48,19 @@ Keep the Velvet Obsidian and Champagne Gold design identity.
   SMS and battery Sparks, credential picker, receivers via Hilt EntryPoint). 185 JVM tests pass. Android modules are not compiled yet.
 - 2026-11-16: Phase 2 specs written from n8n behaviour study (node taxonomy, data panels and parameters, always-on engine) and consolidated in PHASE2_PLAN.md.
 - 2026-11-16: Phase 2C (clean node set) implemented on branch `claude/phase-1-foundation`: all ids renamed to `<category>.<name>` through the AliasMap, verdicts executed (merges into Edit fields, HTTP, Notify, Clipboard, Connection info, Remove Duplicates and Crypto; Merge and Loop over items rewritten; Weather converts to HTTP; TCP and Chart tombstoned; Random number and pick unavailable; Table, Aggregate, Stats, CSV and Binary hidden), webhook `responseMode`/`responseTimeoutSec` and geofence `dwellSeconds` declared. 87 executors became 67 (62 visible). 630 JVM tests pass (model, engine, expressions, nodes, pure core:data); Android modules and `NativeFlowBundle` were not compiled here.
+- 2026-11-16: Phase 2 sub-phases 2A, 2B, 2C, 2D and 2E are implemented on `claude/phase-1-foundation`: category tree and picker,
+  own expression engine, ParamSchema, item lineage, always-on engine (specialUse foreground service, durable inbox, alarms,
+  reconciler, watchdog, webhook engine, activation state machine, publish sheet, Reliability Center, self-test), step data
+  storage with pins, new Step inspector with Table, Schema, JSON and Binary panels, drag-to-map, parameter widgets. Room is at
+  version 6 (migrations 1 to 6). Release verification: one combined offline run of 1,049 JVM tests passes (model 99, expressions 148,
+  engine 393, nodes 164, core:data 75, feature:canvas pure logic 170). Static review of the never-compiled Android code found and
+  fixed two definite build errors: Kotlin opt-in flags sat in the root project so they never reached modules (now in `subprojects`),
+  and `core:data` hid `room-runtime` from `core:work`, which reads `KaivoDatabase.NAME` (now `api`).
+  Owner gate: [PHASE2_CHECKLIST.md](PHASE2_CHECKLIST.md). targetSdk is still 34.
+
+## What remains
+
+Phase 2F (needs the owner's phone): run the adb matrix and 8 hour soak, write `docs/specs/P2-device-results.md`, commit Room schemas
+4, 5 and 6, raise targetSdk (35, then 36) once the matrix passes, merge to `main`.
+Phase 3: n8n-class logic nodes, HTTP depth, declarative integrations, the AI family (the placeholder Steps `ai.chat`, `ai.extract`,
+`ai.classify` are legacy), tests for `core:work` and the Compose screens, a pure `core:codec` module so more tests run without the SDK.

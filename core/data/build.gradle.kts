@@ -25,7 +25,8 @@ dependencies {
     api(project(":core:engine"))
     implementation(project(":core:nodes"))
 
-    implementation(libs.androidx.room.runtime)
+    // api: KaivoDatabase extends RoomDatabase and core:work reads KaivoDatabase.NAME, so consumers need it on their compile classpath.
+    api(libs.androidx.room.runtime)
     implementation(libs.androidx.room.ktx)
     ksp(libs.androidx.room.compiler)
     implementation(libs.androidx.security.crypto)
