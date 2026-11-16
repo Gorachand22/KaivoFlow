@@ -247,7 +247,10 @@ class ScheduleSync @Inject constructor(
     private suspend fun ensureExpected(flowId: String, sparkId: String, slot: Long, now: Long): ExpectedRunEntity {
         scheduleRepo.expected(flowId, sparkId, slot.toString())?.let { return it }
         scheduleRepo.expect(
-            ExpectedRunEntity(flowId, sparkId, slot.toString(), slot, now, ExpectedRunState.PENDING, null, null, null, null),
+            ExpectedRunEntity(
+                flowId = flowId, sparkId = sparkId, slotKey = slot.toString(), dueAt = slot, armedAt = now,
+                state = ExpectedRunState.PENDING, firedAt = null, runId = null, latenessMs = null, reason = null,
+            ),
         )
         return scheduleRepo.expected(flowId, sparkId, slot.toString())!!
     }

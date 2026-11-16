@@ -37,13 +37,6 @@ android {
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro",
             )
-            // Pillar 1: 16 KB page-size devices. Uncompressed native libs are required so the loader
-            // can mmap them at 16 KB-aligned offsets.
-            packaging {
-                jniLibs {
-                    useLegacyPackaging = false
-                }
-            }
         }
         debug {
             applicationIdSuffix = ".debug"
@@ -63,6 +56,9 @@ android {
     }
 
     packaging {
+        // Pillar 1: 16 KB page-size devices. Uncompressed native libs are required so the loader
+        // can mmap them at 16 KB-aligned offsets. (Not valid inside a buildType block.)
+        jniLibs { useLegacyPackaging = false }
         resources.excludes += setOf(
             "/META-INF/{AL2.0,LGPL2.1}",
             "/META-INF/DEPENDENCIES",
