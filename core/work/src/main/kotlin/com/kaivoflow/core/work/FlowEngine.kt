@@ -13,8 +13,7 @@ import com.kaivoflow.core.engine.KaivoException
 import com.kaivoflow.core.engine.NodeRegistry
 import com.kaivoflow.core.engine.RunOptions
 import com.kaivoflow.core.engine.ValidationReport
-import com.kaivoflow.core.expressions.FallbackExpressionEvaluator
-import com.kaivoflow.core.expressions.QuickJsExpressionEvaluator
+import com.kaivoflow.core.expressions.KaivoExpressionEvaluator
 import com.kaivoflow.core.model.Flow
 import com.kaivoflow.core.model.FlowData
 import com.kaivoflow.core.model.RunEvent
@@ -65,9 +64,8 @@ class FlowEngine @Inject constructor(
     private val variableRepository: WorkflowVariableRepository,
 ) {
     private val expressionEvaluator: com.kaivoflow.core.engine.ExpressionEvaluator by lazy {
-        // QuickJS if it loads, built-in evaluator if the device refuses the native library.
-        runCatching { QuickJsExpressionEvaluator() }
-            .getOrElse { FallbackExpressionEvaluator() }
+        // KaivoFlow's own pure-Kotlin expression engine (safe navigation, whitelisted library, limits).
+        KaivoExpressionEvaluator()
     }
 
     private val registry: NodeRegistry by lazy { NodeCatalog.registry(deviceGateway) }

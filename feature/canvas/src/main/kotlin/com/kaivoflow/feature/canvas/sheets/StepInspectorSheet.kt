@@ -51,7 +51,8 @@ import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
-import com.kaivoflow.core.expressions.FallbackExpressionEvaluator
+import com.kaivoflow.core.expressions.ExpressionLimits
+import com.kaivoflow.core.expressions.KaivoExpressionEvaluator
 import kotlinx.coroutines.delay
 import com.kaivoflow.core.design.BadgeKind
 import com.kaivoflow.core.design.ExpressionChip
@@ -383,6 +384,9 @@ private data class EvaluationPreview(
     val isWarning: Boolean = false,
 )
 
+/** Same engine as the Run, with the tighter preview budget. */
+private val previewEvaluator = KaivoExpressionEvaluator(ExpressionLimits.Preview)
+
 private fun evaluatePreview(raw: String, scope: Map<String, Any?>): EvaluationPreview {
     val trimmed = raw.trim()
     if (!trimmed.contains("{{")) return EvaluationPreview(null)
@@ -394,8 +398,7 @@ private fun evaluatePreview(raw: String, scope: Map<String, Any?>): EvaluationPr
         return EvaluationPreview("…waiting for property", isWarning = true)
     }
     return try {
-        val evaluator = FallbackExpressionEvaluator()
-        val result = evaluator.interpolate(trimmed, scope)
+        val result = previewEvaluator.interpolate(trimmed, scope)
         if (result == null) {
             EvaluationPreview("null", isWarning = true)
         } else {
