@@ -23,7 +23,9 @@
     <!-- Run bookkeeping across restarts and OEM battery killers. -->
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
-    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
+    <!-- The Always-On Engine is one foreground service of type specialUse (no timeout, allowed to start at boot on
+         targetSdk 35+). dataSync is gone: it has a 6 hour cap per day and may not start from BOOT_COMPLETED. -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.VIBRATE" />
     <uses-permission android:name="android.permission.WAKE_LOCK" />
@@ -109,6 +111,7 @@
             android:enabled="true">
             <intent-filter>
                 <action android:name="android.intent.action.BOOT_COMPLETED" />
+                <action android:name="android.intent.action.QUICKBOOT_POWERON" />
                 <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
                 <action android:name="android.intent.action.TIMEZONE_CHANGED" />
                 <action android:name="android.intent.action.TIME_SET" />
@@ -135,12 +138,45 @@
                 tools:node="remove" />
         </provider>
 
-        <!-- One hand-rolled server for the Webhook Spark; started only while such a Flow exists. -->
+        <!-- The Always-On Engine (spec 3.4): the only long-lived component. Sticky, survives swipe from Recents on stock
+             Android (stopWithTask=false), hosts the Inbox consumer and the webhook listener. The subtype text is what the
+             property is for: a specific, honest description of the special use. -->
         <service
-            android:name="com.kaivoflow.core.work.WebhookService"
+            android:name="com.kaivoflow.core.work.alwayson.AlwaysOnService"
             android:exported="false"
-            android:foregroundServiceType="dataSync"
-            android:stopWithTask="false" />
+            android:foregroundServiceType="specialUse"
+            android:stopWithTask="false">
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="On-device automation engine that hosts the webhook listener, event receivers and scheduled Run executor for Flows the user has published." />
+        </service>
+
+        <!-- WorkManager promotes long jobs through its own service. Use the same type as the Engine, so a chatty Flow can never
+             consume a dataSync budget (spec 3.4). tools:replace overrides the type WorkManager's library manifest declares. -->
+        <service
+            android:name="androidx.work.impl.foreground.SystemForegroundService"
+            android:foregroundServiceType="specialUse"
+            tools:node="merge"
+            tools:replace="android:foregroundServiceType">
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="Runs a published automation Flow that outlasts WorkManager's normal job time when the always-on engine cannot start." />
+        </service>
+
+        <!-- Every alarm the Engine sets (schedule slots, Pulse, restart). Not exported: PendingIntents target it explicitly. -->
+        <receiver
+            android:name="com.kaivoflow.core.work.alwayson.AlarmReceiver"
+            android:exported="false" />
+
+        <!-- Sent by the system to apps holding SCHEDULE_EXACT_ALARM when the user grants or revokes it (API 31+).
+             exported=false still receives it: it comes from a privileged system component. -->
+        <receiver
+            android:name="com.kaivoflow.core.work.alwayson.ExactAlarmPermissionReceiver"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="android.app.action.SCHEDULE_EXACT_ALARM_PERMISSION_STATE_CHANGED" />
+            </intent-filter>
+        </receiver>
     </application>
 
     <queries>

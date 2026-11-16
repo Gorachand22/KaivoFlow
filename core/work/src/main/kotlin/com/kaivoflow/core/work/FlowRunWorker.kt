@@ -8,6 +8,12 @@ import androidx.work.ForegroundInfo
 import androidx.work.WorkerParameters
 import androidx.work.workDataOf
 import com.kaivoflow.core.engine.ExecutionMode
+import com.kaivoflow.core.nodes.TriggerSpecs
+import com.kaivoflow.core.work.alwayson.EngineRuntime
+import com.kaivoflow.core.work.alwayson.FireResult
+import com.kaivoflow.core.work.alwayson.IntakeSource
+import com.kaivoflow.core.work.alwayson.RunHost
+import com.kaivoflow.core.work.alwayson.ScheduleFirer
 import com.kaivoflow.core.model.FlowData
 import com.kaivoflow.core.model.RunEvent
 import com.kaivoflow.core.model.RunStatus
@@ -18,14 +24,13 @@ import kotlinx.collections.immutable.toImmutableList
 import kotlinx.collections.immutable.toImmutableMap
 
 /**
- * Background Runs.
+ * WorkManager host for two things.
  *
- * Two shapes:
- *  • **Instant** events request expedited work, with fallback to normal work if quota is exhausted.
- *    The OS does not guarantee a start time.
- *  • **Scheduled**: periodic work whose minimum interval is aligned by [FlowScheduler].
- *
- * Foreground mode is opt-in; long-run promotion and timeout handling remain unimplemented.
+ *  • **Flexible schedule slots** (precision mode Flexible, and the fallback when exact alarms are denied). The job carries the
+ *    Spark and slot; it goes through the same fire path as an alarm ([ScheduleFirer]: next slot first, Inbox row, evidence) and
+ *    then drains the Inbox when the Engine is not running.
+ *  • **Work enqueued by the pre-Engine scheduler** (a payload in WorkManager `Data`). Kept so jobs already queued when the app
+ *    updates still complete; nothing enqueues this shape any more. Event Runs now go through the Spark Inbox.
  */
 @HiltWorker
 class FlowRunWorker @AssistedInject constructor(
@@ -34,7 +39,9 @@ class FlowRunWorker @AssistedInject constructor(
     private val flowEngine: FlowEngine,
     private val runNotifications: RunNotifications,
     private val flowRepository: com.kaivoflow.core.data.FlowRepository,
-    private val flowScheduler: FlowScheduler,
+    private val scheduleFirer: ScheduleFirer,
+    private val runHost: RunHost,
+    private val runtime: EngineRuntime,
 ) : CoroutineWorker(appContext, params) {
 
     override suspend fun doWork(): Result {
@@ -55,16 +62,15 @@ class FlowRunWorker @AssistedInject constructor(
 
         val isScheduled = triggerKind in setOf("schedule", "scheduled")
         if (isScheduled) {
+            // Schedule slots always go through the fire path; the Run itself comes from the Inbox row it writes.
             val flow = flowRepository.flow(flowId)
-            // A disabled Flow must not run from a leftover alarm.
-            if (flow == null || !flow.isActive) return Result.success()
-            // Arm the next occurrence BEFORE running so a crash, kill or failure cannot end the
-            // schedule. One-shot work carries its slot; periodic work needs no re-arming.
-            val slot = inputData.getString(KEY_SLOT)
-            if (slot != null || tags.contains(FlowScheduler.TAG_RESCHEDULE)) {
-                val firedFor = inputData.getLong(KEY_FIRE_AT, -1L).takeIf { it >= 0 }
-                runCatching { flowScheduler.schedule(flow, currentSlot = slot, firedFor = firedFor) }
-            }
+            val sparkId = inputData.getString(KEY_SPARK_ID)
+                ?: flow?.triggers?.firstOrNull { it.type == TriggerSpecs.SCHEDULE && !it.disabled }?.id
+                ?: return Result.success()
+            val slot = inputData.getLong(KEY_FIRE_AT, -1L).takeIf { it > 0 }
+            val fired = scheduleFirer.fire(flowId, sparkId, slot, IntakeSource.Worker)
+            if (fired is FireResult.Enqueued && !runtime.serviceAlive) runHost.dispatcher.drainUntilIdle()
+            return Result.success()
         }
 
         val record = flowEngine.runById(
@@ -103,11 +109,12 @@ class FlowRunWorker @AssistedInject constructor(
             .setContentText("Tap to watch progress")
             .setOngoing(true)
             .build()
-        return if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.Q) {
+        // specialUse exists from API 34; below that the type is not enforced and none is passed.
+        return if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
             ForegroundInfo(
                 FOREGROUND_NOTIFICATION_ID,
                 notification,
-                android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC,
+                android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE,
             )
         } else {
             ForegroundInfo(FOREGROUND_NOTIFICATION_ID, notification)
@@ -126,6 +133,7 @@ class FlowRunWorker @AssistedInject constructor(
         const val KEY_DURATION = "duration"
         const val KEY_ERROR = "error"
         const val KEY_SLOT = "slot"
+        const val KEY_SPARK_ID = "sparkId"
         const val KEY_FIRE_AT = "fireAt"
         const val FOREGROUND_NOTIFICATION_ID = 4242
     }

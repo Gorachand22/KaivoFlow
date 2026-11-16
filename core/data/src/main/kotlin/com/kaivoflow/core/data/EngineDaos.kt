@@ -124,9 +124,15 @@ interface SparkInboxDao {
     @Query("SELECT * FROM spark_inbox WHERE dedupeKey = :key")
     suspend fun byDedupeKey(key: String): SparkInboxEntity?
 
-    /** Rows that can be claimed now, oldest first: Pending, or Claimed with an expired lease. */
+    /**
+     * Rows that can be claimed now, oldest first: Pending, or Claimed with an expired lease whose Run never started.
+     * A Claimed row with a runId is a Run that began; if its lease expired the process died mid-Run and the row is
+     * reaped as interrupted ([reapCrashed]), never replayed (spec 3.1: at-most-once side effects).
+     * Keep in sync with `LeasePolicy.isOffered` in core:engine.
+     */
     @Query(
-        "SELECT * FROM spark_inbox WHERE state = 'PENDING' OR (state = 'CLAIMED' AND (leaseUntil IS NULL OR leaseUntil < :now)) " +
+        "SELECT * FROM spark_inbox WHERE state = 'PENDING' OR " +
+            "(state = 'CLAIMED' AND runId IS NULL AND (leaseUntil IS NULL OR leaseUntil < :now)) " +
             "ORDER BY id ASC LIMIT :limit",
     )
     suspend fun claimable(now: Long, limit: Int): List<SparkInboxEntity>
@@ -134,12 +140,32 @@ interface SparkInboxDao {
     /** Atomic claim. Returns 1 when this caller won the row, 0 when someone else holds a live lease. */
     @Query(
         "UPDATE spark_inbox SET state = 'CLAIMED', leaseUntil = :leaseUntil WHERE id = :id AND " +
-            "(state = 'PENDING' OR (state = 'CLAIMED' AND (leaseUntil IS NULL OR leaseUntil < :now)))",
+            "(state = 'PENDING' OR (state = 'CLAIMED' AND runId IS NULL AND (leaseUntil IS NULL OR leaseUntil < :now)))",
     )
     suspend fun claim(id: Long, now: Long, leaseUntil: Long): Int
 
-    @Query("UPDATE spark_inbox SET state = 'DONE', runId = :runId, leaseUntil = NULL WHERE id = :id AND state = 'CLAIMED'")
+    /** Flows that hold a live claim; a later row of the same Flow must wait so arrival order holds. */
+    @Query("SELECT DISTINCT flowId FROM spark_inbox WHERE state = 'CLAIMED' AND leaseUntil IS NOT NULL AND leaseUntil >= :now")
+    suspend fun liveClaimedFlowIds(now: Long): List<String>
+
+    @Query("UPDATE spark_inbox SET leaseUntil = :leaseUntil WHERE id = :id AND state = 'CLAIMED'")
+    suspend fun renewLease(id: Long, leaseUntil: Long): Int
+
+    /** Marks that a Run began under this claim. From here an expired lease means Crashed, not re-offered. */
+    @Query("UPDATE spark_inbox SET runId = :runId, leaseUntil = :leaseUntil WHERE id = :id AND state = 'CLAIMED'")
+    suspend fun markStarted(id: Long, runId: String, leaseUntil: Long): Int
+
+    @Query("UPDATE spark_inbox SET state = 'DONE', runId = COALESCE(:runId, runId), leaseUntil = NULL WHERE id = :id AND state = 'CLAIMED'")
     suspend fun complete(id: Long, runId: String?): Int
+
+    @Query("UPDATE spark_inbox SET state = 'DROPPED', dropReason = :reason, leaseUntil = NULL WHERE id = :id AND state IN ('PENDING', 'CLAIMED')")
+    suspend fun drop(id: Long, reason: String): Int
+
+    @Query(
+        "UPDATE spark_inbox SET state = 'DROPPED', dropReason = 'RunInterrupted', leaseUntil = NULL " +
+            "WHERE state = 'CLAIMED' AND runId IS NOT NULL AND (leaseUntil IS NULL OR leaseUntil < :now)",
+    )
+    suspend fun reapCrashed(now: Long): Int
 
     @Query("UPDATE spark_inbox SET state = 'PENDING', leaseUntil = NULL WHERE id = :id AND state = 'CLAIMED'")
     suspend fun release(id: Long): Int
@@ -180,6 +206,12 @@ interface ScheduleDao {
 
     @Query("DELETE FROM schedule_state WHERE flowId = :flowId")
     suspend fun deleteStatesForFlow(flowId: String)
+
+    @Query("DELETE FROM schedule_state WHERE flowId = :flowId AND sparkId = :sparkId")
+    suspend fun deleteState(flowId: String, sparkId: String)
+
+    @Query("UPDATE expected_run SET state = 'SUPERSEDED', reason = :reason WHERE flowId = :flowId AND sparkId = :sparkId AND state = 'PENDING'")
+    suspend fun supersedePendingForSpark(flowId: String, sparkId: String, reason: String): Int
 
     /** Returns -1 when the slot is already recorded (arming is idempotent). */
     @Insert(onConflict = OnConflictStrategy.IGNORE)

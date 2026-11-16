@@ -1,6 +1,13 @@
 package com.kaivoflow.core.work
 
 import android.content.Context
+import com.kaivoflow.core.work.alwayson.AlarmScheduler
+import com.kaivoflow.core.work.alwayson.EngineController
+import com.kaivoflow.core.work.alwayson.Reconciler
+import com.kaivoflow.core.work.alwayson.ReliabilityRecorder
+import com.kaivoflow.core.work.alwayson.ScheduleFirer
+import com.kaivoflow.core.work.alwayson.WakeLockManager
+import com.kaivoflow.core.work.alwayson.WatchdogScheduler
 import dagger.hilt.EntryPoint
 import dagger.hilt.InstallIn
 import dagger.hilt.android.EntryPointAccessors
@@ -17,6 +24,13 @@ import dagger.hilt.components.SingletonComponent
 interface ReceiverEntryPoint {
     fun scheduler(): FlowScheduler
     fun runNotifications(): RunNotifications
+    fun reconciler(): Reconciler
+    fun scheduleFirer(): ScheduleFirer
+    fun alarmScheduler(): AlarmScheduler
+    fun watchdogScheduler(): WatchdogScheduler
+    fun engineController(): EngineController
+    fun wakeLocks(): WakeLockManager
+    fun reliabilityRecorder(): ReliabilityRecorder
 }
 
 object ReceiverEntryPoints {

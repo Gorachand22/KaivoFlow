@@ -64,8 +64,8 @@ class WebhookTokenStore @Inject constructor(@ApplicationContext context: Context
 @Singleton
 class WebhookServer @Inject constructor(
     private val flowRepository: FlowRepository,
-    private val flowEngine: FlowEngine,
     private val tokenStore: WebhookTokenStore,
+    private val intake: com.kaivoflow.core.work.alwayson.SparkIntake,
 ) {
     private var serverSocket: ServerSocket? = null
     private var acceptJob: Job? = null
@@ -76,7 +76,7 @@ class WebhookServer @Inject constructor(
     @Volatile private var requireAuth: Boolean = WebhookDefaults.REQUIRE_AUTH
     @Volatile private var maxBody: Int = WebhookDefaults.MAX_BODY_BYTES
 
-    data class Route(val flowId: String, val secret: String?, val method: String)
+    data class Route(val flowId: String, val sparkId: String, val secret: String?, val method: String)
 
     private class Reject(val status: Int) : Exception()
 
@@ -93,6 +93,7 @@ class WebhookServer @Inject constructor(
                 if (key !in next) {
                     next[key] = Route(
                         flowId = flow.id,
+                        sparkId = step.id,
                         secret = step.paramString("secret").ifBlank { null },
                         method = step.paramString("method", "POST").uppercase(),
                     )
@@ -186,20 +187,19 @@ class WebhookServer @Inject constructor(
                 }
 
                 val payload = parseBody(body, headers["content-type"])
-                respond(socket, 200)
-                // Enqueue rather than block the socket on the whole Run.
-                scope.launch {
-                    runCatching {
-                        flowEngine.runById(
-                            flowId = route.flowId,
-                            trigger = RunTrigger(
-                                kind = "webhook",
-                                items = listOf(FlowData(payload)).toImmutableList(),
-                                meta = mapOf("path" to key, "method" to method).toImmutableMap(),
-                            ),
-                        )
-                    }
+                // Persist first, reply second: the Inbox row is committed before the caller sees a 200, so an accepted
+                // webhook survives a crash of this process. If it cannot be stored the caller gets a 400 and may retry.
+                val stored = runCatching {
+                    intake.enqueue(
+                        flowId = route.flowId,
+                        sparkId = route.sparkId,
+                        kind = "webhook",
+                        items = listOf(FlowData(payload)),
+                        meta = mapOf("path" to key, "method" to method),
+                        source = com.kaivoflow.core.work.alwayson.IntakeSource.Event,
+                    )
                 }
+                respond(socket, if (stored.isSuccess) 200 else 400)
             } catch (reject: Reject) {
                 respond(socket, reject.status)
             } catch (_: SocketTimeoutException) {

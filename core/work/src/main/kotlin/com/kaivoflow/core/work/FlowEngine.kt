@@ -25,7 +25,6 @@ import com.kaivoflow.core.model.StepRun
 import com.kaivoflow.core.network.KtorHttpGateway
 import com.kaivoflow.core.nodes.NodeCatalog
 import dagger.hilt.android.qualifiers.ApplicationContext
-import com.kaivoflow.core.engine.PerFlowEventQueue
 import com.kaivoflow.core.engine.RunRetention
 import com.kaivoflow.core.model.LogLevel
 import kotlinx.coroutines.NonCancellable
@@ -129,43 +128,27 @@ class FlowEngine @Inject constructor(
 
     fun isRunning(flowId: String): Boolean = activeRuns.isOwned(flowId)
 
-    private val eventQueue = PerFlowEventQueue<RunTrigger>(PerFlowEventQueue.DEFAULT_MAX_SIZE)
-
-    /** Manual, test and Sub-Flow starts are never queued; only event-driven triggers are. */
-    private fun isQueueable(trigger: RunTrigger) = trigger.kind.lowercase() !in setOf("manual", "test", "subflow")
+    /** Manual, test and Sub-Flow starts are never deferred; every other trigger kind comes from the Spark Inbox. */
+    private fun isInboxTrigger(trigger: RunTrigger) = trigger.kind.lowercase() !in setOf("manual", "test", "subflow")
 
     /**
-     * Runs a Flow and stores the result. If the Flow is busy and the trigger is an event, the event
-     * is queued (bounded FIFO) and runs after the current Run, in order.
+     * Runs a Flow and stores the result.
      *
-     * @param onEvent receives engine events (used by the canvas for live animation, and by the
-     *                foreground notification to show the current Step).
+     * Event ordering is the Spark Inbox's job (`RunDispatcher`): it starts at most one Run per Flow, in arrival order, so this
+     * method no longer keeps an in-memory queue. If the Flow is busy and the trigger came from the Inbox, a `Queued` record is
+     * returned and nothing is stored; the dispatcher then releases the row and retries after a back-off.
+     *
+     * @param onStarted called with the Run id once the Run exists and its Running record is persisted, before any Step runs.
+     *                  The Inbox records it so a Run that began is never replayed after a crash.
+     * @param onEvent last, so a trailing lambda still means "events" (used by the canvas for live animation).
      */
     suspend fun run(
         flow: Flow,
         trigger: RunTrigger = RunTrigger(),
         mode: ExecutionMode = ExecutionMode.Production,
+        onStarted: suspend (runId: String) -> Unit = {},
         onEvent: (RunEvent) -> Unit = {},
-    ): RunRecord {
-        val first = runOnce(flow, trigger, mode, onEvent, null)
-        if (first.status == RunStatus.Queued) return first
-        var last = first
-        while (currentCoroutineContext().isActive) {
-            val next = eventQueue.poll(flow.id) ?: break
-            val latest = flowRepository.flow(flow.id) ?: break
-            if (!latest.isActive) { eventQueue.clear(flow.id); break }
-            val dropped = eventQueue.takeDroppedCount(flow.id)
-            val notice = if (dropped > 0) "$dropped older queued event(s) were dropped because the queue was full." else null
-            val record = runOnce(latest, next, mode, {}, notice)
-            if (record.status == RunStatus.Queued) { // another Run took over and will drain the queue
-                eventQueue.offer(flow.id, next)
-                break
-            }
-            last = record
-        }
-        // Report the Run the caller asked for, not a later queued one.
-        return first
-    }
+    ): RunRecord = runOnce(flow, trigger, mode, onEvent, null, onStarted)
 
     private suspend fun runOnce(
         flow: Flow,
@@ -173,17 +156,17 @@ class FlowEngine @Inject constructor(
         mode: ExecutionMode,
         onEvent: (RunEvent) -> Unit,
         notice: String?,
+        onStarted: suspend (String) -> Unit,
     ): RunRecord {
         // Own the actual calling job atomically; do not use a detached placeholder job.
         val job = currentCoroutineContext()[Job] ?: error("A Run requires a coroutine Job")
         if (!activeRuns.tryAcquire(flow.id, job)) {
             val now = System.currentTimeMillis()
-            if (isQueueable(trigger)) {
-                eventQueue.offer(flow.id, trigger)
+            if (isInboxTrigger(trigger)) {
                 return RunRecord(
-                    id = "queued-$now", flowId = flow.id, flowName = flow.name,
+                    id = "busy-$now", flowId = flow.id, flowName = flow.name,
                     status = RunStatus.Queued, startedAt = now, finishedAt = now,
-                    error = "This Flow is already running. The event was queued (${eventQueue.size(flow.id)} waiting).",
+                    error = "This Flow is already running. The event stays in the Inbox and runs after the current Run.",
                     trigger = trigger.kind,
                 )
             }
@@ -221,6 +204,7 @@ class FlowEngine @Inject constructor(
                     startedId = started.id
                     startedAt = started.startedAt
                     persistStart(effectiveFlow, started)
+                    onStarted(started.id)
                 }
             } catch (e: CancellationException) {
                 // Killed before the runner could return a record: still leave a Canceled one behind.
@@ -289,7 +273,6 @@ class FlowEngine @Inject constructor(
     }
 
     fun cancel(flowId: String) {
-        eventQueue.clear(flowId) // a user stop also discards events waiting behind the Run
         activeRuns.cancel(flowId)
     }
 
@@ -311,10 +294,11 @@ class FlowEngine @Inject constructor(
         flowId: String,
         trigger: RunTrigger = RunTrigger(kind = "scheduled"),
         mode: ExecutionMode = ExecutionMode.Production,
+        onStarted: suspend (runId: String) -> Unit = {},
         onEvent: (RunEvent) -> Unit = {},
     ): RunRecord? {
         val flow = flowRepository.flow(flowId) ?: return null
-        return run(flow, trigger, mode, onEvent = onEvent)
+        return run(flow, trigger, mode, onEvent = onEvent, onStarted = onStarted)
     }
 
     /** Runs that started before this singleton existed belong to a previous process. */

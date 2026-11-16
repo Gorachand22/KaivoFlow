@@ -71,6 +71,9 @@ object RepositoryModule {
     fun sparkInboxRepository(dao: SparkInboxDao): SparkInboxRepository = RoomSparkInboxRepository(dao)
 
     @Provides @Singleton
+    fun inboxStore(dao: SparkInboxDao): com.kaivoflow.core.engine.alwayson.InboxStore = RoomInboxStore(dao)
+
+    @Provides @Singleton
     fun scheduleRepository(dao: ScheduleDao): ScheduleRepository = RoomScheduleRepository(dao)
 
     @Provides @Singleton

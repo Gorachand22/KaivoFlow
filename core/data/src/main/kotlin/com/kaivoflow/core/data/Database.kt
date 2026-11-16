@@ -261,8 +261,17 @@ interface DataTableDao {
         WorkflowVariableEntity::class,
         DataTableEntity::class,
         DataTableRowEntity::class,
+        FlowVersionEntity::class,
+        TriggerRegistrationEntity::class,
+        FlowLifecycleLogEntity::class,
+        SparkInboxEntity::class,
+        ScheduleStateEntity::class,
+        ExpectedRunEntity::class,
+        EngineSessionEntity::class,
+        EngineHeartbeatEntity::class,
+        ReliabilityEventEntity::class,
     ],
-    version = 3,
+    version = 4,
     exportSchema = true,
 )
 abstract class KaivoDatabase : RoomDatabase() {

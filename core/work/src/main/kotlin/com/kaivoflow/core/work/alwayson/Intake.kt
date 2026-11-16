@@ -1,0 +1,89 @@
+package com.kaivoflow.core.work.alwayson
+
+import android.content.Context
+import com.kaivoflow.core.data.FlowLifecycleRepository
+import com.kaivoflow.core.data.FlowRepository
+import com.kaivoflow.core.engine.alwayson.DedupeKeys
+import com.kaivoflow.core.engine.alwayson.EnqueueResult
+import com.kaivoflow.core.engine.alwayson.NewSpark
+import com.kaivoflow.core.engine.alwayson.SparkInbox
+import com.kaivoflow.core.engine.alwayson.StartReason
+import com.kaivoflow.core.model.Flow
+import com.kaivoflow.core.model.FlowData
+import com.kaivoflow.core.nodes.EventTriggerMatcher
+import dagger.hilt.android.qualifiers.ApplicationContext
+import java.util.UUID
+import javax.inject.Inject
+import javax.inject.Singleton
+
+/** Where an Inbox write came from. Decides whether a failed Engine start may nag the user (spec 3.5). */
+enum class IntakeSource(val reason: StartReason, val exemptFromFgsLimits: Boolean) {
+    /** Exact alarm: an FGS-start exemption. */
+    Alarm(StartReason.Alarm, true),
+    /** SMS, notification, Wi-Fi, Bluetooth, webhook: not exempt, so a refusal is expected and quiet. */
+    Event(StartReason.IntakeEvent, false),
+    Worker(StartReason.Watchdog, false),
+    Reconcile(StartReason.Reassess, false),
+}
+
+/**
+ * The one door into the Inbox for Spark events (spec 3.1 rule 1). Replaces the old direct `runNow` path: the payload is
+ * persisted first (no 10 KB limit), the consumer is woken second.
+ */
+@Singleton
+class SparkIntake @Inject constructor(
+    @ApplicationContext private val context: Context,
+    private val inbox: SparkInbox,
+    private val flows: FlowRepository,
+    private val lifecycle: FlowLifecycleRepository,
+    private val controller: EngineController,
+    private val wakeLocks: WakeLockManager,
+) {
+    /** Stores one event for one Spark. [sourceId] makes a repeated delivery of the same occurrence a no-op; null means unique. */
+    suspend fun enqueue(
+        flowId: String,
+        sparkId: String,
+        kind: String,
+        items: List<FlowData>,
+        meta: Map<String, Any?> = emptyMap(),
+        sourceId: String? = null,
+        source: IntakeSource = IntakeSource.Event,
+    ): EnqueueResult {
+        val key = DedupeKeys.event(kind, flowId, sparkId, sourceId ?: UUID.randomUUID().toString())
+        val result = inbox.enqueue(NewSpark(flowId, sparkId, kind, InboxPayloads.encode(items, meta), key))
+        if (result is EnqueueResult.Stored) controller.onInboxWritten(source)
+        return result
+    }
+
+    /**
+     * Fans an event out to every live Flow with a matching, enabled Spark (the old `dispatchTrigger`). Returns the number of
+     * rows stored. Holds the intake wake lock for the duration, so a screen-off event cannot be lost to CPU sleep mid-write.
+     */
+    suspend fun dispatch(kind: String, payload: Map<String, Any?>, sourceId: String? = null, source: IntakeSource = IntakeSource.Event): Int {
+        wakeLocks.acquireIntake(kind).use {
+            val seed = FlowData(json = payload)
+            val targetFlowId = payload["targetFlowId"] as? String
+            val snapshots = lifecycle.allSnapshots()
+            var stored = 0
+            for (flow in flows.all()) {
+                if (!isLive(flow, snapshots)) continue
+                if (targetFlowId != null && flow.id != targetFlowId) continue
+                for (spark in flow.triggers.filter { EventTriggerMatcher.matches(it, kind, payload, context.packageName) }) {
+                    val r = enqueueQuiet(flow.id, spark.id, kind, listOf(seed), sourceId)
+                    if (r is EnqueueResult.Stored) stored++
+                }
+            }
+            if (stored > 0) controller.onInboxWritten(source)
+            return stored
+        }
+    }
+
+    /** Same as [enqueue] without waking the consumer, so [dispatch] wakes it once for the whole fan-out. */
+    private suspend fun enqueueQuiet(flowId: String, sparkId: String, kind: String, items: List<FlowData>, sourceId: String?): EnqueueResult {
+        val key = DedupeKeys.event(kind, flowId, sparkId, sourceId ?: UUID.randomUUID().toString())
+        return inbox.enqueue(NewSpark(flowId, sparkId, kind, InboxPayloads.encode(items, emptyMap()), key))
+    }
+
+    private fun isLive(flow: Flow, snapshots: Map<String, com.kaivoflow.core.engine.LifecycleSnapshot>): Boolean =
+        snapshots[flow.id]?.state?.isLive ?: flow.isActive
+}

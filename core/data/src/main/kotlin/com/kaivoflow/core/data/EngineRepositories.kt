@@ -1,6 +1,10 @@
 package com.kaivoflow.core.data
 
 import com.kaivoflow.core.engine.LifecycleLogEntry
+import com.kaivoflow.core.engine.alwayson.InboxRecord
+import com.kaivoflow.core.engine.alwayson.InboxRowState
+import com.kaivoflow.core.engine.alwayson.InboxStore
+import com.kaivoflow.core.engine.alwayson.NewInboxRow
 import com.kaivoflow.core.engine.LifecycleSnapshot
 import kotlinx.coroutines.flow.Flow as FlowStream
 
@@ -133,6 +137,8 @@ interface ScheduleRepository {
     suspend fun markExpected(id: Long, state: String, firedAt: Long?, runId: String?, latenessMs: Long?, reason: String?): Boolean
     suspend fun markPendingInSpan(flowId: String, from: Long, to: Long, state: String, reason: String?): Int
     suspend fun supersedePending(flowId: String, reason: String): Int
+    suspend fun supersedePendingForSpark(flowId: String, sparkId: String, reason: String): Int
+    suspend fun removeState(flowId: String, sparkId: String)
     suspend fun recentForFlow(flowId: String, since: Long, limit: Int = 200): List<ExpectedRunEntity>
     suspend fun deleteExpectedOlderThan(before: Long): Int
     suspend fun purge(flowId: String)
@@ -151,6 +157,8 @@ class RoomScheduleRepository(private val dao: ScheduleDao) : ScheduleRepository 
     override suspend fun markPendingInSpan(flowId: String, from: Long, to: Long, state: String, reason: String?) =
         dao.markPendingInSpan(flowId, from, to, state, reason)
     override suspend fun supersedePending(flowId: String, reason: String) = dao.supersedePending(flowId, reason)
+    override suspend fun supersedePendingForSpark(flowId: String, sparkId: String, reason: String) = dao.supersedePendingForSpark(flowId, sparkId, reason)
+    override suspend fun removeState(flowId: String, sparkId: String) = dao.deleteState(flowId, sparkId)
     override suspend fun recentForFlow(flowId: String, since: Long, limit: Int) = dao.recentForFlow(flowId, since, limit)
     override suspend fun deleteExpectedOlderThan(before: Long) = dao.deleteExpectedOlderThan(before)
     override suspend fun purge(flowId: String) {
@@ -191,4 +199,37 @@ class RoomEngineTelemetryRepository(private val dao: EngineTelemetryDao) : Engin
     override suspend fun countSince(kind: String, since: Long) = dao.countSince(kind, since)
     override suspend fun lastOfKind(kind: String) = dao.lastOfKind(kind)
     override suspend fun deleteEventsOlderThan(before: Long) = dao.deleteEventsOlderThan(before)
+}
+
+/**
+ * Adapter that lets the pure `SparkInbox` and `RunDispatcher` in core:engine run on the Room tables.
+ * No policy here: the lease rule lives in `LeasePolicy` and is spelled out once more in the DAO queries.
+ */
+class RoomInboxStore(private val dao: SparkInboxDao) : InboxStore {
+    override suspend fun insert(row: NewInboxRow): Long? = dao.insert(
+        SparkInboxEntity(
+            flowId = row.flowId, sparkId = row.sparkId, kind = row.kind, payload = row.payload, fileRef = row.fileRef,
+            receivedAt = row.receivedAt, state = InboxState.PENDING, dedupeKey = row.dedupeKey, runId = null,
+            leaseUntil = null, dropReason = null,
+        ),
+    ).takeIf { it != -1L }
+
+    override suspend fun byDedupeKey(key: String) = dao.byDedupeKey(key)?.toRecord()
+    override suspend fun get(id: Long) = dao.byId(id)?.toRecord()
+    override suspend fun claimable(now: Long, limit: Int) = dao.claimable(now, limit).map { it.toRecord() }
+    override suspend fun liveClaimedFlowIds(now: Long) = dao.liveClaimedFlowIds(now).toSet()
+    override suspend fun claim(id: Long, now: Long, leaseUntil: Long) = dao.claim(id, now, leaseUntil) == 1
+    override suspend fun renewLease(id: Long, leaseUntil: Long) = dao.renewLease(id, leaseUntil) == 1
+    override suspend fun markStarted(id: Long, runId: String, leaseUntil: Long) = dao.markStarted(id, runId, leaseUntil) == 1
+    override suspend fun complete(id: Long, runId: String?) = dao.complete(id, runId) == 1
+    override suspend fun release(id: Long) = dao.release(id) == 1
+    override suspend fun drop(id: Long, reason: String) = dao.drop(id, reason) == 1
+    override suspend fun reapCrashed(now: Long) = dao.reapCrashed(now)
+    override suspend fun openCount() = dao.openCount()
+
+    private fun SparkInboxEntity.toRecord() = InboxRecord(
+        id = id, flowId = flowId, sparkId = sparkId, kind = kind, payload = payload, fileRef = fileRef,
+        receivedAt = receivedAt, state = InboxRowState.fromDb(state), dedupeKey = dedupeKey, runId = runId,
+        leaseUntil = leaseUntil, dropReason = dropReason,
+    )
 }
