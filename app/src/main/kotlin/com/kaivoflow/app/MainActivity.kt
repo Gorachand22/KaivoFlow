@@ -22,6 +22,7 @@ import androidx.navigation.navArgument
 import com.kaivoflow.core.design.KaivoTheme
 import com.kaivoflow.feature.canvas.CanvasScreen
 import com.kaivoflow.feature.flows.FlowListScreen
+import com.kaivoflow.feature.flows.PublishSheetEntry
 import com.kaivoflow.feature.flows.RunHistoryScreen
 import com.kaivoflow.feature.permissions.KaivoPermission
 import com.kaivoflow.feature.permissions.PermissionCentreScreen
@@ -133,6 +134,7 @@ private fun KaivoNavHost(
                 onBack = { navController.popBackStack() },
                 onOpenRunHistory = { navController.navigate(Routes.History) },
                 onOpenCredentials = { navController.navigate(Routes.Credentials) },
+                publishEntry = { flowId, onDismiss, onFix -> PublishSheetEntry(flowId, onDismiss, onFix) },
             )
         }
         composable(Routes.Settings) {

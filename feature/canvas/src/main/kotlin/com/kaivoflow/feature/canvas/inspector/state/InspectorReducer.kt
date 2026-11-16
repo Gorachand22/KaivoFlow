@@ -118,6 +118,8 @@ class InspectorReducer(
                 else Reduction(s.copy(test = TestState.Running(listOf(s.stepId))), listOf(InspectorEffect.RunTest(s.stepId, intent.policy)))
             }
             is InspectorIntent.TestEventReceived -> testEvent(s, intent.event)
+            InspectorIntent.CancelTest ->
+                if (s.test is TestState.Running || s.test is TestState.NeedsParents) Reduction(s.copy(test = TestState.Idle), listOf(InspectorEffect.CancelTest)) else Reduction(s)
         }
     }
 

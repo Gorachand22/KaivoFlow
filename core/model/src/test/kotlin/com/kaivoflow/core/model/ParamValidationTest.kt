@@ -267,6 +267,22 @@ class ParamValidationTest {
         assertEquals(listOf("c.combinator:conditions.combinator"), codes(s, mapOf("c" to fx(mapOf("combinator" to "xor", "conditions" to listOf(cond("is")))))))
     }
 
+    @Test fun `nested condition groups validate up to the widget depth`() {
+        val s = schema(ParamDef("c", "C", ParamKind.Conditions(), required = true))
+        fun rule(op: String = "is", left: Any? = "a", right: Any? = "x") = mapOf("id" to "r", "left" to left, "op" to op, "right" to right)
+        fun grp(vararg c: Map<String, Any?>) = mapOf("id" to "g", "combinator" to "or", "conditions" to c.toList())
+        val d2 = mapOf("combinator" to "and", "conditions" to listOf(rule(), grp(rule(), rule("isEmpty", right = null))))
+        assertEquals(emptyList<String>(), codes(s, mapOf("c" to fx(d2))))
+        val d3 = mapOf("combinator" to "and", "conditions" to listOf(grp(grp(rule()))))
+        assertEquals(emptyList<String>(), codes(s, mapOf("c" to fx(d3))))
+        val d4 = mapOf("combinator" to "and", "conditions" to listOf(grp(grp(grp(rule())))))
+        assertEquals(listOf("c.conditions[0].conditions[0].conditions[0]:conditions.depth"), codes(s, mapOf("c" to fx(d4))))
+        val bad = mapOf("combinator" to "and", "conditions" to listOf(grp(rule("weird"))))
+        assertEquals(listOf("c.conditions[0].conditions[0].op:conditions.operator"), codes(s, mapOf("c" to fx(bad))))
+        val emptyNested = mapOf("combinator" to "and", "conditions" to listOf(rule(), grp()))
+        assertEquals(emptyList<String>(), codes(s, mapOf("c" to fx(emptyNested))))
+    }
+
     @Test fun `resource picker`() {
         val k = ParamKind.ResourcePick(persistentSetOf(ResourceMode.ByUrl, ResourceMode.ById), null, "/d/[A-Za-z0-9]+")
         val s = schema(ParamDef("r", "R", k))

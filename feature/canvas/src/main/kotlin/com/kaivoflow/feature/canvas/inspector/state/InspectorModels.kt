@@ -219,6 +219,8 @@ sealed interface InspectorIntent {
     data class PinChanged(val info: PinInfo?) : InspectorIntent
     data class TestStepRequested(val policy: ParentPolicy = ParentPolicy.Ask) : InspectorIntent
     data class TestEventReceived(val event: InspectorTestEvent) : InspectorIntent
+    /** Stops a running or waiting Test Step and returns to idle. */
+    data object CancelTest : InspectorIntent
 }
 
 /** Work the reducer asks the holder to do; the reducer itself stays pure. */
@@ -228,6 +230,7 @@ sealed interface InspectorEffect {
     data class EvaluatePreview(val key: String, val text: String, val itemIndex: Int) : InspectorEffect
     data class PersistParam(val key: String, val value: ParamValue?) : InspectorEffect
     data class RunTest(val stepId: String, val policy: ParentPolicy) : InspectorEffect
+    data object CancelTest : InspectorEffect
     data class PinCurrent(val request: DataRequest) : InspectorEffect
     data object Unpin : InspectorEffect
     data class Notify(val message: InspectorMessage) : InspectorEffect

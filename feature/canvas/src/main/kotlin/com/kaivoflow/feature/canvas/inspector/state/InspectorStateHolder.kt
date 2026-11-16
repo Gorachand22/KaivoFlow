@@ -99,6 +99,7 @@ class InspectorStateHolder(
                     .catch { dispatch(InspectorIntent.TestEventReceived(InspectorTestEvent.Failed(it.message ?: "Test failed"))) }
                     .collect { dispatch(InspectorIntent.TestEventReceived(it)) }
             }
+            InspectorEffect.CancelTest -> synchronized(jobs) { jobs.remove("test")?.cancel() }
             is InspectorEffect.PinCurrent -> launchLatest("pin") {
                 try {
                     dispatch(InspectorIntent.PinChanged(gateway.pinCurrent(effect.request)))

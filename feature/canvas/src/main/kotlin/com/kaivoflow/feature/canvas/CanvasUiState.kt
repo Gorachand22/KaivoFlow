@@ -2,8 +2,8 @@ package com.kaivoflow.feature.canvas
 
 import androidx.compose.runtime.Immutable
 import com.kaivoflow.core.engine.ValidationReport
-import com.kaivoflow.core.model.FlowData
 import com.kaivoflow.core.model.FlowGroup
+import com.kaivoflow.core.model.StepNode
 import com.kaivoflow.core.model.LogLevel
 import com.kaivoflow.core.model.NodeSpec
 import com.kaivoflow.core.model.RunRecord
@@ -85,19 +85,12 @@ data class RunUiState(
         get() = if (startedAt == 0L) 0 else (finishedAt ?: System.currentTimeMillis()) - startedAt
 }
 
+/** The open Step inspector: which Step, and its current document (Behaviour tab). The live state is in the session. */
 @Immutable
 data class InspectorUiState(
     val stepId: String,
-    val stepName: String,
-    val tab: InspectorTab = InspectorTab.Configure,
-    val inputItems: ImmutableList<FlowData> = persistentListOf(),
-    val outputItems: ImmutableList<FlowData>? = null,
-    val outputError: String? = null,
-    val isTesting: Boolean = false,
-    val logs: ImmutableList<String> = persistentListOf(),
+    val node: StepNode,
 )
-
-enum class InspectorTab(val label: String) { Input("Input"), Configure("Configure"), Output("Output") }
 
 @Immutable
 data class CanvasUiState(
@@ -110,6 +103,8 @@ data class CanvasUiState(
     val validation: ValidationReport = ValidationReport.Empty,
     val selectedStepId: String? = null,
     val inspector: InspectorUiState? = null,
+    /** Non-null while the publish sheet is open for this Flow. */
+    val publishFlowId: String? = null,
     val isStepPickerOpen: Boolean = false,
     val pickerInsertAfterStepId: String? = null,
     /** Output port the new Step should be chained from after a port drag. */
@@ -117,9 +112,8 @@ data class CanvasUiState(
     val isSaving: Boolean = false,
     val lastSavedAt: Long? = null,
     val toasts: ImmutableList<ToastMessage> = persistentListOf(),
-    /** Step positions and raw params, kept here so the screen never re-reads the Flow document. */
+    /** Step positions, kept here so the screen never re-reads the Flow document. */
     val positions: ImmutableMap<String, Pair<Float, Float>> = persistentMapOf(),
-    val paramCache: ImmutableMap<String, ImmutableMap<String, Any?>> = persistentMapOf(),
     val vars: ImmutableMap<String, Any?> = persistentMapOf(),
     val groups: ImmutableList<FlowGroup> = persistentListOf(),
     val notes: ImmutableList<StickyNote> = persistentListOf(),

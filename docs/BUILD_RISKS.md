@@ -3,7 +3,7 @@
 Verified offline at HEAD (Kotlin 2.0.21 jars from Gradle's lib dir, collections and Room stubs):
 core:model, core:expressions, core:engine (alwayson, stepdata), core:nodes, core:data (all classes except
 CryptoBox and DataModule, which are stubbed or skipped) and the pure feature:canvas logic compile and
-pass 888 tests. Everything below was only reviewed by reading and by grep scripts.
+pass 977 tests (core suites plus feature/canvas state, logic, host gateway, layout and picker; the Compose files themselves are not compiled). Everything below was only reviewed by reading and by grep scripts.
 Ordered by how likely it is to break the first build. Paste the first compiler error for any item.
 
 ## 1. core:work against real Android, WorkManager and Play services (34 files, never compiled)
@@ -14,7 +14,7 @@ Ordered by how likely it is to break the first build. Paste the first compiler e
 - Already fixed: positional `ExpectedRunEntity(...)` call in alwayson/ScheduleSync.kt.
 
 ## 2. Compose UI modules (never compiled)
-- Files: `core/design`, `feature/canvas` (CanvasScreen 800+ lines, StepInspectorSheet, StepPickerSheet),
+- Files: `core/design`, `feature/canvas` (CanvasScreen 800+ lines, `inspector/host/*` = StepInspector, InspectorPanes, InspectorTabs; StepPickerSheet),
   `feature/flows`, `feature/settings`, `feature/permissions`, `app/MainActivity.kt`.
 - Check: `./gradlew :feature:canvas:compileDebugKotlin`, then the other features. Look for opt-in errors.
 
@@ -58,3 +58,12 @@ Ordered by how likely it is to break the first build. Paste the first compiler e
   Check: `./gradlew :core:data:testDebugUnitTest`.
 - Not a build error: `core/engine/.../PublishValidator.kt` still lists `"device.clipboard_read"` and `"logic.approval"`,
   which match no live Step after the rename.
+
+## 9. Phase 2D finish (T21 to T25), reasoned only
+- Never compiled: `inspector/host/StepInspector.kt`, `InspectorPanes.kt`, `InspectorTabs.kt`, the canvas wiring in `CanvasScreen.kt` and `MainActivity.kt` (`publishEntry` slot), `WorkflowExecutionsSheet.kt`. Compiled and tested offline: `inspector/logic/*`, `host/CanvasInspectorGateway.kt`, `host/InspectorSession.kt`.
+- Pager layout uses `wrapContentWidth(unbounded = true)` + `offset`; if the three pages do not line up, check that modifier first.
+- Canvas "live" badge still reads the legacy `Flow.isActive`; the publish sheet uses the lifecycle model. Observe the lifecycle in `CanvasViewModel` to show the real state.
+- Not offered in Behaviour: always output data, execute once, show note on canvas (no StepNode field, no engine support).
+- "Test from here" runs the Test Step path. Missing: a Run entry that starts at any Step with a chosen Run's upstream data replayed as pins.
+- Inspector state is not restored after process death (rotation is fine: the session lives in the ViewModel). Pane widths are not remembered per device.
+- Hilt: `CanvasViewModel` now injects `StepDataStore` and `PinStore` (both already provided for `FlowEngine`).

@@ -10,13 +10,18 @@ import com.kaivoflow.core.data.WorkflowVariableRepository
 import com.kaivoflow.core.engine.ExecutionMode
 import com.kaivoflow.core.engine.FlowRunner
 import com.kaivoflow.core.engine.ValidationReport
-import com.kaivoflow.core.engine.Values
+import com.kaivoflow.core.engine.stepdata.PinStore
+import com.kaivoflow.core.engine.stepdata.StepDataStore
+import com.kaivoflow.core.expressions.assist.KaivoExpressionAssist
+import com.kaivoflow.core.model.ParamValue
+import com.kaivoflow.core.model.ParamValueCodec
+import com.kaivoflow.feature.canvas.inspector.host.InspectorSession
+import com.kaivoflow.feature.canvas.inspector.host.InspectorSessions
+import com.kaivoflow.feature.canvas.inspector.host.StepTestRunner
 import com.kaivoflow.core.model.Flow
-import com.kaivoflow.core.model.FlowData
 import com.kaivoflow.core.model.FlowGroup
 import com.kaivoflow.core.model.LogLevel
 import com.kaivoflow.core.model.NodeKind
-import com.kaivoflow.core.model.NodeSpec
 import com.kaivoflow.core.model.RunEvent
 import com.kaivoflow.core.model.RunRecord
 import com.kaivoflow.core.model.RunStatus
@@ -61,6 +66,8 @@ class CanvasViewModel @Inject constructor(
     private val credentials: CredentialRepository,
     private val variableRepository: WorkflowVariableRepository,
     private val runRepository: RunRepository,
+    private val stepData: StepDataStore,
+    private val pinStore: PinStore,
     savedStateHandle: SavedStateHandle,
 ) : ViewModel() {
 
@@ -73,6 +80,12 @@ class CanvasViewModel @Inject constructor(
     /** Saved credentials (id, type, label only; never the secret). Null until the first load. */
     private val _credentialRefs = MutableStateFlow<List<com.kaivoflow.core.model.CredentialRef>?>(null)
     val credentialRefs: StateFlow<List<com.kaivoflow.core.model.CredentialRef>?> = _credentialRefs.asStateFlow()
+
+    private val assist = KaivoExpressionAssist()
+    private val _inspectorSession = MutableStateFlow<InspectorSession?>(null)
+    /** The open Step inspector (state holder, data source, expression scope); null when closed. */
+    val inspectorSession: StateFlow<InspectorSession?> = _inspectorSession.asStateFlow()
+    private var lastParamEdit: Pair<String, Long>? = null
 
     private val _promptEvents = Channel<String>(Channel.BUFFERED)
     private var flow: Flow = Flow(id = flowId, name = "Flow")
@@ -123,6 +136,11 @@ class CanvasViewModel @Inject constructor(
                 }
             }
         }
+    }
+
+    override fun onCleared() {
+        _inspectorSession.value?.close()
+        super.onCleared()
     }
 
     // ------------------------------------------------------------------ editing
@@ -202,36 +220,91 @@ class CanvasViewModel @Inject constructor(
         _state.update { it.copy(selectedStepId = stepId) }
     }
 
-    fun openInspector(stepId: String) {
+    /** Opens the Step inspector. With [replayRunId] it shows that past Run read-only. */
+    fun openInspector(stepId: String, replayRunId: String? = null) {
         val step = flow.step(stepId) ?: return
-        val incoming = flow.incoming(stepId).mapNotNull { stream ->
-            flow.step(stream.fromStepId)?.let { upstream -> lastOutputs[upstream.name] }
-        }.flatten()
-        _state.update {
-            it.copy(
-                selectedStepId = stepId,
-                inspector = InspectorUiState(
-                    stepId = step.id,
-                    stepName = step.name,
-                    inputItems = incoming.toImmutableList(),
-                    tab = InspectorTab.Configure,
-                ),
+        _inspectorSession.value?.close()
+        val session = InspectorSessions.open(
+            flowId = flowId,
+            stepId = stepId,
+            replayRunId = replayRunId,
+            scope = viewModelScope,
+            currentFlow = { flow },
+            spec = registry.spec(step.type),
+            registrySpec = { registry.spec(it) },
+            stepData = stepData,
+            pins = pinStore,
+            tester = StepTestRunner { f, id, input -> flowEngine.testStep(f, id, input).also(::applyTestResult) },
+            assist = assist,
+            credentialRefs = credentialRefs,
+            onParam = { key, value -> setParam(stepId, key, value) },
+        ) ?: return
+        _inspectorSession.value = session
+        _state.update { it.copy(selectedStepId = stepId, inspector = InspectorUiState(step.id, step)) }
+    }
+
+    /**
+     * "Test from here" in the executions sheet: opens the Step and tests it on the newest stored or pinned upstream data
+     * (the Test Step path). Missing in the engine: starting a Run at an arbitrary Step with the chosen Run's upstream data
+     * replayed as pins (RunTrigger.startAtStepId only selects a Spark), and a per-Run input override for Test Step.
+     */
+    fun testFromHere(stepId: String) {
+        closeExecutions()
+        openInspector(stepId)
+        _inspectorSession.value?.holder?.dispatch(
+            com.kaivoflow.feature.canvas.inspector.state.InspectorIntent.TestStepRequested(
+                com.kaivoflow.feature.canvas.inspector.state.ParentPolicy.UsePinnedOrLast,
+            ),
+        )
+    }
+
+    fun closeInspector() {
+        _inspectorSession.value?.close()
+        _inspectorSession.value = null
+        _state.update { it.copy(inspector = null) }
+    }
+
+    /** Sets one parameter from the inspector; `null` removes it. Typing in one field is one undo step (800 ms window). */
+    fun setParam(stepId: String, key: String, value: ParamValue?) {
+        val step = flow.step(stepId) ?: return
+        val raw = ParamValueCodec.encode(value)
+        val params = if (value == null) step.params - key else step.params + (key to raw)
+        flow = flow.withStep(step.copy(params = params.toImmutableMap()))
+        commitCoalesced("param:$stepId:$key")
+    }
+
+    /** Applies a pure edit of the Step document (Behaviour tab, rename). */
+    fun editStep(stepId: String, kind: String, transform: (StepNode) -> StepNode) {
+        val step = flow.step(stepId) ?: return
+        val next = transform(step)
+        if (next == step) return
+        flow = flow.withStep(next)
+        commitCoalesced("step:$stepId:$kind")
+    }
+
+    /** Keeps the Step card's status line in step with a Test Step; the data itself is in the StepDataStore. */
+    private fun applyTestResult(stepRun: com.kaivoflow.core.model.StepRun) {
+        _state.update { current ->
+            current.copy(
+                steps = current.steps.map { s ->
+                    if (s.id == stepRun.stepId) {
+                        s.copy(
+                            status = if (stepRun.status == StepRunStatus.Failed) StepRunStatus.Failed else StepRunStatus.Succeeded,
+                            itemCount = stepRun.itemsOut,
+                            latencyMs = stepRun.durationMs,
+                        )
+                    } else s
+                }.toImmutableList(),
             )
         }
     }
 
-    fun closeInspector() {
-        _state.update { it.copy(inspector = null) }
-    }
-
-    fun setInspectorTab(tab: InspectorTab) {
-        _state.update { current -> current.inspector?.let { current.copy(inspector = it.copy(tab = tab)) } ?: current }
-    }
-
-    fun updateParam(stepId: String, key: String, value: Any?) {
-        val step = flow.step(stepId) ?: return
-        flow = flow.withStep(step.copy(params = (step.params + (key to value)).toImmutableMap()))
-        commit()
+    private fun commitCoalesced(token: String) {
+        val now = System.currentTimeMillis()
+        val last = lastParamEdit
+        val same = last != null && last.first == token && now - last.second < 800
+        lastParamEdit = token to now
+        commit(pushUndo = !same)
     }
 
     fun toggleStepDisabled(stepId: String) {
@@ -243,7 +316,8 @@ class CanvasViewModel @Inject constructor(
     fun deleteStep(stepId: String) {
         flow = flow.minusStep(stepId)
         commit()
-        _state.update { it.copy(selectedStepId = null, inspector = null) }
+        closeInspector()
+        _state.update { it.copy(selectedStepId = null) }
     }
 
     fun duplicateStep(stepId: String) {
@@ -374,25 +448,6 @@ class CanvasViewModel @Inject constructor(
         commit()
     }
 
-    /** Freeze Output (pinned data) for a Step — the debugging superpower. */
-    fun freezeOutput(stepId: String) {
-        val step = flow.step(stepId) ?: return
-        val current = lastOutputs[step.name]
-        if (current == null) {
-            toast("Run the Step once first, then freeze its output.", LogLevel.Warn)
-            return
-        }
-        flow = flow.withStep(step.copy(frozenOutput = current.toImmutableList()))
-        commit()
-        toast("Output frozen. This Step will be skipped on future Runs.")
-    }
-
-    fun unfreezeOutput(stepId: String) {
-        val step = flow.step(stepId) ?: return
-        flow = flow.withStep(step.copy(frozenOutput = null))
-        commit()
-    }
-
     // ------------------------------------------------------------------ running
 
     fun run() {
@@ -437,8 +492,6 @@ class CanvasViewModel @Inject constructor(
         _state.update { it.copy(run = it.run.copy(isRunning = false, status = RunStatus.Canceled)) }
     }
 
-    private val lastOutputs = mutableMapOf<String, List<FlowData>>()
-
     private fun handleRunEvent(event: RunEvent) {
         when (event) {
             is RunEvent.RunStarted -> _state.update {
@@ -458,7 +511,6 @@ class CanvasViewModel @Inject constructor(
                 _state.update { it.copy(run = it.run.copy(activeStreamIds = feeding)) }
             }
             is RunEvent.StepFinished -> {
-                lastOutputs[flow.step(event.stepId)?.name ?: ""] = event.output
                 _state.update { current ->
                     val completed = current.run.completedSteps + 1
                     current.copy(
@@ -479,18 +531,6 @@ class CanvasViewModel @Inject constructor(
                             } else step
                         }.toImmutableList(),
                     )
-                }
-                _state.update { current ->
-                    val inspector = current.inspector
-                    if (inspector?.stepId == event.stepId) {
-                        current.copy(
-                            inspector = inspector.copy(
-                                outputItems = event.output,
-                                isTesting = false,
-                                outputError = null,
-                            )
-                        )
-                    } else current
                 }
             }
             is RunEvent.StepFailed -> {
@@ -527,50 +567,6 @@ class CanvasViewModel @Inject constructor(
                 )
             }
             else -> Unit
-        }
-    }
-
-    /** "Test Step" in the inspector. */
-    fun testStep() {
-        val inspector = _state.value.inspector ?: return
-        val step = flow.step(inspector.stepId) ?: return
-        _state.update { it.copy(inspector = inspector.copy(isTesting = true, outputError = null)) }
-        viewModelScope.launch {
-            val result = runCatching {
-                flowEngine.testStep(flow, step.id, inspector.inputItems)
-            }
-            result.onSuccess { stepRun ->
-                lastOutputs[step.name] = stepRun.output
-                _state.update { current ->
-                    val updatedSteps = current.steps.map { s ->
-                        if (s.id == step.id) {
-                            s.copy(
-                                status = if (stepRun.status == StepRunStatus.Failed) StepRunStatus.Failed else StepRunStatus.Succeeded,
-                                itemCount = stepRun.itemsOut,
-                                latencyMs = stepRun.durationMs,
-                            )
-                        } else s
-                    }.toImmutableList()
-                    current.copy(
-                        steps = updatedSteps,
-                        inspector = current.inspector?.copy(
-                            isTesting = false,
-                            outputItems = stepRun.output,
-                            outputError = stepRun.error,
-                            tab = InspectorTab.Output,
-                        ),
-                    )
-                }
-            }.onFailure { error ->
-                _state.update { current ->
-                    current.copy(
-                        inspector = current.inspector?.copy(
-                            isTesting = false,
-                            outputError = error.message ?: "The Step failed.",
-                        )
-                    )
-                }
-            }
         }
     }
 
@@ -651,6 +647,26 @@ class CanvasViewModel @Inject constructor(
             }
             _state.update { it.copy(lastSavedAt = System.currentTimeMillis(), isSaving = false) }
         }
+    }
+
+    /**
+     * The activate toggle. A live Flow is switched off here; otherwise the publish sheet opens (checklist, Spark
+     * registration results). The draft is written first because the sheet reads the stored Flow.
+     */
+    fun requestActivateToggle() {
+        if (flow.isActive) {
+            toggleFlowActive()
+            return
+        }
+        viewModelScope.launch {
+            pendingSave?.cancel()
+            runCatching { flowRepository.save(flow) }
+            _state.update { it.copy(publishFlowId = flowId) }
+        }
+    }
+
+    fun dismissPublish() {
+        _state.update { it.copy(publishFlowId = null) }
     }
 
     fun toggleFlowActive() {
@@ -839,10 +855,8 @@ class CanvasViewModel @Inject constructor(
                 notes = flow.notes,
                 isActive = flow.isActive,
                 vars = flow.vars,
+                inspector = it.inspector?.let { ins -> flow.step(ins.stepId)?.let { n -> ins.copy(node = n) } },
                 positions = flow.steps.associate { it.id to (it.x to it.y) }.toImmutableMap(),
-                paramCache = flow.steps.associate { step ->
-                    step.id to step.params.toImmutableMap()
-                }.toImmutableMap(),
             )
         }
     }

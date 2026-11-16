@@ -71,7 +71,8 @@ import com.kaivoflow.feature.canvas.render.CanvasStickyNote
 import com.kaivoflow.feature.canvas.render.JewelStepCard
 import com.kaivoflow.feature.canvas.render.StreamCanvasLayer
 import com.kaivoflow.feature.canvas.render.StreamDragPreview
-import com.kaivoflow.feature.canvas.sheets.StepInspectorSheet
+import com.kaivoflow.feature.canvas.inspector.host.StepInspector
+import com.kaivoflow.feature.canvas.inspector.host.StepInspectorActions
 import com.kaivoflow.feature.canvas.sheets.StepPickerSheet
 import kotlinx.collections.immutable.ImmutableList
 import kotlinx.collections.immutable.toImmutableList
@@ -89,6 +90,8 @@ fun CanvasScreen(
     onBack: () -> Unit,
     onOpenRunHistory: () -> Unit,
     onOpenCredentials: () -> Unit = {},
+    /** Hosts the publish sheet; the app passes `PublishSheetEntry` (this module cannot depend on feature:flows). */
+    publishEntry: @Composable (flowId: String?, onDismiss: () -> Unit, onFix: (com.kaivoflow.core.engine.ValidationIssue) -> Unit) -> Unit = { _, _, _ -> },
     viewModel: CanvasViewModel = hiltViewModel(),
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
@@ -609,6 +612,26 @@ fun CanvasScreen(
                         modifier = Modifier.size(18.dp),
                     )
                 }
+                Box(
+                    Modifier
+                        .width(1.dp)
+                        .height(20.dp)
+                        .background(colors.hairline),
+                )
+                Box(
+                    Modifier
+                        .size(40.dp)
+                        .clip(CircleShape)
+                        .clickable { viewModel.requestActivateToggle() },
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Icon(
+                        KaivoIcons.icon("bolt"),
+                        contentDescription = if (state.isActive) "Switch Flow off" else "Publish Flow",
+                        tint = if (state.isActive) colors.royalGold else colors.inkSecondary,
+                        modifier = Modifier.size(18.dp),
+                    )
+                }
             }
         }
 
@@ -755,36 +778,37 @@ fun CanvasScreen(
             )
         }
 
-        state.inspector?.let { inspector ->
-            val step = state.steps.firstOrNull { it.id == inspector.stepId }
-            if (step != null) {
-                StepInspectorSheet(
-                    inspector = inspector,
-                    step = step,
-                    spec = registry.spec(step.type),
-                    params = step.paramSummary.let { _ ->
-                        // Raw params come back through the ViewModel; the UI only needs current values.
-                        state.let { _ -> rawParamsFor(state, step.id) }
-                    },
-                    previousStepNames = state.steps
-                        .takeWhile { it.id != step.id }
-                        .map { it.name },
-                    connectedStreams = state.streams,
-                    allSteps = state.steps,
-                    vars = state.vars,
-                    credentials = credentialRefs,
+        val inspectorSession by viewModel.inspectorSession.collectAsStateWithLifecycle()
+        val openInspector = state.inspector
+        val session = inspectorSession
+        if (openInspector != null && session != null && session.stepId == openInspector.stepId) {
+            val node = openInspector.node
+            val spec = registry.spec(node.type)
+            StepInspector(
+                session = session,
+                node = node,
+                spec = spec,
+                iconTint = colors.categoryColor(spec?.category ?: com.kaivoflow.core.model.StepCategory.Transform),
+                credentials = credentialRefs,
+                actions = StepInspectorActions(
+                    onRename = { viewModel.renameStep(node.id, it) },
+                    onToggleDisabled = { viewModel.toggleStepDisabled(node.id) },
+                    onDuplicate = { viewModel.duplicateStep(node.id) },
+                    onDelete = { viewModel.deleteStep(node.id) },
+                    onEditStep = { edit -> viewModel.editStep(node.id, "behaviour", edit) },
                     onAddCredential = onOpenCredentials,
-                    onTab = viewModel::setInspectorTab,
-                    onParamChange = { key, value -> viewModel.updateParam(step.id, key, value) },
-                    onRename = { viewModel.renameStep(step.id, it) },
-                    onDisconnectStream = { viewModel.requestDisconnectStream(it) },
-                    onTestStep = viewModel::testStep,
-                    onFreezeOutput = { viewModel.freezeOutput(step.id) },
-                    onToggleDisabled = { viewModel.toggleStepDisabled(step.id) },
-                    onDelete = { viewModel.deleteStep(step.id) },
                     onDismiss = viewModel::closeInspector,
-                )
-            }
+                ),
+            )
+        }
+
+        // The activate toggle opens the shared publish sheet (hosted by the app: feature:flows depends on this module).
+        publishEntry(
+            state.publishFlowId,
+            viewModel::dismissPublish,
+        ) { issue ->
+            viewModel.dismissPublish()
+            issue.stepId?.let { viewModel.openInspector(it) }
         }
 
         if (state.isExecutionsOpen) {
@@ -795,6 +819,8 @@ fun CanvasScreen(
                 onSelectRun = viewModel::selectRunDetails,
                 onRunNow = viewModel::run,
                 onDismiss = viewModel::closeExecutions,
+                onOpenStep = { stepId, runId -> viewModel.closeExecutions(); viewModel.openInspector(stepId, runId) },
+                onTestFromHere = viewModel::testFromHere,
             )
         }
 
@@ -859,10 +885,6 @@ fun CanvasScreen(
         }
     }
 }
-
-/** Params are held by the ViewModel's Flow; the screen reads them through this indirection. */
-private fun rawParamsFor(state: CanvasUiState, stepId: String): Map<String, Any?> =
-    state.paramCache[stepId] ?: emptyMap()
 
 /** Small helper so call sites read like Material's clickable without importing it everywhere. */
 private fun Modifier.androidClickable(onClick: () -> Unit): Modifier =

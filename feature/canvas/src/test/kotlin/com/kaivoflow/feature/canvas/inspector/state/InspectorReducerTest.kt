@@ -412,6 +412,18 @@ class InspectorReducerTest {
         assertEquals(TestState.Running(listOf("me")), f.state.apply(InspectorIntent.TestStepRequested()).state.test)
     }
 
+    @Test fun cancelTestReturnsToIdleAndIgnoresLateEvents() {
+        val running = opened().apply(InspectorIntent.TestStepRequested()).state
+        val c = running.apply(InspectorIntent.CancelTest)
+        assertEquals(TestState.Idle, c.state.test)
+        assertEquals(InspectorEffect.CancelTest, c.effects.single())
+        assertTrue(c.state.apply(InspectorIntent.TestEventReceived(InspectorTestEvent.Finished("late"))).effects.isEmpty())
+        assertEquals(TestState.Idle, c.state.apply(InspectorIntent.TestEventReceived(InspectorTestEvent.Finished("late"))).state.test)
+        assertTrue(c.state.apply(InspectorIntent.CancelTest).effects.isEmpty())
+        val waiting = running.apply(InspectorIntent.TestEventReceived(InspectorTestEvent.NeedsParents(listOf("p")))).state
+        assertEquals(TestState.Idle, waiting.apply(InspectorIntent.CancelTest).state.test)
+    }
+
     // ---- replay ----
 
     @Test fun replayIsReadOnly() {

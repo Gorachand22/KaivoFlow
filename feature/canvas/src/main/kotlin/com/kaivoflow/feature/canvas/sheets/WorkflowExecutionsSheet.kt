@@ -36,6 +36,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
 import com.kaivoflow.core.design.BadgeKind
+import com.kaivoflow.core.design.GhostButton
 import com.kaivoflow.core.design.GoldButton
 import com.kaivoflow.core.design.KaivoIcons
 import com.kaivoflow.core.design.KaivoShapes
@@ -66,6 +67,10 @@ fun WorkflowExecutionsSheet(
     onSelectRun: (RunRecord?) -> Unit,
     onRunNow: () -> Unit,
     onDismiss: () -> Unit,
+    /** Opens the Step inspector read-only on one stored execution (input and output from the StepDataStore). */
+    onOpenStep: (stepId: String, runId: String) -> Unit = { _, _ -> },
+    /** Tests the Step on the newest stored data. See [com.kaivoflow.feature.canvas.CanvasViewModel.testFromHere] for what is missing. */
+    onTestFromHere: (stepId: String) -> Unit = {},
 ) {
     val colors = KaivoTheme.colors
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = false)
@@ -220,6 +225,8 @@ fun WorkflowExecutionsSheet(
                             onToggle = {
                                 onSelectRun(if (isExpanded) null else run)
                             },
+                            onOpenStep = onOpenStep,
+                            onTestFromHere = onTestFromHere,
                         )
                     }
                 }
@@ -235,6 +242,8 @@ private fun ExecutionCard(
     run: RunRecord,
     isExpanded: Boolean,
     onToggle: () -> Unit,
+    onOpenStep: (stepId: String, runId: String) -> Unit,
+    onTestFromHere: (stepId: String) -> Unit,
 ) {
     val colors = KaivoTheme.colors
     val timeFormat = remember { SimpleDateFormat("HH:mm:ss • dd MMM", Locale.getDefault()) }
@@ -359,7 +368,7 @@ private fun ExecutionCard(
                 } else {
                     Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
                         run.stepRuns.forEach { stepRun ->
-                            StepRunSnapshotItem(stepRun = stepRun)
+                            StepRunSnapshotItem(stepRun = stepRun, runId = run.id, onOpenStep = onOpenStep, onTestFromHere = onTestFromHere)
                         }
                     }
                 }
@@ -369,10 +378,13 @@ private fun ExecutionCard(
 }
 
 @Composable
-private fun StepRunSnapshotItem(stepRun: StepRun) {
+private fun StepRunSnapshotItem(
+    stepRun: StepRun,
+    runId: String,
+    onOpenStep: (stepId: String, runId: String) -> Unit,
+    onTestFromHere: (stepId: String) -> Unit,
+) {
     val colors = KaivoTheme.colors
-    var showOutput by remember { mutableStateOf(false) }
-
     val stepBadgeKind = when (stepRun.status) {
         StepRunStatus.Succeeded -> BadgeKind.Success
         StepRunStatus.Failed -> BadgeKind.Error
@@ -381,81 +393,39 @@ private fun StepRunSnapshotItem(stepRun: StepRun) {
         StepRunStatus.Frozen -> BadgeKind.Gold
         else -> BadgeKind.Neutral
     }
-
     Column(
         Modifier
             .fillMaxWidth()
             .clip(KaivoShapes.chip)
             .background(colors.surfaceElevated.copy(alpha = 0.5f))
             .border(1.dp, colors.hairline, KaivoShapes.chip)
-            .clickable { showOutput = !showOutput }
-            .padding(8.dp)
+            .padding(8.dp),
     ) {
-        Row(
-            Modifier.fillMaxWidth(),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
             Text(
                 stepRun.stepName,
                 style = androidx.compose.material3.MaterialTheme.typography.bodyMedium,
                 color = colors.inkPrimary,
                 modifier = Modifier.weight(1f),
             )
-            StatusBadge(
-                "${stepRun.status.name} • ${stepRun.durationMs ?: 0}ms",
-                stepBadgeKind,
-            )
+            StatusBadge("${stepRun.status.name} • ${stepRun.durationMs ?: 0}ms", stepBadgeKind)
         }
-
-        Row(
-            Modifier.fillMaxWidth(),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
+        Text(
+            "Items: in ${stepRun.itemsIn} → out ${stepRun.itemsOut}",
+            style = androidx.compose.material3.MaterialTheme.typography.bodySmall,
+            color = colors.inkMuted,
+        )
+        if (stepRun.error != null) {
             Text(
-                "Items: in ${stepRun.itemsIn} → out ${stepRun.itemsOut}",
+                "Error: ${stepRun.error}",
                 style = androidx.compose.material3.MaterialTheme.typography.bodySmall,
-                color = colors.inkMuted,
+                color = colors.velvetRose,
             )
-            Spacer(Modifier.weight(1f))
-            if (stepRun.output.isNotEmpty() || stepRun.error != null) {
-                Text(
-                    if (showOutput) "Hide output" else "View snapshot",
-                    style = androidx.compose.material3.MaterialTheme.typography.labelSmall,
-                    color = colors.royalGold,
-                )
-            }
         }
-
-        if (showOutput) {
-            Spacer(Modifier.height(6.dp))
-            if (stepRun.error != null) {
-                Text(
-                    "Error: ${stepRun.error}",
-                    style = androidx.compose.material3.MaterialTheme.typography.bodySmall,
-                    color = colors.velvetRose,
-                )
-            }
-            if (stepRun.output.isNotEmpty()) {
-                val previewJson = remember(stepRun.output) {
-                    stepRun.output.joinToString("\n---\n") { it.json.toString() }
-                }
-                Box(
-                    Modifier
-                        .fillMaxWidth()
-                        .clip(KaivoShapes.chip)
-                        .background(colors.surfaceAtelier)
-                        .padding(8.dp)
-                ) {
-                    Text(
-                        previewJson.take(800),
-                        style = androidx.compose.material3.MaterialTheme.typography.labelSmall.copy(
-                            fontFamily = KaivoTheme.type.monoFamily,
-                        ),
-                        color = colors.inkPrimary,
-                        maxLines = 10,
-                    )
-                }
-            }
+        // The data itself is shown by the shared data panels in the read-only inspector; nothing is printed from a Map here.
+        Row(Modifier.fillMaxWidth().padding(top = 6.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            GhostButton("View input and output", { onOpenStep(stepRun.stepId, runId) }, icon = "table")
+            GhostButton("Test from here", { onTestFromHere(stepRun.stepId) }, icon = "play")
         }
     }
 }

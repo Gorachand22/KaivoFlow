@@ -338,20 +338,34 @@ object ParamValidator {
         "lengthEquals", "lengthGt", "hasKey",
     )
 
+    /** Deepest nesting the Conditions widget allows; the root group is depth 1. */
+    const val MAX_CONDITION_DEPTH = 3
+
     private fun conditions(def: ParamDef, v: Any?, path: ParamPath, out: MutableList<ParamIssue>) {
         val label = def.label.ifBlank { def.key }
         val m = v as? Map<*, *>
         if (m == null) { out += ParamIssue(path, ParamSeverity.Error, "type.object", "$label must be a condition group."); return }
+        conditionGroup(label, m, path, 1, def.required || ParamRule.Required in def.rules, out)
+    }
+
+    private fun conditionGroup(label: String, m: Map<*, *>, path: ParamPath, depth: Int, requireOne: Boolean, out: MutableList<ParamIssue>) {
         val comb = Values0.str(m["combinator"]).ifBlank { "and" }.lowercase()
         if (comb !in setOf("and", "or")) out += ParamIssue(path.child("combinator"), ParamSeverity.Error, "conditions.combinator", "$label: combinator must be and or or.")
         val list = m["conditions"] as? List<*> ?: emptyList<Any?>()
-        if (list.isEmpty() && (def.required || ParamRule.Required in def.rules)) {
+        if (list.isEmpty() && requireOne) {
             out += ParamIssue(path.child("conditions"), ParamSeverity.Error, "required.missing", "$label needs at least one condition.")
         }
         list.forEachIndexed { i, row ->
             val p = path.child("conditions").index(i)
             val c = row as? Map<*, *>
             if (c == null) { out += ParamIssue(p, ParamSeverity.Error, "type.object", "$label condition ${i + 1} must be an object."); return@forEachIndexed }
+            if (c.containsKey("conditions")) {
+                // A nested group: the widget writes it as {id, combinator, conditions}.
+                if (depth >= MAX_CONDITION_DEPTH) {
+                    out += ParamIssue(p, ParamSeverity.Error, "conditions.depth", "$label allows groups nested at most $MAX_CONDITION_DEPTH levels deep.")
+                } else conditionGroup(label, c, p, depth + 1, false, out)
+                return@forEachIndexed
+            }
             val op = Values0.str(c["op"])
             if (op !in knownOperators) {
                 out += ParamIssue(p.child("op"), ParamSeverity.Error, "conditions.operator", "$label condition ${i + 1} has an unknown operator.")
