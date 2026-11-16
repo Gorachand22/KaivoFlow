@@ -29,7 +29,8 @@ object InboxPayloads {
         return Decoded(items, meta)
     }
 
-    private fun fromJson(e: JsonElement): Any? = when (e) {
+    /** The one JSON-to-plain-values decoder for payloads that enter the Inbox (webhook bodies use it too). */
+    internal fun fromJson(e: JsonElement): Any? = when (e) {
         is JsonNull -> null
         is JsonObject -> e.mapValues { fromJson(it.value) }
         is JsonArray -> e.map { fromJson(it) }

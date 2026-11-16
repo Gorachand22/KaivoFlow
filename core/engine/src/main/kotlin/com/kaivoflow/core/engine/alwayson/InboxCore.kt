@@ -62,8 +62,11 @@ interface InboxStore {
     suspend fun release(id: Long): Boolean
     suspend fun drop(id: Long, reason: String): Boolean
 
-    /** Started claims whose lease expired with no process: dropped as interrupted. Returns the count. */
-    suspend fun reapCrashed(now: Long): Int
+    /** Started claims whose lease expired with no process (see [LeasePolicy.isCrashed]). */
+    suspend fun crashedClaims(now: Long): List<InboxRecord>
+
+    /** Drops one crashed claim with reason [RunCrash.DROP_REASON]. False when it was not (or no longer) crashed. */
+    suspend fun markCrashed(id: Long, now: Long): Boolean
     suspend fun openCount(): Int
 }
 

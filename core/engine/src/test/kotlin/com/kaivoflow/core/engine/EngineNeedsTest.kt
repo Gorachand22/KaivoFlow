@@ -26,8 +26,8 @@ class EngineNeedsTest {
         val expected = mapOf(
             SparkTypes.MANUAL to EngineNeed.None, SparkTypes.SCHEDULE to EngineNeed.None, SparkTypes.WEBHOOK to EngineNeed.Required,
             SparkTypes.NOTIFICATION to EngineNeed.Wanted, SparkTypes.SMS to EngineNeed.None, SparkTypes.SHARE to EngineNeed.None,
-            SparkTypes.BATTERY to EngineNeed.Optional, SparkTypes.GEOFENCE to EngineNeed.None, SparkTypes.BLUETOOTH to EngineNeed.Optional,
-            SparkTypes.WIFI to EngineNeed.None, SparkTypes.HEADSET to EngineNeed.Required, SparkTypes.BOOT to EngineNeed.None,
+            SparkTypes.BATTERY to EngineNeed.Wanted, SparkTypes.GEOFENCE to EngineNeed.None, SparkTypes.BLUETOOTH to EngineNeed.Optional,
+            SparkTypes.WIFI to EngineNeed.Wanted, SparkTypes.HEADSET to EngineNeed.Required, SparkTypes.BOOT to EngineNeed.None,
             SparkTypes.SCREEN to EngineNeed.Required, SparkTypes.POWER to EngineNeed.Required,
         )
         expected.forEach { (type, need) -> assertEquals(type, need, SparkTypes.need(type)) }
@@ -46,6 +46,14 @@ class EngineNeedsTest {
         }
     }
 
+    @Test fun `battery and wifi sparks make the engine wanted because the engine sources them`() {
+        for (type in listOf(SparkTypes.BATTERY, SparkTypes.WIFI)) {
+            val r = EngineNeeds.compute(listOf(ef(flow("a", type))))
+            assertTrue(type, r.engineNeeded)
+            assertEquals(EngineNeed.Wanted, r.reasons.single().need)
+        }
+    }
+
     @Test fun `draft and paused flows never need the engine`() {
         for (state in listOf(LifecycleState.Draft, LifecycleState.Paused)) {
             val r = EngineNeeds.compute(listOf(ef(flow("a", SparkTypes.WEBHOOK), state)))
@@ -57,7 +65,7 @@ class EngineNeedsTest {
     @Test fun `system wake-up only flows keep the engine off and say so`() {
         val r = EngineNeeds.compute(listOf(
             ef(flow("a", SparkTypes.SCHEDULE)), ef(flow("b", SparkTypes.SMS)), ef(flow("c", SparkTypes.GEOFENCE)),
-            ef(flow("d", SparkTypes.WIFI)), ef(flow("e", SparkTypes.BATTERY)), ef(flow("f", SparkTypes.BLUETOOTH)),
+            ef(flow("d", SparkTypes.SHARE)), ef(flow("e", SparkTypes.BOOT)), ef(flow("f", SparkTypes.BLUETOOTH)),
         ))
         assertFalse(r.engineNeeded); assertTrue(r.systemWakeupsOnly); assertEquals(6, r.liveFlowCount)
     }

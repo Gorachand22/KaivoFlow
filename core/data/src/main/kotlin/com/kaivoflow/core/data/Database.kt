@@ -169,6 +169,9 @@ interface RunDao {
     @Query("SELECT * FROM runs ORDER BY startedAt DESC LIMIT :limit")
     suspend fun recent(limit: Int = 100): List<RunEntity>
 
+    @Query("SELECT * FROM runs WHERE id = :id")
+    suspend fun byId(id: String): RunEntity?
+
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun upsert(entity: RunEntity)
 

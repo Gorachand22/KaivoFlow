@@ -2,6 +2,7 @@ package com.kaivoflow.core.work.alwayson
 
 import android.content.Context
 import androidx.work.Constraints
+import androidx.work.Data
 import androidx.work.ExistingPeriodicWorkPolicy
 import androidx.work.ExistingWorkPolicy
 import androidx.work.NetworkType
@@ -43,7 +44,7 @@ class FlexibleWork @Inject constructor(@ApplicationContext private val context: 
     ): String {
         val letter = if (sameSlotAlreadyArmed && currentLetter != null) currentLetter else SchedulePlanner.nextSlot(currentLetter)
         val policy = if (sameSlotAlreadyArmed && currentLetter != null) ExistingWorkPolicy.KEEP else ExistingWorkPolicy.REPLACE
-        val request = OneTimeWorkRequestBuilder<FlowRunWorker>()
+        val request = OneTimeWorkRequestBuilder<ScheduleSlotWorker>()
             .setInitialDelay((slotMs - nowMs).coerceAtLeast(0), TimeUnit.MILLISECONDS)
             .setConstraints(
                 Constraints.Builder()
@@ -53,11 +54,9 @@ class FlexibleWork @Inject constructor(@ApplicationContext private val context: 
             )
             .setInputData(
                 workDataOf(
-                    FlowRunWorker.KEY_FLOW_ID to flowId,
-                    FlowRunWorker.KEY_SPARK_ID to sparkId,
-                    FlowRunWorker.KEY_TRIGGER to "scheduled",
-                    FlowRunWorker.KEY_SLOT to letter,
-                    FlowRunWorker.KEY_FIRE_AT to slotMs,
+                    ScheduleSlotWorker.KEY_FLOW_ID to flowId,
+                    ScheduleSlotWorker.KEY_SPARK_ID to sparkId,
+                    ScheduleSlotWorker.KEY_FIRE_AT to slotMs,
                 ),
             )
             .addTag("flow:$flowId")
@@ -107,19 +106,21 @@ class WatchdogScheduler @Inject constructor(@ApplicationContext private val cont
     }
 }
 
-/** The fallback Run host: drains the Inbox from WorkManager when the Engine cannot run (spec 3.11). */
+/** Enqueues the fallback Run host, [FlowRunWorker], which drains the Inbox from WorkManager when the Engine cannot run (spec 3.11). */
 @Singleton
 class FallbackHost @Inject constructor(@ApplicationContext private val context: Context) {
     /**
-     * Two unique names, both KEEP. A row written just after a running drain saw an empty Inbox gets a follow-up job on the
-     * other name instead of being lost, and at most two drains exist at once. Draining twice is harmless: both call the same
+     * Two unique names, both KEEP. A row written just after a running worker saw an empty Inbox gets a follow-up job on the
+     * other name instead of being lost, and at most two workers exist at once. Two workers are harmless: both call the same
      * [com.kaivoflow.core.engine.alwayson.RunDispatcher], which serialises per Flow and claims rows atomically.
-     * Expedited with a normal-work fallback; the worker supplies `getForegroundInfo` for API 26 to 30.
+     * The only input is the Inbox row id (null: sweep). Expedited with a normal-work fallback; the worker supplies `getForegroundInfo`.
      */
-    fun ensureDrain() {
+    fun ensureDrain(rowId: Long? = null) {
+        val input = if (rowId != null && rowId > 0) workDataOf(FlowRunWorker.KEY_INBOX_ID to rowId) else Data.EMPTY
         listOf(UNIQUE_A, UNIQUE_B).forEach { name ->
-            val request = OneTimeWorkRequestBuilder<InboxDrainWorker>()
+            val request = OneTimeWorkRequestBuilder<FlowRunWorker>()
                 .setExpedited(OutOfQuotaPolicy.RUN_AS_NON_EXPEDITED_WORK_REQUEST)
+                .setInputData(input)
                 .addTag(TAG)
                 .build()
             WorkManager.getInstance(context).enqueueUniqueWork(name, ExistingWorkPolicy.KEEP, request)

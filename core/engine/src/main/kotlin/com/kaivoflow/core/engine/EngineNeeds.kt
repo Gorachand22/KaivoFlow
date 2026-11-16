@@ -36,8 +36,10 @@ object SparkTypes {
 
     fun need(type: String): EngineNeed = when (type) {
         WEBHOOK, HEADSET, SCREEN, POWER -> EngineNeed.Required
-        NOTIFICATION -> EngineNeed.Wanted
-        BATTERY, BLUETOOTH -> EngineNeed.Optional
+        // Battery and Wi-Fi are sourced by receivers and callbacks the Engine registers while it runs (AO-12): the Engine is
+        // wanted for them. Bluetooth keeps its manifest path (AO-14) and only uses the Engine when it runs anyway.
+        NOTIFICATION, BATTERY, WIFI -> EngineNeed.Wanted
+        BLUETOOTH -> EngineNeed.Optional
         else -> EngineNeed.None
     }
 }

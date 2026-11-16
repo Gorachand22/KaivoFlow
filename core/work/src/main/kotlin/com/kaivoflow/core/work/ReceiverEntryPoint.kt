@@ -2,6 +2,7 @@ package com.kaivoflow.core.work
 
 import android.content.Context
 import com.kaivoflow.core.work.alwayson.AlarmScheduler
+import com.kaivoflow.core.work.alwayson.DeviceEvents
 import com.kaivoflow.core.work.alwayson.EngineController
 import com.kaivoflow.core.work.alwayson.Reconciler
 import com.kaivoflow.core.work.alwayson.ReliabilityRecorder
@@ -22,7 +23,7 @@ import dagger.hilt.components.SingletonComponent
 @EntryPoint
 @InstallIn(SingletonComponent::class)
 interface ReceiverEntryPoint {
-    fun scheduler(): FlowScheduler
+    fun deviceEvents(): DeviceEvents
     fun runNotifications(): RunNotifications
     fun reconciler(): Reconciler
     fun scheduleFirer(): ScheduleFirer

@@ -24,6 +24,8 @@ enum class IntakeSource(val reason: StartReason, val exemptFromFgsLimits: Boolea
     Event(StartReason.IntakeEvent, false),
     Worker(StartReason.Watchdog, false),
     Reconcile(StartReason.Reassess, false),
+    /** A geofence transition: a platform-listed foreground-start exemption. */
+    Geofence(StartReason.Geofence, true),
 }
 
 /**
@@ -39,7 +41,10 @@ class SparkIntake @Inject constructor(
     private val controller: EngineController,
     private val wakeLocks: WakeLockManager,
 ) {
-    /** Stores one event for one Spark. [sourceId] makes a repeated delivery of the same occurrence a no-op; null means unique. */
+    /**
+     * Stores one event for one Spark. [sourceId] makes a repeated delivery of the same occurrence a no-op; null means unique.
+     * The row is committed before the consumer is woken, and a failure to wake never turns a stored event into a failure.
+     */
     suspend fun enqueue(
         flowId: String,
         sparkId: String,
@@ -51,8 +56,18 @@ class SparkIntake @Inject constructor(
     ): EnqueueResult {
         val key = DedupeKeys.event(kind, flowId, sparkId, sourceId ?: UUID.randomUUID().toString())
         val result = inbox.enqueue(NewSpark(flowId, sparkId, kind, InboxPayloads.encode(items, meta), key))
-        if (result is EnqueueResult.Stored) controller.onInboxWritten(source)
+        if (result is EnqueueResult.Stored) wake(source, result.id)
         return result
+    }
+
+    private suspend fun wake(source: IntakeSource, firstRowId: Long? = null) {
+        try {
+            controller.onInboxWritten(source, firstRowId)
+        } catch (ce: kotlinx.coroutines.CancellationException) {
+            throw ce
+        } catch (_: Exception) {
+            // The row is durable; the Pulse and the watchdog pick it up even if this wake-up failed.
+        }
     }
 
     /**
@@ -65,15 +80,16 @@ class SparkIntake @Inject constructor(
             val targetFlowId = payload["targetFlowId"] as? String
             val snapshots = lifecycle.allSnapshots()
             var stored = 0
+            var firstId: Long? = null
             for (flow in flows.all()) {
                 if (!isLive(flow, snapshots)) continue
                 if (targetFlowId != null && flow.id != targetFlowId) continue
                 for (spark in flow.triggers.filter { EventTriggerMatcher.matches(it, kind, payload, context.packageName) }) {
                     val r = enqueueQuiet(flow.id, spark.id, kind, listOf(seed), sourceId)
-                    if (r is EnqueueResult.Stored) stored++
+                    if (r is EnqueueResult.Stored) { stored++; if (firstId == null) firstId = r.id }
                 }
             }
-            if (stored > 0) controller.onInboxWritten(source)
+            if (stored > 0) wake(source, firstId)
             return stored
         }
     }

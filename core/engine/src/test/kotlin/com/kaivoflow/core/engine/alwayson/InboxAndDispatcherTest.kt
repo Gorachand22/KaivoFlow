@@ -166,12 +166,12 @@ class InboxAndDispatcherTest {
         val exec = Recorder()
         val s = scope()
         val d = RunDispatcher(store, exec, clock, s, listener = object : DispatchListener {
-            override suspend fun onInterrupted(count: Int) { interrupted.addAndGet(count) }
+            override suspend fun onCrashed(claims: List<CrashedClaim>) { interrupted.addAndGet(claims.size) }
         })
         d.drainUntilIdle()
         assertTrue(exec.order.isEmpty())
         assertEquals(InboxRowState.Dropped, store.get(id)!!.state)
-        assertEquals("RunInterrupted", store.get(id)!!.dropReason)
+        assertEquals(RunCrash.DROP_REASON, store.get(id)!!.dropReason)
         assertEquals(1, interrupted.get())
         s.cancel()
     }

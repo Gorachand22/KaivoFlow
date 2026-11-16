@@ -27,6 +27,14 @@ object ReliabilityKinds {
     const val SCHEDULE_SKIPPED = "ScheduleSkipped"
     const val RECONCILE_FAILED = "ReconcileFailed"
     const val WAKELOCK_TIMEOUT = "WakeLockTimeout"
+    const val RUN_CRASHED = "RunCrashed"
+    const val WEBHOOK_BIND_FAILED = "WebhookBindFailed"
+    const val WEBHOOK_REACH_CHANGED = "WebhookReachChanged"
+    const val LISTENER_DISCONNECTED = "ListenerDisconnected"
+    const val LISTENER_RECONNECTED = "ListenerReconnected"
+    const val LISTENER_REBIND_REQUESTED = "ListenerRebindRequested"
+    const val SPARK_REGISTRATION_FAILED = "SparkRegistrationFailed"
+    const val FGS_START_SKIPPED = "FgsStartSkipped"
 }
 
 object Severity { const val INFO = "info"; const val WARN = "warn"; const val ERROR = "error" }
@@ -34,7 +42,9 @@ object Severity { const val INFO = "info"; const val WARN = "warn"; const val ER
 /** Why the Engine or a Reconciler pass was started. Stored as text in `engine_session.startReason`. */
 enum class StartReason {
     UserOpen, Publish, Boot, PackageReplaced, TimeChanged, Pulse, Watchdog, Alarm, StickyRestart,
-    RestartAlarm, IntakeEvent, Reassess, UserTap, ExactAlarmPermission;
+    RestartAlarm, IntakeEvent, Reassess, UserTap, ExactAlarmPermission,
+    /** A geofence transition: a platform-listed foreground-start exemption. */
+    Geofence;
 }
 
 /**

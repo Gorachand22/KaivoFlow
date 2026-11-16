@@ -9,6 +9,7 @@ import com.kaivoflow.core.engine.alwayson.EngineState
 import com.kaivoflow.core.engine.alwayson.EngineStateMachine
 import com.kaivoflow.core.engine.alwayson.PayloadFiles
 import com.kaivoflow.core.engine.alwayson.Severity
+import com.kaivoflow.core.engine.alwayson.WebhookDefaults
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -48,7 +49,7 @@ class EngineRuntime @Inject constructor() {
     private inline fun <T> MutableStateFlow<T>.updateAndGet(f: (T) -> T): T { update(f); return value }
 }
 
-/** Engine switches the user controls. Only "Always-on mode" exists in M1 (spec 3.3). */
+/** Engine switches the user controls: "Always-on mode" (spec 3.3) and the webhook reach settings (spec 3.7). */
 @Singleton
 class EngineSettings @Inject constructor(@ApplicationContext context: Context) {
     private val prefs = context.getSharedPreferences("kaivo.engine", Context.MODE_PRIVATE)
@@ -57,7 +58,23 @@ class EngineSettings @Inject constructor(@ApplicationContext context: Context) {
         get() = prefs.getBoolean(KEY_ALWAYS_ON, false)
         set(value) { prefs.edit().putBoolean(KEY_ALWAYS_ON, value).apply() }
 
-    private companion object { const val KEY_ALWAYS_ON = "alwaysOnMode" }
+    /**
+     * Explicit opt-in for the webhook listener to bind every network interface. Off by default (loopback only). Even when on, the
+     * listener accepts only the per-Flow token (see `WebhookAuth`). Use `WebhookAdmin` to change it so the listener is rebound.
+     */
+    var webhookLanEnabled: Boolean
+        get() = prefs.getBoolean(KEY_WEBHOOK_LAN, false)
+        set(value) { prefs.edit().putBoolean(KEY_WEBHOOK_LAN, value).apply() }
+
+    var webhookPort: Int
+        get() = prefs.getInt(KEY_WEBHOOK_PORT, WebhookDefaults.DEFAULT_PORT)
+        set(value) { prefs.edit().putInt(KEY_WEBHOOK_PORT, value).apply() }
+
+    private companion object {
+        const val KEY_ALWAYS_ON = "alwaysOnMode"
+        const val KEY_WEBHOOK_LAN = "webhookLan"
+        const val KEY_WEBHOOK_PORT = "webhookPort"
+    }
 }
 
 /** Writes `reliability_event` rows. Never throws: evidence keeping must not break the thing it observes. */
@@ -102,3 +119,26 @@ internal fun bootCount(context: Context): Int =
         .getOrDefault(-1)
 
 internal fun sinceBootSeconds(): Long = SystemClock.elapsedRealtime() / 1000
+
+/**
+ * Evidence that an event Spark's source is alive (spec 6.4): when the last event of each kind reached the Inbox path, and a short
+ * detail (the battery level, a geofence transition). The Reliability Center and the probes read it (M2); it survives process death.
+ * Event Sparks have no expected time, so unlike schedules they leave "last seen" evidence rather than `expected_run` rows.
+ */
+@Singleton
+class EventEvidence @Inject constructor(@ApplicationContext context: Context) {
+    private val prefs = context.getSharedPreferences("kaivo.evidence", Context.MODE_PRIVATE)
+
+    data class Seen(val atMs: Long, val detail: String?)
+
+    fun record(kind: String, atMs: Long, detail: String? = null) {
+        val editor = prefs.edit().putLong("$kind.at", atMs)
+        if (detail != null) editor.putString("$kind.detail", detail) else editor.remove("$kind.detail")
+        editor.apply()
+    }
+
+    fun last(kind: String): Seen? {
+        if (!prefs.contains("$kind.at")) return null
+        return Seen(prefs.getLong("$kind.at", 0L), prefs.getString("$kind.detail", null))
+    }
+}

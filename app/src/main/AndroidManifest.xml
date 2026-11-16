@@ -35,9 +35,8 @@
          sideload holds USE_EXACT_ALARM and SCHEDULE_EXACT_ALARM, play holds only SCHEDULE_EXACT_ALARM.
          See docs/specs/P2-always-on-engine.md section 3.12. -->
 
-    <!-- Sensitive, optional Sparks. Both are runtime permissions: nothing is requested at first launch. -->
-    <uses-permission android:name="android.permission.RECEIVE_SMS" />
-    <uses-permission android:name="android.permission.SEND_SMS" />
+    <!-- SMS permissions and the SMS receiver are declared only by the sideload flavour (src/sideload): Play restricts the
+         SMS group. The play flavour removes them explicitly (src/play), so no dependency can bring them back. -->
 
     <!-- Reading notifications is a Settings grant, not a runtime one; the service below is the only user. -->
     <uses-permission android:name="android.permission.BIND_NOTIFICATION_LISTENER_SERVICE"
@@ -95,16 +94,6 @@
             </intent-filter>
         </service>
 
-        <!-- SMS Spark source. Exported because the telephony stack is the sender. -->
-        <receiver
-            android:name="com.kaivoflow.feature.permissions.SmsSparkReceiver"
-            android:exported="true"
-            android:permission="android.permission.BROADCAST_SMS">
-            <intent-filter android:priority="999">
-                <action android:name="android.provider.Telephony.SMS_RECEIVED" />
-            </intent-filter>
-        </receiver>
-
         <receiver
             android:name="com.kaivoflow.core.work.BootReceiver"
             android:exported="true"
@@ -118,13 +107,26 @@
             </intent-filter>
         </receiver>
 
-        <!-- Phone-native Sparks. Not exported: the geofence PendingIntent targets this component
-             explicitly, and Wi-Fi, Bluetooth and headset broadcasts are received through a runtime
-             registration in SparkRuntime (the manifest cannot receive them on modern Android). -->
+        <!-- Geofence transitions. Not exported: the PendingIntents from GeofencingClient and the proximity-alert fallback
+             target this component explicitly. -->
         <receiver
-            android:name="com.kaivoflow.core.work.MobileEventReceiver"
+            android:name="com.kaivoflow.core.work.alwayson.GeofenceReceiver"
             android:exported="false"
             android:enabled="true" />
+
+        <!-- Bluetooth ACL connect and disconnect (AO-14). Exported because the Bluetooth stack is the sender; both actions are
+             protected broadcasts, so no other app can send them. Whether the platform delivers them to a manifest receiver for the
+             target SDK is checked per device (T-BT); the Engine also registers the same receiver logic while it runs, and the
+             Inbox dedupe key absorbs a double delivery. -->
+        <receiver
+            android:name="com.kaivoflow.core.work.alwayson.BluetoothAclReceiver"
+            android:exported="true"
+            android:enabled="true">
+            <intent-filter>
+                <action android:name="android.bluetooth.device.action.ACL_CONNECTED" />
+                <action android:name="android.bluetooth.device.action.ACL_DISCONNECTED" />
+            </intent-filter>
+        </receiver>
 
         <!-- WorkManager is initialised by KaivoApplication through the Hilt worker factory. -->
         <provider

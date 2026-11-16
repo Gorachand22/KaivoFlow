@@ -2,6 +2,7 @@ package com.kaivoflow.core.work.alwayson
 
 import android.content.Context
 import android.content.Intent
+import android.os.PowerManager
 import androidx.core.content.ContextCompat
 import com.kaivoflow.core.data.FlowLifecycleRepository
 import com.kaivoflow.core.data.FlowRepository
@@ -14,6 +15,7 @@ import com.kaivoflow.core.engine.alwayson.EngineAction
 import com.kaivoflow.core.engine.alwayson.EngineDecision
 import com.kaivoflow.core.engine.alwayson.EngineEvent
 import com.kaivoflow.core.engine.alwayson.EngineState
+import com.kaivoflow.core.engine.alwayson.FgsStartPolicy
 import com.kaivoflow.core.engine.alwayson.InboxStore
 import com.kaivoflow.core.engine.alwayson.ReliabilityKinds
 import com.kaivoflow.core.engine.alwayson.Severity
@@ -76,6 +78,11 @@ class EngineController @Inject constructor(
      * `ServiceStarted` itself); false when it was refused.
      */
     suspend fun start(reason: StartReason, transient: Boolean = false, notifyOnDenial: Boolean = true): Boolean {
+        // Never call startForegroundService from a state the platform forbids (spec 3.5): the policy decides, the platform is not asked.
+        if (!FgsStartPolicy.mayStart(reason, batteryExempt())) {
+            onStartSkipped(reason, notifyOnDenial)
+            return false
+        }
         runtime.reduce(EngineEvent.StartRequested)
         val intent = Intent(context, AlwaysOnService::class.java)
             .putExtra(AlwaysOnService.EXTRA_REASON, reason.name)
@@ -91,6 +98,20 @@ class EngineController @Inject constructor(
             false
         }
     }
+
+    /** The policy refused the start without asking the platform. Same visible outcome as a refusal: Start-blocked and the fallback host. */
+    private suspend fun onStartSkipped(reason: StartReason, notify: Boolean) {
+        runtime.reduce(EngineEvent.StartDenied("NotAttempted"))
+        if (throttle.tryAcquire("fgs-start-skipped:${reason.name}")) {
+            recorder.record(ReliabilityKinds.FGS_START_SKIPPED, Severity.INFO, detail = reason.name)
+        }
+        if (notify && throttle.tryAcquire("fgs-start-denied")) notifications.postStartBlocked()
+        if (hasInboxWork()) fallback.ensureDrain()
+    }
+
+    /** Holding the battery-optimisation exemption also exempts the app from the background-start limits (spec 3.5, R8). */
+    fun batteryExempt(): Boolean =
+        context.getSystemService(PowerManager::class.java)?.isIgnoringBatteryOptimizations(context.packageName) == true
 
     suspend fun onStartDenied(e: Exception, reason: StartReason, notify: Boolean) {
         runtime.reduce(EngineEvent.StartDenied(e.javaClass.simpleName))
@@ -108,17 +129,21 @@ class EngineController @Inject constructor(
 
     /**
      * Called after an Inbox write. Run in the Engine when it is alive, in WorkManager when it is not, never both (spec 3.1 rule 4).
-     * When the Engine is down, try to start it (a short session when nothing needs it permanently); if the platform refuses, the
-     * fallback worker drains the Inbox.
+     * A source that the platform does not exempt (SMS, notification, Wi-Fi, Bluetooth, a webhook that outlived its Engine) never
+     * starts the service: the row is already durable, so the fallback worker hosts the Run. Exempt sources (an exact alarm, a
+     * geofence transition) try to start the Engine, as a short session when nothing needs it permanently, and fall back the same
+     * way when the platform still refuses. [firstRowId] only names the row the worker was created for.
      */
-    suspend fun onInboxWritten(source: IntakeSource) {
+    suspend fun onInboxWritten(source: IntakeSource, firstRowId: Long? = null) {
         if (runtime.serviceAlive) {
             host.nudge()
             return
         }
-        val needs = needs()
-        val started = start(source.reason, transient = !needs.engineNeeded, notifyOnDenial = source.exemptFromFgsLimits)
-        if (!started) fallback.ensureDrain()
+        if (FgsStartPolicy.mayStart(source.reason, batteryExempt())) {
+            val needs = needs()
+            if (start(source.reason, transient = !needs.engineNeeded, notifyOnDenial = source.exemptFromFgsLimits)) return
+        }
+        fallback.ensureDrain(firstRowId)
     }
 
     private companion object {
@@ -127,7 +152,7 @@ class EngineController @Inject constructor(
          * recorded and handed to the fallback worker, but no notification. Everything else is an exempt start path or the
          * watchdog, where a refusal deserves the "needs a tap" notice (throttled to one per hour).
          */
-        val QUIET_REASONS = setOf(StartReason.IntakeEvent, StartReason.UserOpen, StartReason.Reassess, StartReason.StickyRestart)
+        val QUIET_REASONS = setOf(StartReason.IntakeEvent, StartReason.UserOpen, StartReason.Reassess, StartReason.StickyRestart, StartReason.Geofence)
     }
 
     /** True while Inbox rows are waiting or running. A transient session stays up until this is false. */

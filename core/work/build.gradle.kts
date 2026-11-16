@@ -26,6 +26,8 @@ dependencies {
     implementation(project(":core:expressions"))
 
     implementation(libs.androidx.work.runtime.ktx)
+    // GeofencingClient (AO-13). Absent or unusable Play services fall back to proximity alerts at runtime.
+    implementation(libs.play.services.location)
     implementation(libs.androidx.hilt.work)
     ksp(libs.androidx.hilt.compiler)
     implementation(libs.hilt.android)

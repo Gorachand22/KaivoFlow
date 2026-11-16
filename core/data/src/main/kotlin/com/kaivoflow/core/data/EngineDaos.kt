@@ -127,7 +127,7 @@ interface SparkInboxDao {
     /**
      * Rows that can be claimed now, oldest first: Pending, or Claimed with an expired lease whose Run never started.
      * A Claimed row with a runId is a Run that began; if its lease expired the process died mid-Run and the row is
-     * reaped as interrupted ([reapCrashed]), never replayed (spec 3.1: at-most-once side effects).
+     * recorded as Crashed ([markCrashed]), never replayed (spec 3.1: at-most-once side effects).
      * Keep in sync with `LeasePolicy.isOffered` in core:engine.
      */
     @Query(
@@ -161,11 +161,19 @@ interface SparkInboxDao {
     @Query("UPDATE spark_inbox SET state = 'DROPPED', dropReason = :reason, leaseUntil = NULL WHERE id = :id AND state IN ('PENDING', 'CLAIMED')")
     suspend fun drop(id: Long, reason: String): Int
 
+    /** Started claims whose lease expired: the process died mid-Run. Keep in sync with `LeasePolicy.isCrashed`. */
     @Query(
-        "UPDATE spark_inbox SET state = 'DROPPED', dropReason = 'RunInterrupted', leaseUntil = NULL " +
-            "WHERE state = 'CLAIMED' AND runId IS NOT NULL AND (leaseUntil IS NULL OR leaseUntil < :now)",
+        "SELECT * FROM spark_inbox WHERE state = 'CLAIMED' AND runId IS NOT NULL AND (leaseUntil IS NULL OR leaseUntil < :now) " +
+            "ORDER BY id ASC",
     )
-    suspend fun reapCrashed(now: Long): Int
+    suspend fun crashedClaims(now: Long): List<SparkInboxEntity>
+
+    /** Atomic: of two processes racing to record the same crash, exactly one gets 1. Reason text is `RunCrash.DROP_REASON`. */
+    @Query(
+        "UPDATE spark_inbox SET state = 'DROPPED', dropReason = 'Crashed', leaseUntil = NULL " +
+            "WHERE id = :id AND state = 'CLAIMED' AND runId IS NOT NULL AND (leaseUntil IS NULL OR leaseUntil < :now)",
+    )
+    suspend fun markCrashed(id: Long, now: Long): Int
 
     @Query("UPDATE spark_inbox SET state = 'PENDING', leaseUntil = NULL WHERE id = :id AND state = 'CLAIMED'")
     suspend fun release(id: Long): Int

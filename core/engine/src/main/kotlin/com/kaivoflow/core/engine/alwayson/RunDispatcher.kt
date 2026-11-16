@@ -16,7 +16,7 @@ import com.kaivoflow.core.engine.RetryBackoff
 
 sealed interface RunOutcome {
     /** A Run executed (whatever its final status). The row is Done. */
-    data class Completed(val runId: String?, val status: String = "") : RunOutcome
+    data class Completed(val runId: String?, val status: String = "", val responseJson: String? = null) : RunOutcome
     /** The Flow is busy with something that is not a dispatcher Run (a manual Run). Retry after a back-off. */
     data object Busy : RunOutcome
     /** The row must not run (Flow deleted, paused or unpublished). */
@@ -34,7 +34,8 @@ interface DispatchListener {
     suspend fun onStarted(record: InboxRecord, runId: String) {}
     suspend fun onFinished(record: InboxRecord, outcome: RunOutcome?) {}
     suspend fun onDropped(record: InboxRecord, reason: String) {}
-    suspend fun onInterrupted(count: Int) {}
+    /** Started Runs whose lease expired with no process. Their rows are already Dropped as Crashed; a Run record may need closing. */
+    suspend fun onCrashed(claims: List<CrashedClaim>) {}
 }
 
 data class DispatcherConfig(
@@ -82,8 +83,8 @@ class RunDispatcher(
     /** One scan: claim every row that may start now and launch it. */
     suspend fun pump(): PumpResult = lock.withLock {
         val now = clock.now()
-        val interrupted = store.reapCrashed(now)
-        if (interrupted > 0) runCatching { listener.onInterrupted(interrupted) }
+        val crashed = reapCrashed(now)
+        if (crashed.isNotEmpty()) runCatching { listener.onCrashed(crashed) }
         val rows = store.claimable(now, config.scanBatch)
         val foreignClaims = store.liveClaimedFlowIds(now)
         val blocked = HashSet<String>()
@@ -108,6 +109,31 @@ class RunDispatcher(
             started++
         }
         PumpResult(started, nextCooldown, more)
+    }
+
+    /**
+     * Marks every started claim with an expired lease as Crashed (never replayed) and returns what was marked. Only rows this call
+     * actually changed are returned, so two processes racing here report each crash once.
+     */
+    private suspend fun reapCrashed(now: Long): List<CrashedClaim> =
+        store.crashedClaims(now).filter { store.markCrashed(it.id, now) }.map { CrashedClaim(it, now) }
+
+    enum class RowWait { Finished, TimedOut, Missing }
+
+    /**
+     * Fallback-worker entry (AO-15): drives the Inbox until row [id] is Done or Dropped, or [maxWaitMs] passes. Arrival order and the
+     * per-Flow rule still apply, so earlier rows of the same Flow run first. A row that is already finished (the Engine got there
+     * first) returns at once without running anything: the worker can never double-run a Run id.
+     */
+    suspend fun drainUntilFinished(id: Long, maxWaitMs: Long = 10 * 60_000L): RowWait {
+        val deadline = clock.now() + maxWaitMs
+        while (true) {
+            val row = store.get(id) ?: return RowWait.Missing
+            if (row.state == InboxRowState.Done || row.state == InboxRowState.Dropped) return RowWait.Finished
+            pump()
+            if (clock.now() >= deadline) return RowWait.TimedOut
+            withTimeoutOrNull(100L) { wake.receive() }
+        }
     }
 
     /** Runs the dispatcher until the scope is cancelled. Used by the foreground service. */

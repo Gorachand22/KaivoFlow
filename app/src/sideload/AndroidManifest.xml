@@ -5,4 +5,22 @@
          schedules never degrade to Flexible. Not allowed for a store release (spec decision D6). -->
     <uses-permission android:name="android.permission.USE_EXACT_ALARM" />
     <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM" />
+
+    <!-- SMS Spark. Runtime permissions: nothing is requested at first launch. Play restricts this group, so only this flavour
+         declares it (spec 3.12). SEND_SMS stays for a future Send SMS Step; nothing in code sends yet. -->
+    <uses-permission android:name="android.permission.RECEIVE_SMS" />
+    <uses-permission android:name="android.permission.SEND_SMS" />
+
+    <application>
+        <!-- Exported because the telephony stack is the sender; BROADCAST_SMS keeps every other app out. It writes an Inbox
+             row inside goAsync and starts no service (AO-12). -->
+        <receiver
+            android:name="com.kaivoflow.feature.permissions.SmsSparkReceiver"
+            android:exported="true"
+            android:permission="android.permission.BROADCAST_SMS">
+            <intent-filter android:priority="999">
+                <action android:name="android.provider.Telephony.SMS_RECEIVED" />
+            </intent-filter>
+        </receiver>
+    </application>
 </manifest>

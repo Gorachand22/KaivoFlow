@@ -16,7 +16,7 @@ import com.kaivoflow.core.engine.alwayson.ReconcileTrigger
 import com.kaivoflow.core.engine.alwayson.ReliabilityKinds
 import com.kaivoflow.core.engine.alwayson.Severity
 import com.kaivoflow.core.engine.alwayson.StartReason
-import com.kaivoflow.core.work.WebhookController
+import com.kaivoflow.core.work.WebhookServer
 import dagger.hilt.android.AndroidEntryPoint
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -33,7 +33,7 @@ import javax.inject.Inject
 /**
  * The Always-On Engine's foreground service (spec 3.4): type `specialUse`, sticky, one stable notification.
  *
- * It hosts the Inbox consumer ([RunHost]) and the webhook listener, and runs the Reconciler on every start. It does not hold a
+ * It hosts the Inbox consumer ([RunHost]), the webhook listener (via [WebhookRegistrar]) and the live event sources ([EngineSources]), and runs the Reconciler on every start. It does not hold a
  * standing wake lock. After a kill the system restarts it with a null intent (START_STICKY); after a swipe from Recents on an
  * OEM that kills the process, the restart alarm armed by [onTaskRemoved] brings it back.
  */
@@ -45,7 +45,9 @@ class AlwaysOnService : Service() {
     @Inject lateinit var notifications: EngineNotifications
     @Inject lateinit var host: RunHost
     @Inject lateinit var reconciler: Reconciler
-    @Inject lateinit var webhook: WebhookController
+    @Inject lateinit var webhookRegistrar: WebhookRegistrar
+    @Inject lateinit var webhookServer: WebhookServer
+    @Inject lateinit var sources: EngineSources
     @Inject lateinit var telemetry: EngineTelemetryRepository
     @Inject lateinit var recorder: ReliabilityRecorder
     @Inject lateinit var alarms: AlarmScheduler
@@ -68,6 +70,8 @@ class AlwaysOnService : Service() {
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         // Promote first: the platform gives a few seconds between startForegroundService and startForeground.
         if (!goForeground("Starting")) {
+            // The platform refused the promotion. Stored work must still run: hand it to the WorkManager fallback host.
+            farewell.launch { runCatching { if (inboxStore.openCount() > 0) fallback.ensureDrain() } }
             stopSelf()
             return START_NOT_STICKY
         }
@@ -115,7 +119,8 @@ class AlwaysOnService : Service() {
         runtime.transientSession = false
         runtime.reduce(EngineEvent.ServiceStopped(clean = deliberate))
         host.stop()
-        webhook.stopServer()
+        sources.stop()
+        webhookServer.stop()
         val session = runtime.sessionId
         // Fire and forget on a scope that outlives the service: onDestroy must not block the main thread on the database.
         farewell.launch {
@@ -144,6 +149,7 @@ class AlwaysOnService : Service() {
         }
         if (!NotificationManagerCompat.from(this).areNotificationsEnabled()) runtime.reduce(EngineEvent.DegradedReported(true))
         host.start()
+        sources.start()
         refreshJob = scope.launch { runtime.refresh.collect { refresh() } }
         // Repair first (re-arm, misfire, registrations), then consume: rows the Reconciler enqueues run straight away.
         runCatching { reconciler.reconcile(ReconcileTrigger.ServiceStart) }
@@ -154,7 +160,8 @@ class AlwaysOnService : Service() {
     /** Re-evaluates needs: notification text, webhook listener, and the end of a transient session. */
     private suspend fun refresh() {
         val needs = runCatching { controller.needs() }.getOrNull() ?: return
-        runCatching { webhook.sync(needs.engineNeeded) }
+        runCatching { webhookRegistrar.apply() }
+        runCatching { sources.refresh() }
         val next = runCatching { schedules.allStates().mapNotNull { it.nextDueAt }.filter { it > System.currentTimeMillis() }.minOrNull() }.getOrNull()
         val text = buildString {
             append(next?.let { "Next scheduled run ${DateFormat.getTimeInstance(DateFormat.SHORT).format(Date(it))}" } ?: "Listening for events")

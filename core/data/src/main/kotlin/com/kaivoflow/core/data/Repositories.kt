@@ -161,6 +161,9 @@ interface RunRepository {
     fun observeRecent(limit: Int = 100): FlowStream<List<RunRecord>>
     fun observeForFlow(flowId: String, limit: Int = 50): FlowStream<List<RunRecord>>
     suspend fun save(run: RunRecord)
+
+    /** One Run by id, or null (pruned, or a Flow that keeps no history). Used to close the record of a crashed Run. */
+    suspend fun run(id: String): RunRecord?
     suspend fun clear()
     suspend fun pruneOlderThan(days: Int)
 }
@@ -175,6 +178,10 @@ class RoomRunRepository(
 
     override fun observeForFlow(flowId: String, limit: Int): FlowStream<List<RunRecord>> =
         runDao.observeForFlow(flowId, limit).map { list -> list.mapNotNull { JsonCodec.decodeRun(it.runJson) } }
+
+    override suspend fun run(id: String): RunRecord? = withContext(io) {
+        runDao.byId(id)?.let { JsonCodec.decodeRun(it.runJson) }
+    }
 
     override suspend fun save(run: RunRecord) = withContext(io) {
         runDao.upsert(

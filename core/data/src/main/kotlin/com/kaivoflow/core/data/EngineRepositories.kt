@@ -224,7 +224,8 @@ class RoomInboxStore(private val dao: SparkInboxDao) : InboxStore {
     override suspend fun complete(id: Long, runId: String?) = dao.complete(id, runId) == 1
     override suspend fun release(id: Long) = dao.release(id) == 1
     override suspend fun drop(id: Long, reason: String) = dao.drop(id, reason) == 1
-    override suspend fun reapCrashed(now: Long) = dao.reapCrashed(now)
+    override suspend fun crashedClaims(now: Long) = dao.crashedClaims(now).map { it.toRecord() }
+    override suspend fun markCrashed(id: Long, now: Long) = dao.markCrashed(id, now) == 1
     override suspend fun openCount() = dao.openCount()
 
     private fun SparkInboxEntity.toRecord() = InboxRecord(

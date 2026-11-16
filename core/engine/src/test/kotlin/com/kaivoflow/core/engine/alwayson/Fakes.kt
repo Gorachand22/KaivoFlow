@@ -62,10 +62,13 @@ class MemInboxStore(private val clock: Clock) : InboxStore {
         find(id)?.takeIf { it.state == InboxRowState.Pending || it.state == InboxRowState.Claimed }
             ?.let { replace(id) { r -> r.copy(state = InboxRowState.Dropped, dropReason = reason, leaseUntil = null) } } ?: false
     }
-    override suspend fun reapCrashed(now: Long): Int = sync {
-        val ids = rows.filter { LeasePolicy.isCrashed(it.state, it.leaseUntil, it.runId, now) }.map { it.id }
-        ids.forEach { id -> replace(id) { it.copy(state = InboxRowState.Dropped, dropReason = "RunInterrupted", leaseUntil = null) } }
-        ids.size
+    override suspend fun crashedClaims(now: Long) = sync {
+        rows.filter { LeasePolicy.isCrashed(it.state, it.leaseUntil, it.runId, now) }.sortedBy { it.id }
+    }
+    override suspend fun markCrashed(id: Long, now: Long): Boolean = sync {
+        val r = find(id) ?: return@sync false
+        if (!LeasePolicy.isCrashed(r.state, r.leaseUntil, r.runId, now)) return@sync false
+        replace(id) { it.copy(state = InboxRowState.Dropped, dropReason = RunCrash.DROP_REASON, leaseUntil = null) }
     }
     override suspend fun openCount() = sync { rows.count { it.state == InboxRowState.Pending || it.state == InboxRowState.Claimed } }
 }
