@@ -142,6 +142,13 @@ interface ScheduleRepository {
     suspend fun recentForFlow(flowId: String, since: Long, limit: Int = 200): List<ExpectedRunEntity>
     suspend fun deleteExpectedOlderThan(before: Long): Int
     suspend fun purge(flowId: String)
+
+    suspend fun compactable(cutoff: Long): List<ExpectedRunEntity>
+    suspend fun saveDaily(rows: List<ExpectedRunDailyEntity>)
+    suspend fun dailySince(since: Long): List<ExpectedRunDailyEntity>
+    suspend fun deleteDailyOlderThan(before: Long): Int
+    suspend fun nextPending(flowId: String): ExpectedRunEntity?
+    suspend fun dueSince(since: Long): List<ExpectedRunEntity>
 }
 
 class RoomScheduleRepository(private val dao: ScheduleDao) : ScheduleRepository {
@@ -164,7 +171,14 @@ class RoomScheduleRepository(private val dao: ScheduleDao) : ScheduleRepository 
     override suspend fun purge(flowId: String) {
         dao.deleteStatesForFlow(flowId)
         dao.deleteExpectedForFlow(flowId)
+        dao.deleteDailyForFlow(flowId)
     }
+    override suspend fun compactable(cutoff: Long) = dao.compactable(cutoff)
+    override suspend fun saveDaily(rows: List<ExpectedRunDailyEntity>) = dao.upsertDaily(rows)
+    override suspend fun dailySince(since: Long) = dao.dailySince(since)
+    override suspend fun deleteDailyOlderThan(before: Long) = dao.deleteDailyOlderThan(before)
+    override suspend fun nextPending(flowId: String) = dao.nextPending(flowId)
+    override suspend fun dueSince(since: Long) = dao.dueSince(since)
 }
 
 interface EngineTelemetryRepository {
@@ -182,6 +196,11 @@ interface EngineTelemetryRepository {
     suspend fun countSince(kind: String, since: Long): Int
     suspend fun lastOfKind(kind: String): ReliabilityEventEntity?
     suspend fun deleteEventsOlderThan(before: Long): Int
+    suspend fun eventTimes(): List<Long>
+    suspend fun acknowledgeAll(): Int
+    fun observeUnacknowledged(): FlowStream<Int>
+    suspend fun eventsOfKinds(kinds: List<String>, since: Long): List<ReliabilityEventEntity>
+    suspend fun deleteSessionsOlderThan(before: Long): Int
 }
 
 class RoomEngineTelemetryRepository(private val dao: EngineTelemetryDao) : EngineTelemetryRepository {
@@ -199,6 +218,11 @@ class RoomEngineTelemetryRepository(private val dao: EngineTelemetryDao) : Engin
     override suspend fun countSince(kind: String, since: Long) = dao.countSince(kind, since)
     override suspend fun lastOfKind(kind: String) = dao.lastOfKind(kind)
     override suspend fun deleteEventsOlderThan(before: Long) = dao.deleteEventsOlderThan(before)
+    override suspend fun eventTimes() = dao.eventTimes()
+    override suspend fun acknowledgeAll() = dao.acknowledgeAll()
+    override fun observeUnacknowledged() = dao.observeUnacknowledged()
+    override suspend fun eventsOfKinds(kinds: List<String>, since: Long) = dao.eventsOfKinds(kinds, since)
+    override suspend fun deleteSessionsOlderThan(before: Long) = dao.deleteSessionsOlderThan(before)
 }
 
 /**

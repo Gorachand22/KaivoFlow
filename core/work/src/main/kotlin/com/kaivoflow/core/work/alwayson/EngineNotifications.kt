@@ -69,6 +69,28 @@ class EngineNotifications @Inject constructor(@ApplicationContext private val co
         runCatching { manager.notify(START_BLOCKED_NOTIFICATION_ID, n) }
     }
 
+    /** A one-off alert on the Flow problems channel. [tag] is the notification identity, so a repeat replaces instead of stacking. */
+    fun postAlert(tag: String, title: String, body: String, route: String, high: Boolean = true) {
+        ensureChannels()
+        val n = NotificationCompat.Builder(context, CHANNEL_ALERT)
+            .setSmallIcon(if (high) android.R.drawable.stat_notify_error else android.R.drawable.stat_notify_sync)
+            .setContentTitle(title)
+            .setContentText(body)
+            .setStyle(NotificationCompat.BigTextStyle().bigText(body))
+            .setAutoCancel(true)
+            .setPriority(if (high) NotificationCompat.PRIORITY_HIGH else NotificationCompat.PRIORITY_DEFAULT)
+            .setContentIntent(openApp(route, 20 + (tag.hashCode() and 0xff)))
+            .build()
+        runCatching { manager.notify(tag, ALERT_NOTIFICATION_ID, n) }
+    }
+
+    /** The ST5 probe (spec 6.4): a minimum-importance notification on its own hidden channel, removed again after a few seconds. */
+    fun postProbe() {
+        manager.createNotificationChannel(NotificationChannel(CHANNEL_PROBE, "Self-test", NotificationManager.IMPORTANCE_MIN).apply { setShowBadge(false) })
+        val n = NotificationCompat.Builder(context, CHANNEL_PROBE).setSmallIcon(android.R.drawable.stat_notify_sync).setContentTitle("KaivoFlow self-test").setTimeoutAfter(10_000L).build()
+        runCatching { manager.notify(PROBE_NOTIFICATION_ID, n) }
+    }
+
     fun clearStartBlocked() = manager.cancel(START_BLOCKED_NOTIFICATION_ID)
 
     private fun openApp(route: String, requestCode: Int): PendingIntent {
@@ -82,6 +104,9 @@ class EngineNotifications @Inject constructor(@ApplicationContext private val co
         const val CHANNEL_ALERT = "kaivo.engine.alert"
         const val ENGINE_NOTIFICATION_ID = 4_104
         const val START_BLOCKED_NOTIFICATION_ID = 4_105
+        const val ALERT_NOTIFICATION_ID = 4_106
+        const val PROBE_NOTIFICATION_ID = 4_107
+        const val CHANNEL_PROBE = "kaivo.probe"
         /** Read by the UI (M2) to deep link; harmless today. */
         const val EXTRA_ROUTE = "com.kaivoflow.extra.ROUTE"
         const val EXTRA_ROUTE_HOME = "home"

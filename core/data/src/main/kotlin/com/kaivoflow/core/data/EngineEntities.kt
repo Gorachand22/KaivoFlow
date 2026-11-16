@@ -1,5 +1,6 @@
 package com.kaivoflow.core.data
 
+import androidx.room.ColumnInfo
 import androidx.room.Entity
 import androidx.room.Index
 import androidx.room.PrimaryKey
@@ -161,4 +162,21 @@ data class ReliabilityEventEntity(
     val flowId: String?,
     val detail: String?,
     val sessionId: Long?,
+    /** Acknowledging clears the badge on the Reliability tab (spec 5.5). Added in schema 6. */
+    @ColumnInfo(defaultValue = "0") val acknowledged: Boolean = false,
+)
+
+/** Daily aggregate of `expected_run` rows older than the 30 day window, kept 180 days (spec 6.3). Added in schema 6. */
+@Entity(tableName = "expected_run_daily", primaryKeys = ["flowId", "dayStart"], indices = [Index("dayStart")])
+data class ExpectedRunDailyEntity(
+    val flowId: String,
+    val dayStart: Long,
+    val fired: Int,
+    val late: Int,
+    val missed: Int,
+    val skipped: Int,
+    val paused: Int,
+    val p50Ms: Long,
+    val p95Ms: Long,
+    val maxMs: Long,
 )

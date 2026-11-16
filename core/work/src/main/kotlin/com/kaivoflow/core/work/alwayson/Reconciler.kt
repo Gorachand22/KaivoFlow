@@ -43,6 +43,12 @@ class Reconciler @Inject constructor(
     @ApplicationContext private val context: Context,
     private val flows: FlowRepository,
     private val lifecycle: FlowLifecycleRepository,
+    private val liveFlows: LiveFlows,
+    private val activation: dagger.Lazy<ActivationManager>,
+    private val heartbeat: HeartbeatWriter,
+    private val outages: OutageDetector,
+    private val maintenance: ExpectedRunMaintenance,
+    private val alerts: FlowAlerts,
     private val scheduleSync: ScheduleSync,
     private val registrars: @JvmSuppressWildcards Set<SparkRegistrar>,
     private val controller: EngineController,
@@ -58,14 +64,45 @@ class Reconciler @Inject constructor(
     private val mutex = Mutex()
     private val prefs = context.getSharedPreferences("kaivo.reconciler", Context.MODE_PRIVATE)
 
-    suspend fun reconcile(trigger: ReconcileTrigger): ReconcileReport = mutex.withLock { pass(trigger) }
+    suspend fun reconcile(trigger: ReconcileTrigger): ReconcileReport {
+        val report = mutex.withLock { pass(trigger) }
+        afterPass(trigger) // outside the lock: activation may call back into disarmFlow and syncFlow
+        return report
+    }
+
+    /**
+     * Lifecycle and evidence work that follows a pass (AO-16, AO-18, AO-19): outage detection while the previous heartbeat is still
+     * visible, missed-slot sweep, retention, restore or retry of published Flows, then the new heartbeat.
+     */
+    private suspend fun afterPass(trigger: ReconcileTrigger) {
+        try {
+            outages.check()
+            maintenance.sweep()
+            maintenance.compactAndPrune()
+            if (trigger in START_TRIGGERS) {
+                val restored = activation.get().restoreAtStart()
+                if (trigger == ReconcileTrigger.Boot || trigger == ReconcileTrigger.PackageReplaced) alerts.restored(restored.restored + restored.errored)
+            } else {
+                activation.get().checkLive()
+                activation.get().runDue()
+            }
+        } catch (ce: CancellationException) {
+            throw ce
+        } catch (t: Throwable) {
+            recorder.record(ReliabilityKinds.RECONCILE_FAILED, Severity.ERROR, detail = "after ${trigger.name}: ${t.javaClass.simpleName}")
+        }
+        heartbeat.beat(force = true)
+    }
 
     /** Re-plans one Flow right after an edit, publish or unpublish, without a full pass. */
     suspend fun syncFlow(flow: Flow): SyncReport = mutex.withLock {
-        val live = isLive(flow, lifecycle.snapshot(flow.id))
-        val report = scheduleSync.syncFlow(flow, live, clock.now())
-        registrars.forEach { runCatching { it.reconcile(if (live) listOf(flow) else emptyList(), listOf(flow), ReconcileTrigger.FlowChanged) } }
-        ensurePulseAndWatchdog(liveCount = if (live) 1 else flows.all().count { isLive(it, lifecycle.snapshot(it.id)) })
+        // The draft passed in may have unpublished edits: arm the published content, never the draft.
+        val content = liveFlows.liveFlow(flow.id)
+        val live = content != null
+        val target = content ?: flow
+        val report = scheduleSync.syncFlow(target, live, clock.now())
+        registrars.forEach { runCatching { it.reconcile(if (live) listOf(target) else emptyList(), listOf(target), ReconcileTrigger.FlowChanged) } }
+        ensurePulseAndWatchdog(liveCount = if (live) 1 else liveFlows.live().size)
         runCatching { controller.reassess(StartReason.Publish) }
         report
     }
@@ -81,8 +118,7 @@ class Reconciler @Inject constructor(
         var report = ReconcileReport(trigger, 0, SyncReport(), "None")
         try {
             val all = flows.all()
-            val snapshots = lifecycle.allSnapshots()
-            val live = all.filter { isLive(it, snapshots[it.id]) }
+            val live = liveFlows.live() // published revisions
 
             cancelLegacyWorkOnce(all)
 
@@ -138,8 +174,6 @@ class Reconciler @Inject constructor(
         prefs.edit().putBoolean(KEY_LEGACY_CANCELLED, true).apply()
     }
 
-    private fun isLive(flow: Flow, snapshot: LifecycleSnapshot?): Boolean = snapshot?.state?.isLive ?: flow.isActive
-
     private fun startReasonFor(t: ReconcileTrigger) = when (t) {
         ReconcileTrigger.Boot -> StartReason.Boot
         ReconcileTrigger.PackageReplaced -> StartReason.PackageReplaced
@@ -157,6 +191,7 @@ class Reconciler @Inject constructor(
     }
 
     private companion object {
+        val START_TRIGGERS = setOf(ReconcileTrigger.AppStart, ReconcileTrigger.Boot, ReconcileTrigger.PackageReplaced, ReconcileTrigger.ServiceStart)
         const val KEY_LEGACY_CANCELLED = "legacySchedulerWorkCancelled"
         const val FINISHED_ROW_RETENTION_MS = 7L * 24 * 3_600_000L
     }

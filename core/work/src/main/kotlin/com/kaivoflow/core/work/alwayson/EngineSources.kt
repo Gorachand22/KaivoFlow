@@ -55,6 +55,7 @@ class EngineSources @Inject constructor(
     @ApplicationContext private val context: Context,
     private val events: DeviceEvents,
     private val flows: FlowRepository,
+    private val liveFlowSource: LiveFlows,
     private val lifecycle: FlowLifecycleRepository,
     private val clock: Clock,
 ) {
@@ -96,8 +97,7 @@ class EngineSources @Inject constructor(
     }
 
     suspend fun refresh() {
-        val snapshots = lifecycle.allSnapshots()
-        val live = flows.all().filter { snapshots[it.id]?.state?.isLive ?: it.isActive }
+        val live = liveFlowSource.live()
         thresholds = SparkQueries.batteryThresholds(live)
         val wantBattery = SparkQueries.enabled(live, SparkTypes.BATTERY).isNotEmpty()
         val wantHeadset = SparkQueries.enabled(live, SparkTypes.HEADSET).isNotEmpty()
@@ -295,6 +295,7 @@ class SourcesRegistrar @Inject constructor(
     @ApplicationContext private val context: Context,
     private val sources: EngineSources,
     private val flows: FlowRepository,
+    private val liveFlowSource: LiveFlows,
     private val lifecycle: FlowLifecycleRepository,
     private val registrations: com.kaivoflow.core.data.TriggerRegistrationRepository,
     private val runtime: EngineRuntime,
@@ -306,8 +307,7 @@ class SourcesRegistrar @Inject constructor(
     override suspend fun reconcile(live: List<Flow>, all: List<Flow>, trigger: com.kaivoflow.core.engine.alwayson.ReconcileTrigger) {
         val running = runtime.serviceAlive
         if (running) sources.refresh()
-        val snapshots = lifecycle.allSnapshots()
-        val liveFlows = flows.all().filter { snapshots[it.id]?.state?.isLive ?: it.isActive }
+        val liveFlows = liveFlowSource.live()
         val existing = registrations.all()
         val active = sources.active()
         val fine = ContextCompat.checkSelfPermission(context, Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED

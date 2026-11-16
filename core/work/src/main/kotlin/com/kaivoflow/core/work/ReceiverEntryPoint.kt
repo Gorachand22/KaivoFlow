@@ -7,6 +7,7 @@ import com.kaivoflow.core.work.alwayson.EngineController
 import com.kaivoflow.core.work.alwayson.Reconciler
 import com.kaivoflow.core.work.alwayson.ReliabilityRecorder
 import com.kaivoflow.core.work.alwayson.ScheduleFirer
+import com.kaivoflow.core.work.alwayson.SelfTestRunner
 import com.kaivoflow.core.work.alwayson.WakeLockManager
 import com.kaivoflow.core.work.alwayson.WatchdogScheduler
 import dagger.hilt.EntryPoint
@@ -32,6 +33,7 @@ interface ReceiverEntryPoint {
     fun engineController(): EngineController
     fun wakeLocks(): WakeLockManager
     fun reliabilityRecorder(): ReliabilityRecorder
+    fun selfTest(): SelfTestRunner
 }
 
 object ReceiverEntryPoints {

@@ -27,6 +27,7 @@ import com.kaivoflow.feature.permissions.KaivoPermission
 import com.kaivoflow.feature.permissions.PermissionCentreScreen
 import com.kaivoflow.feature.settings.CredentialsScreen
 import com.kaivoflow.feature.settings.PrivacyCentreScreen
+import com.kaivoflow.feature.settings.ReliabilityCenterScreen
 import com.kaivoflow.feature.settings.SettingsScreen
 import com.kaivoflow.core.nodes.TriggerSpecs
 import com.kaivoflow.core.work.FlowScheduler
@@ -89,6 +90,7 @@ private object Routes {
     const val Canvas = "canvas/{flowId}"
     const val History = "history"
     const val Settings = "settings"
+    const val Reliability = "reliability"
     const val Privacy = "privacy"
     const val Permissions = "permissions"
     const val Credentials = "credentials"
@@ -141,7 +143,11 @@ private fun KaivoNavHost(
                 onOpenPermissions = { navController.navigate(Routes.Permissions) },
                 onOpenCredentials = { navController.navigate(Routes.Credentials) },
                 onOpenHistory = { navController.navigate(Routes.History) },
+                onOpenReliability = { navController.navigate(Routes.Reliability) },
             )
+        }
+        composable(Routes.Reliability) {
+            ReliabilityCenterScreen(onBack = { navController.popBackStack() })
         }
         composable(Routes.Privacy) {
             PrivacyCentreScreen(onBack = { navController.popBackStack() })

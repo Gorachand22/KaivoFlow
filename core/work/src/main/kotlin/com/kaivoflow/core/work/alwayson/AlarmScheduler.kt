@@ -75,6 +75,11 @@ class AlarmScheduler @Inject constructor(
     /** Restart alarm armed by `onTaskRemoved`, a few seconds ahead (spec 3.10). */
     fun armRestart(atMs: Long) = armUtility(AlarmReceiver.ACTION_RESTART, AlarmKeys.RESTART_URI, AlarmKeys.RESTART_CODE, atMs)
 
+    /** One alarm for the activation retry queue and timed resumes: the earliest due time of any Flow (spec 4.6, alarms not timers). */
+    fun armRetry(atMs: Long) = armUtility(AlarmReceiver.ACTION_RETRY, AlarmKeys.RETRY_URI, AlarmKeys.RETRY_CODE, atMs)
+
+    fun cancelRetry() = cancelUtility(AlarmReceiver.ACTION_RETRY, AlarmKeys.RETRY_URI, AlarmKeys.RETRY_CODE)
+
     private fun armUtility(action: String, uri: String, code: Int, atMs: Long) {
         val pi = utilityPi(action, uri, code, create = true) ?: return
         try {

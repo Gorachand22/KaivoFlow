@@ -74,6 +74,7 @@ fun SettingsScreen(
     onOpenPermissions: () -> Unit,
     onOpenCredentials: () -> Unit,
     onOpenHistory: () -> Unit,
+    onOpenReliability: () -> Unit = {},
 ) {
     val context = LocalContext.current
     val colors = KaivoTheme.colors
@@ -92,6 +93,8 @@ fun SettingsScreen(
         Text("Settings", style = androidx.compose.material3.MaterialTheme.typography.displayLarge, color = colors.inkPrimary)
         Spacer(Modifier.height(16.dp))
 
+        SettingRow("Reliability Center", "Health score, checks, event log and self-test for 24/7 Flows", "shield", onOpenReliability)
+        Spacer(Modifier.height(24.dp))
         SectionHeader(title = "Battery health", subtitle = "Keep scheduled Flows alive on this phone")
         Spacer(Modifier.height(10.dp))
         Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {

@@ -273,11 +273,12 @@ interface DataTableDao {
         EngineSessionEntity::class,
         EngineHeartbeatEntity::class,
         ReliabilityEventEntity::class,
+        ExpectedRunDailyEntity::class,
         StepExecutionEntity::class,
         StepPortDataEntity::class,
         StepPinEntity::class,
     ],
-    version = 5,
+    version = 6,
     exportSchema = true,
 )
 abstract class KaivoDatabase : RoomDatabase() {

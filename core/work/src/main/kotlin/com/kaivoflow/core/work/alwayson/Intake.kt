@@ -37,7 +37,8 @@ class SparkIntake @Inject constructor(
     @ApplicationContext private val context: Context,
     private val inbox: SparkInbox,
     private val flows: FlowRepository,
-    private val lifecycle: FlowLifecycleRepository,
+    private val liveFlowSource: LiveFlows,
+    private val heartbeat: HeartbeatWriter,
     private val controller: EngineController,
     private val wakeLocks: WakeLockManager,
 ) {
@@ -56,7 +57,7 @@ class SparkIntake @Inject constructor(
     ): EnqueueResult {
         val key = DedupeKeys.event(kind, flowId, sparkId, sourceId ?: UUID.randomUUID().toString())
         val result = inbox.enqueue(NewSpark(flowId, sparkId, kind, InboxPayloads.encode(items, meta), key))
-        if (result is EnqueueResult.Stored) wake(source, result.id)
+        if (result is EnqueueResult.Stored) { heartbeat.beat(); wake(source, result.id) }
         return result
     }
 
@@ -76,13 +77,12 @@ class SparkIntake @Inject constructor(
      */
     suspend fun dispatch(kind: String, payload: Map<String, Any?>, sourceId: String? = null, source: IntakeSource = IntakeSource.Event): Int {
         wakeLocks.acquireIntake(kind).use {
+            heartbeat.beat()
             val seed = FlowData(json = payload)
             val targetFlowId = payload["targetFlowId"] as? String
-            val snapshots = lifecycle.allSnapshots()
             var stored = 0
             var firstId: Long? = null
-            for (flow in flows.all()) {
-                if (!isLive(flow, snapshots)) continue
+            for (flow in liveFlowSource.live()) {
                 if (targetFlowId != null && flow.id != targetFlowId) continue
                 for (spark in flow.triggers.filter { EventTriggerMatcher.matches(it, kind, payload, context.packageName) }) {
                     val r = enqueueQuiet(flow.id, spark.id, kind, listOf(seed), sourceId)
@@ -99,7 +99,4 @@ class SparkIntake @Inject constructor(
         val key = DedupeKeys.event(kind, flowId, sparkId, sourceId ?: UUID.randomUUID().toString())
         return inbox.enqueue(NewSpark(flowId, sparkId, kind, InboxPayloads.encode(items, emptyMap()), key))
     }
-
-    private fun isLive(flow: Flow, snapshots: Map<String, com.kaivoflow.core.engine.LifecycleSnapshot>): Boolean =
-        snapshots[flow.id]?.state?.isLive ?: flow.isActive
 }

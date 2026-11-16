@@ -157,6 +157,7 @@ class ProximityGeofenceOps @Inject constructor(@ApplicationContext private val c
 @Singleton
 class GeofenceRegistrar @Inject constructor(
     private val flows: FlowRepository,
+    private val liveFlowSource: LiveFlows,
     private val lifecycle: FlowLifecycleRepository,
     private val registrations: TriggerRegistrationRepository,
     private val environment: GeofenceEnvironmentReader,
@@ -177,8 +178,7 @@ class GeofenceRegistrar @Inject constructor(
     }
 
     private suspend fun pass(trigger: ReconcileTrigger) {
-        val snapshots = lifecycle.allSnapshots()
-        val liveFlows = flows.all().filter { snapshots[it.id]?.state?.isLive ?: it.isActive }
+        val liveFlows = liveFlowSource.live()
         val wantedSteps = SparkQueries.enabled(liveFlows, SparkTypes.GEOFENCE)
         val existing = registrations.all().filter { it.kind == SparkTypes.GEOFENCE }
         val env = environment.read()

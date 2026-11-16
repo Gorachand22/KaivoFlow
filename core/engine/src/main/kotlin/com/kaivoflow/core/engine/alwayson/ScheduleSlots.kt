@@ -236,8 +236,10 @@ object MisfirePlanner {
 object AlarmKeys {
     const val PULSE_CODE = 1
     const val RESTART_CODE = 2
+    const val RETRY_CODE = 3
     const val PULSE_URI = "kaivo-alarm://pulse"
     const val RESTART_URI = "kaivo-alarm://restart"
+    const val RETRY_URI = "kaivo-alarm://activation-retry"
 
     fun requestCode(flowId: String, sparkId: String): Int = ("$flowId|$sparkId").hashCode() and 0x7fff_ffff or 0x100
 

@@ -147,6 +147,9 @@ class BatteryHealth @Inject constructor(
         )
     }
 
+    /** The OEM's autostart or background-launch screen when this phone has one and it resolves, else the app's own settings. */
+    fun autostartIntent(): Intent = oemAutostartCheck().action ?: appDetailsIntent(context.packageName)
+
     fun appDetailsIntent(packageName: String): Intent =
         Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply { data = Uri.parse("package:$packageName") }
 

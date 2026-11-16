@@ -87,6 +87,7 @@ class InboxWebhookSink @Inject constructor(private val intake: SparkIntake) : We
 @Singleton
 class WebhookRegistrar @Inject constructor(
     private val flows: FlowRepository,
+    private val liveFlowSource: LiveFlows,
     private val lifecycle: FlowLifecycleRepository,
     private val server: WebhookServer,
     private val registrations: TriggerRegistrationRepository,
@@ -101,8 +102,7 @@ class WebhookRegistrar @Inject constructor(
     override suspend fun reconcile(live: List<Flow>, all: List<Flow>, trigger: ReconcileTrigger) { apply() }
 
     suspend fun apply(): WebhookListenerStatus = mutex.withLock {
-        val snapshots = lifecycle.allSnapshots()
-        val liveFlows = flows.all().filter { snapshots[it.id]?.state?.isLive ?: it.isActive }
+        val liveFlows = liveFlowSource.live()
         val table = RouteTable.fromFlows(liveFlows)
         server.updateRoutes(table)
 

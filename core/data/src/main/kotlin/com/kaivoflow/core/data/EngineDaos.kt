@@ -255,6 +255,28 @@ interface ScheduleDao {
 
     @Query("DELETE FROM expected_run WHERE flowId = :flowId")
     suspend fun deleteExpectedForFlow(flowId: String)
+
+    /** Resolved rows older than the cutoff, to be compacted into daily aggregates before deletion. */
+    @Query("SELECT * FROM expected_run WHERE dueAt < :cutoff AND state NOT IN ('PENDING', 'SUPERSEDED')")
+    suspend fun compactable(cutoff: Long): List<ExpectedRunEntity>
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun upsertDaily(rows: List<ExpectedRunDailyEntity>)
+
+    @Query("SELECT * FROM expected_run_daily WHERE dayStart >= :since ORDER BY dayStart")
+    suspend fun dailySince(since: Long): List<ExpectedRunDailyEntity>
+
+    @Query("SELECT * FROM expected_run_daily WHERE flowId = :flowId AND dayStart >= :since ORDER BY dayStart")
+    suspend fun dailyForFlow(flowId: String, since: Long): List<ExpectedRunDailyEntity>
+
+    @Query("DELETE FROM expected_run_daily WHERE dayStart < :before")
+    suspend fun deleteDailyOlderThan(before: Long): Int
+
+    @Query("DELETE FROM expected_run_daily WHERE flowId = :flowId")
+    suspend fun deleteDailyForFlow(flowId: String)
+
+    @Query("SELECT * FROM expected_run WHERE flowId = :flowId AND state = 'PENDING' ORDER BY dueAt ASC LIMIT 1")
+    suspend fun nextPending(flowId: String): ExpectedRunEntity?
 }
 
 /** Engine sessions, the single heartbeat row and reliability events (spec section 6). */
@@ -299,4 +321,19 @@ interface EngineTelemetryDao {
 
     @Query("DELETE FROM reliability_event WHERE at < :before")
     suspend fun deleteEventsOlderThan(before: Long): Int
+
+    @Query("SELECT at FROM reliability_event ORDER BY at DESC")
+    suspend fun eventTimes(): List<Long>
+
+    @Query("UPDATE reliability_event SET acknowledged = 1 WHERE acknowledged = 0 AND severity != 'info'")
+    suspend fun acknowledgeAll(): Int
+
+    @Query("SELECT COUNT(*) FROM reliability_event WHERE acknowledged = 0 AND severity != 'info'")
+    fun observeUnacknowledged(): FlowStream<Int>
+
+    @Query("SELECT * FROM reliability_event WHERE kind IN (:kinds) AND at >= :since ORDER BY at DESC")
+    suspend fun eventsOfKinds(kinds: List<String>, since: Long): List<ReliabilityEventEntity>
+
+    @Query("DELETE FROM engine_session WHERE startedAt < :before")
+    suspend fun deleteSessionsOlderThan(before: Long): Int
 }

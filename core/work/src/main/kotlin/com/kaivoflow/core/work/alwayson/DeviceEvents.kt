@@ -40,6 +40,7 @@ class DeviceEvents @Inject constructor(
     private val intake: SparkIntake,
     private val evidence: EventEvidence,
     private val flows: FlowRepository,
+    private val liveFlowSource: LiveFlows,
     private val dwell: DwellTracker,
     private val recorder: ReliabilityRecorder,
     private val clock: Clock,
@@ -64,6 +65,7 @@ class DeviceEvents @Inject constructor(
     // ---- Notification ----
 
     suspend fun notification(packageName: String, sbnKey: String, postTime: Long, title: CharSequence?, text: CharSequence?, ongoing: Boolean): Int {
+        if (packageName == context.packageName) evidence.record(EVIDENCE_PROBE_NOTIFICATION, clock.now()) // self-test probe (ST5, spec 6.4)
         if (!notificationInterest.mightMatch(packageName)) return 0
         evidence.record(TriggerSpecs.NOTIFICATION, clock.now())
         return intake.dispatch(
@@ -198,7 +200,7 @@ class DeviceEvents @Inject constructor(
 
     private suspend fun specFor(requestId: String): GeofenceSpec? {
         val (flowId, sparkId) = GeofenceRequestIds.parse(requestId) ?: return null
-        val step = flows.flow(flowId)?.step(sparkId) ?: return null
+        val step = (liveFlowSource.liveFlow(flowId) ?: flows.flow(flowId))?.step(sparkId) ?: return null
         return (GeofenceSpec.parse(flowId, step) as? GeofenceSpec.Parsed.Valid)?.spec
     }
 

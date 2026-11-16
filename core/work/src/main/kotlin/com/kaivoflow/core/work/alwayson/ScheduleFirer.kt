@@ -34,6 +34,9 @@ sealed interface FireResult {
 @Singleton
 class ScheduleFirer @Inject constructor(
     private val flows: FlowRepository,
+    private val liveFlowSource: LiveFlows,
+    private val heartbeat: HeartbeatWriter,
+    private val recorder: ReliabilityRecorder,
     private val lifecycle: FlowLifecycleRepository,
     private val scheduleRepo: ScheduleRepository,
     private val sync: ScheduleSync,
@@ -43,8 +46,9 @@ class ScheduleFirer @Inject constructor(
 ) {
     suspend fun fire(flowId: String, sparkId: String, slotMs: Long?, source: IntakeSource): FireResult {
         val now = sync.now()
-        val flow = flows.flow(flowId)
-        val live = flow != null && (lifecycle.snapshot(flowId)?.state?.isLive ?: flow.isActive)
+        heartbeat.beat()
+        val flow = liveFlowSource.liveFlow(flowId) // the published revision, never the draft
+        val live = flow != null
         val spark = flow?.let { f -> sync.scheduleSparks(f).firstOrNull { it.id == sparkId } }
         if (flow == null || !live || spark == null) {
             sync.disarmFlowSpark(flowId, sparkId)
@@ -74,6 +78,7 @@ class ScheduleFirer @Inject constructor(
             if (row != null && (row.state == ExpectedRunState.PENDING || row.state == ExpectedRunState.MISSED)) {
                 val c = Lateness.classify(eff.mode, slot, now)
                 scheduleRepo.markExpected(row.id, c.state, now, row.runId, c.latenessMs, row.reason)
+                if (c.state == "LATE") recorder.record(com.kaivoflow.core.engine.alwayson.ReliabilityKinds.LATE_RUN, com.kaivoflow.core.engine.alwayson.Severity.WARN, flowId, "expectedAt=$slot actualAt=$now latenessMs=${c.latenessMs} spark=$sparkId")
             }
             scheduleRepo.state(flowId, sparkId)?.let {
                 scheduleRepo.saveState(it.copy(lastFiredAt = now, lastSlotKey = slot.toString()))

@@ -35,6 +35,20 @@ object ReliabilityKinds {
     const val LISTENER_REBIND_REQUESTED = "ListenerRebindRequested"
     const val SPARK_REGISTRATION_FAILED = "SparkRegistrationFailed"
     const val FGS_START_SKIPPED = "FgsStartSkipped"
+    // M2 (AO-18, AO-19, AO-21)
+    const val ENGINE_DEAD = "EngineDead"
+    const val PROCESS_DIED = "ProcessDied"
+    const val FORCE_STOP_DETECTED = "ForceStopDetected"
+    const val ENGINE_STOPPED = "EngineStopped"
+    const val MISSED_RUN = "MissedRun"
+    const val LATE_RUN = "LateRun"
+    const val FLOW_ERROR = "FlowError"
+    const val FLOW_RECOVERED = "FlowRecovered"
+    const val SELF_TEST_RESULT = "SelfTestResult"
+    const val CRASH_LOOP = "CrashLoop"
+    const val STORAGE_FULL = "StorageFull"
+    const val PERMISSION_REVOKED = "PermissionRevoked"
+    const val PERMISSION_GRANTED = "PermissionGranted"
 }
 
 object Severity { const val INFO = "info"; const val WARN = "warn"; const val ERROR = "error" }
@@ -151,7 +165,9 @@ object EngineDecision {
 /** Which parts of the repair routine each trigger-in runs (spec 3.2, 3.9 and 3.10). */
 enum class ReconcileTrigger {
     AppStart, Boot, PackageReplaced, TimeChanged, TimezoneChanged, Pulse, Watchdog, ServiceStart,
-    ExactAlarmPermissionChanged, FlowChanged, UserFix, RoutesChanged;
+    ExactAlarmPermissionChanged, FlowChanged, UserFix, RoutesChanged,
+    /** The activation retry alarm: a Flow in Error is due for another arming attempt, or a timed pause ended. */
+    RetryDue;
 }
 
 data class ReconcileScope(

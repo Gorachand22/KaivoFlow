@@ -54,11 +54,14 @@ class AlwaysOnService : Service() {
     @Inject lateinit var schedules: ScheduleRepository
     @Inject lateinit var inboxStore: InboxStore
     @Inject lateinit var fallback: FallbackHost
+    @Inject lateinit var heartbeat: HeartbeatWriter
+    @Inject lateinit var selfTest: SelfTestRunner
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     private var bootstrapped = false
     private var refreshJob: Job? = null
     private var idleJob: Job? = null
+    private var tickJob: Job? = null
 
     override fun onBind(intent: Intent?): IBinder? = null
 
@@ -126,7 +129,10 @@ class AlwaysOnService : Service() {
         farewell.launch {
             runCatching {
                 if (session != null) {
-                    if (deliberate) telemetry.stopSession(session, System.currentTimeMillis(), "Stopped")
+                    if (deliberate) {
+                        telemetry.stopSession(session, System.currentTimeMillis(), "Stopped")
+                        recorder.record(ReliabilityKinds.ENGINE_STOPPED, Severity.INFO, detail = "clean")
+                    }
                     else telemetry.markSessionDied(session, "ServiceDestroyed")
                 }
             }
@@ -143,6 +149,15 @@ class AlwaysOnService : Service() {
             runtime.sessionId = telemetry.startSession(
                 EngineSessionEntity(startedAt = System.currentTimeMillis(), startReason = reason.name, bootCount = boot, cleanStopAt = null, endReason = null),
             )
+        }
+        heartbeat.beat(force = true)
+        selfTest.onEngineStarted()
+        // In-process ticker (spec 6.1 item 3): only while the screen is on or the phone charges, so it never keeps the CPU awake alone.
+        tickJob = scope.launch {
+            while (isActive) {
+                delay(TICK_MS)
+                if (screenOnOrCharging()) heartbeat.beat()
+            }
         }
         if (reason == StartReason.StickyRestart || reason == StartReason.RestartAlarm) {
             recorder.record(ReliabilityKinds.ENGINE_RESTART, Severity.INFO, detail = reason.name)
@@ -192,6 +207,14 @@ class AlwaysOnService : Service() {
         }
     }
 
+    private fun screenOnOrCharging(): Boolean {
+        val pm = getSystemService(android.os.PowerManager::class.java)
+        if (pm?.isInteractive == true) return true
+        val sticky = registerReceiver(null, android.content.IntentFilter(Intent.ACTION_BATTERY_CHANGED))
+        val plugged = sticky?.getIntExtra(android.os.BatteryManager.EXTRA_PLUGGED, 0) ?: 0
+        return plugged != 0
+    }
+
     /** Foreground promotion with the right type per API level. False when the platform refuses it. */
     private fun goForeground(text: String): Boolean = try {
         val notification = notifications.engineNotification(0, text)
@@ -210,6 +233,7 @@ class AlwaysOnService : Service() {
         const val EXTRA_TRANSIENT = "com.kaivoflow.extra.TRANSIENT"
         private const val RESTART_DELAY_MS = 5_000L
         private const val IDLE_CHECK_MS = 10_000L
+        private const val TICK_MS = 30_000L
         private val farewell = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     }
 }

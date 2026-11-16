@@ -243,5 +243,27 @@ val MIGRATION_4_5: Migration = object : Migration(4, 5) {
     }
 }
 
+/**
+ * v5 -> v6: `expected_run_daily` (aggregates kept 180 days) and `reliability_event.acknowledged`. Additive only. The SQL must
+ * equal what Room generates for [ExpectedRunDailyEntity] and the `acknowledged` column (INTEGER NOT NULL DEFAULT 0).
+ */
+internal fun SupportSQLiteDatabase.createReliabilityV6() {
+    execSQL(
+        "CREATE TABLE IF NOT EXISTS `expected_run_daily` (`flowId` TEXT NOT NULL, `dayStart` INTEGER NOT NULL, `fired` INTEGER NOT NULL, " +
+            "`late` INTEGER NOT NULL, `missed` INTEGER NOT NULL, `skipped` INTEGER NOT NULL, `paused` INTEGER NOT NULL, " +
+            "`p50Ms` INTEGER NOT NULL, `p95Ms` INTEGER NOT NULL, `maxMs` INTEGER NOT NULL, PRIMARY KEY(`flowId`, `dayStart`))",
+    )
+    execSQL("CREATE INDEX IF NOT EXISTS `index_expected_run_daily_dayStart` ON `expected_run_daily` (`dayStart`)")
+    if (!hasColumn("reliability_event", "acknowledged")) {
+        execSQL("ALTER TABLE `reliability_event` ADD COLUMN `acknowledged` INTEGER NOT NULL DEFAULT 0")
+    }
+}
+
+val MIGRATION_5_6: Migration = object : Migration(5, 6) {
+    override fun migrate(db: SupportSQLiteDatabase) {
+        db.createReliabilityV6()
+    }
+}
+
 /** Ordered, contiguous list from the oldest known schema to [KaivoDatabase] current version. */
-val ALL_MIGRATIONS: Array<Migration> = arrayOf(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5)
+val ALL_MIGRATIONS: Array<Migration> = arrayOf(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6)

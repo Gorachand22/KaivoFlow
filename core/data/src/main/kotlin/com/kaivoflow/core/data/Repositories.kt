@@ -2,6 +2,7 @@ package com.kaivoflow.core.data
 
 import com.kaivoflow.core.engine.CredentialProvider
 import com.kaivoflow.core.engine.LifecycleSnapshot
+import com.kaivoflow.core.engine.LifecycleState
 import com.kaivoflow.core.engine.OAuth2TokenManager
 import com.kaivoflow.core.engine.OAuth2TokenStore
 import com.kaivoflow.core.model.CredentialItem
@@ -32,8 +33,17 @@ data class FlowSummary(
     val lastRunStatus: String?,
     val lastRunAt: Long?,
     val groupId: String? = null,
-    val isActive: Boolean = false,
-)
+    /** Publish lifecycle (spec 4.1). Replaces the Phase 1 `isActive` flag. */
+    val lifecycle: LifecycleState = LifecycleState.Draft,
+    val publishedRevision: Int? = null,
+    val lifecycleSince: Long = 0L,
+    val pausedUntil: Long? = null,
+    val errorCode: String? = null,
+    val nextRetryAt: Long? = null,
+) {
+    /** Published or Error: Sparks are armed and Runs can start. */
+    val isLive: Boolean get() = lifecycle.isLive
+}
 
 interface FlowRepository {
     fun observeSummaries(): FlowStream<List<FlowSummary>>
@@ -58,7 +68,6 @@ class RoomFlowRepository(
     override fun observeSummaries(): FlowStream<List<FlowSummary>> =
         flowDao.observeAll().map { entities ->
             entities.map {
-                val active = runCatching { JsonCodec.decodeFlow(it.flowJson)?.isActive == true }.getOrDefault(false)
                 FlowSummary(
                     id = it.id,
                     name = it.name,
@@ -68,20 +77,29 @@ class RoomFlowRepository(
                     lastRunStatus = it.lastRunStatus,
                     lastRunAt = it.lastRunAt,
                     groupId = it.groupId,
-                    isActive = active,
+                    lifecycle = LifecycleState.fromDb(it.lifecycle),
+                    publishedRevision = it.publishedRevision,
+                    lifecycleSince = it.lifecycleSince,
+                    pausedUntil = it.pausedUntil,
+                    errorCode = it.errorCode,
+                    nextRetryAt = it.nextRetryAt,
                 )
             }
         }
 
     override fun observeFlow(id: String): FlowStream<Flow?> =
-        flowDao.observe(id).map { entity -> entity?.let { JsonCodec.decodeFlow(it.flowJson) } }
+        flowDao.observe(id).map { entity -> entity?.let(::decodeWithLifecycle) }
+
+    /** `Flow.isActive` is a read-only mirror of the lifecycle column; the stored JSON value is never trusted. */
+    private fun decodeWithLifecycle(e: FlowEntity): Flow? =
+        JsonCodec.decodeFlow(e.flowJson)?.let { it.copy(isActive = LifecycleState.fromDb(e.lifecycle).isLive) }
 
     override suspend fun flow(id: String): Flow? = withContext(io) {
-        flowDao.byId(id)?.let { JsonCodec.decodeFlow(it.flowJson) }
+        flowDao.byId(id)?.let(::decodeWithLifecycle)
     }
 
     override suspend fun all(): List<Flow> = withContext(io) {
-        flowDao.all().mapNotNull { JsonCodec.decodeFlow(it.flowJson) }
+        flowDao.all().mapNotNull(::decodeWithLifecycle)
     }
 
     override suspend fun save(flow: Flow): Unit = withContext(io) {
@@ -102,10 +120,9 @@ class RoomFlowRepository(
                 lastRunAt = existing?.lastRunAt,
                 groupId = stamped.groupId,
             ).let { base ->
-                // The upsert replaces the whole row, so the lifecycle columns must be carried over, kept
-                // consistent with the Phase 1 isActive flag until the publish UI uses the state machine.
-                val current = existing?.lifecycleSnapshot() ?: LifecycleSnapshot()
-                base.withLifecycle(LifecycleLogic.syncWithLegacyActive(current, stamped.isActive, System.currentTimeMillis()))
+                // The upsert replaces the whole row, so the lifecycle columns are carried over untouched. Saving never
+                // changes the lifecycle: only ActivationManager does, through the state machine (a new row is Draft).
+                base.withLifecycle(existing?.lifecycleSnapshot() ?: LifecycleSnapshot())
             }
         )
         // Sovereign file mirror in app internal storage

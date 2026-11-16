@@ -25,7 +25,7 @@ class AlarmReceiver : BroadcastReceiver() {
 
     override fun onReceive(context: Context, intent: Intent) {
         val action = intent.action ?: return
-        if (action != ACTION_SCHEDULE && action != ACTION_PULSE && action != ACTION_RESTART) return
+        if (action != ACTION_SCHEDULE && action != ACTION_PULSE && action != ACTION_RESTART && action != ACTION_RETRY) return
         val entry = ReceiverEntryPoints.of(context)
         val pending = goAsync()
         val hold = entry.wakeLocks().acquireIntake("alarm")
@@ -35,6 +35,7 @@ class AlarmReceiver : BroadcastReceiver() {
                     ACTION_SCHEDULE -> onSchedule(entry, intent)
                     ACTION_PULSE -> onPulse(entry)
                     ACTION_RESTART -> onRestart(entry)
+                    ACTION_RETRY -> withTimeoutOrNull(PULSE_BUDGET_MS) { entry.reconciler().reconcile(ReconcileTrigger.RetryDue) }
                 }
             } catch (t: Throwable) {
                 entry.reliabilityRecorder().record(ReliabilityKinds.RECONCILE_FAILED, Severity.ERROR, detail = "$action: ${t.javaClass.simpleName}")
@@ -48,6 +49,7 @@ class AlarmReceiver : BroadcastReceiver() {
     private suspend fun onSchedule(entry: ReceiverEntryPoint, intent: Intent) {
         val flowId = intent.getStringExtra(EXTRA_FLOW_ID) ?: return
         val sparkId = intent.getStringExtra(EXTRA_SPARK_ID) ?: return
+        if (flowId == SelfTestFlow.ID) { entry.selfTest().onAlarm(sparkId); return }
         val slot = intent.getLongExtra(EXTRA_SLOT_MS, -1L).takeIf { it > 0 }
         // The fire path is short (next slot, one Inbox row). Bound it so a stuck database cannot hold the broadcast for ever.
         withTimeoutOrNull(FIRE_BUDGET_MS) { entry.scheduleFirer().fire(flowId, sparkId, slot, IntakeSource.Alarm) }
@@ -70,6 +72,7 @@ class AlarmReceiver : BroadcastReceiver() {
         const val ACTION_SCHEDULE = "com.kaivoflow.action.SCHEDULE_FIRE"
         const val ACTION_PULSE = "com.kaivoflow.action.PULSE"
         const val ACTION_RESTART = "com.kaivoflow.action.ENGINE_RESTART"
+        const val ACTION_RETRY = "com.kaivoflow.action.ACTIVATION_RETRY"
         const val EXTRA_FLOW_ID = "com.kaivoflow.extra.FLOW_ID"
         const val EXTRA_SPARK_ID = "com.kaivoflow.extra.SPARK_ID"
         const val EXTRA_SLOT_MS = "com.kaivoflow.extra.SLOT_MS"

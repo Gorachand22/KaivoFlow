@@ -38,6 +38,7 @@ class EngineController @Inject constructor(
     @ApplicationContext private val context: Context,
     private val flows: FlowRepository,
     private val lifecycle: FlowLifecycleRepository,
+    private val liveFlows: LiveFlows,
     private val runtime: EngineRuntime,
     private val settings: EngineSettings,
     private val notifications: EngineNotifications,
@@ -51,10 +52,8 @@ class EngineController @Inject constructor(
 
     /** What the published Flows need from the Engine right now. Pure decision in `EngineNeeds`, inputs read here. */
     suspend fun needs(): EngineNeedsResult {
-        val snapshots = lifecycle.allSnapshots()
-        val engineFlows = flows.all().map { flow ->
-            EngineFlow(flow, snapshots[flow.id]?.state ?: if (flow.isActive) LifecycleState.Published else LifecycleState.Draft)
-        }
+        // The published content decides what the Engine needs, not the draft being edited.
+        val engineFlows = liveFlows.entries().map { EngineFlow(it.flow, it.snapshot.state) }
         return EngineNeeds.compute(engineFlows, settings.alwaysOnMode)
     }
 

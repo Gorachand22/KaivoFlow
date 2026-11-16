@@ -114,6 +114,7 @@ class FlowListViewModel @Inject constructor(
     private val credentialRepository: CredentialRepository,
     private val dataTableRepository: DataTableRepository,
     private val scheduler: FlowScheduler,
+    private val activation: com.kaivoflow.core.work.alwayson.ActivationManager,
 ) : ViewModel() {
 
     private val _isCreating = MutableStateFlow(false)
@@ -400,7 +401,8 @@ class FlowListViewModel @Inject constructor(
 
     fun delete(id: String) {
         viewModelScope.launch {
-            scheduler.cancel(id)
+            runCatching { activation.delete(id) }
+            runCatching { scheduler.cancel(id) }
             flowRepository.delete(id)
         }
     }
@@ -409,19 +411,10 @@ class FlowListViewModel @Inject constructor(
         viewModelScope.launch { flowRepository.setFavorite(id, favorite) }
     }
 
-    fun toggleFlowActive(id: String) {
-        viewModelScope.launch {
-            val flow = flowRepository.flow(id) ?: return@launch
-            val next = !flow.isActive
-            val updated = flow.copy(isActive = next, updatedAt = System.currentTimeMillis())
-            flowRepository.save(updated)
-            if (next) {
-                runCatching { scheduler.schedule(updated) }
-            } else {
-                runCatching { scheduler.cancel(updated.id) }
-            }
-        }
-    }
+    fun pause(id: String) { viewModelScope.launch { activation.pause(id) } }
+    fun resume(id: String) { viewModelScope.launch { activation.resume(id) } }
+    fun retryNow(id: String) { viewModelScope.launch { activation.retryNow(id) } }
+    fun unpublish(id: String) { viewModelScope.launch { activation.unpublish(id, confirmed = true) } }
 }
 
 data class FlowListUiState(
@@ -448,6 +441,8 @@ fun FlowListScreen(
     onOpenPrompt: (String) -> Unit = {},
     viewModel: FlowListViewModel = hiltViewModel(),
 ) {
+    var publishFlowId by remember { mutableStateOf<String?>(null) }
+    PublishSheetEntry(publishFlowId, onDismiss = { publishFlowId = null }, onFix = { _ -> val id = publishFlowId; publishFlowId = null; id?.let(onOpenFlow) })
     val state by viewModel.state.collectAsStateWithLifecycle()
     val groups by viewModel.groups.collectAsStateWithLifecycle()
     val selectedGroupId by viewModel.selectedGroupId.collectAsStateWithLifecycle()
@@ -609,7 +604,11 @@ fun FlowListScreen(
                                         onExport = { onExport(flow.id) },
                                         onDelete = { viewModel.delete(flow.id) },
                                         onToggleFavorite = { viewModel.toggleFavorite(flow.id, !flow.isFavorite) },
-                                        onToggleActive = { viewModel.toggleFlowActive(flow.id) },
+                                        onPublish = { publishFlowId = flow.id },
+                                        onPause = { viewModel.pause(flow.id) },
+                                        onResume = { viewModel.resume(flow.id) },
+                                        onRetry = { viewModel.retryNow(flow.id) },
+                                        onUnpublish = { viewModel.unpublish(flow.id) },
                                     )
                                 }
                             }
@@ -1586,7 +1585,11 @@ private fun FlowRowCard(
     onExport: () -> Unit,
     onDelete: () -> Unit,
     onToggleFavorite: () -> Unit,
-    onToggleActive: () -> Unit,
+    onPublish: () -> Unit,
+    onPause: () -> Unit,
+    onResume: () -> Unit,
+    onRetry: () -> Unit,
+    onUnpublish: () -> Unit,
 ) {
     val colors = KaivoTheme.colors
     var showMenu by remember { mutableStateOf(false) }
@@ -1641,29 +1644,9 @@ private fun FlowRowCard(
                         style = androidx.compose.material3.MaterialTheme.typography.bodyMedium,
                         color = colors.inkSecondary,
                     )
-                    if (flow.isActive) {
+                    if (flow.lifecycle != com.kaivoflow.core.engine.LifecycleState.Draft) {
                         Spacer(Modifier.width(8.dp))
-                        Row(
-                            Modifier
-                                .clip(CircleShape)
-                                .background(colors.royalGold.copy(alpha = 0.15f))
-                                .border(1.dp, colors.royalGold.copy(alpha = 0.4f), CircleShape)
-                                .padding(horizontal = 7.dp, vertical = 2.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                        ) {
-                            Box(
-                                Modifier
-                                    .size(6.dp)
-                                    .clip(CircleShape)
-                                    .background(colors.royalGold),
-                            )
-                            Spacer(Modifier.width(4.dp))
-                            Text(
-                                "24/7 Active",
-                                style = androidx.compose.material3.MaterialTheme.typography.labelSmall,
-                                color = colors.royalGold,
-                            )
-                        }
+                        LifecycleChip(flow)
                     }
                     if (groupName != null) {
                         Spacer(Modifier.width(6.dp))
@@ -1700,28 +1683,32 @@ private fun FlowRowCard(
                         .background(colors.surfaceElevated)
                         .border(1.dp, colors.hairline, KaivoShapes.chip),
                 ) {
-                    // 1. Publish / Unpublish (24/7 background execution)
-                    DropdownMenuItem(
-                        text = {
-                            Text(
-                                if (flow.isActive) "Unpublish (Stop 24/7)" else "Publish (Run 24/7)",
-                                color = if (flow.isActive) colors.inkPrimary else colors.royalGold,
-                                style = androidx.compose.material3.MaterialTheme.typography.labelMedium,
-                            )
-                        },
-                        leadingIcon = {
-                            Icon(
-                                KaivoIcons.icon(if (flow.isActive) "pause" else "play"),
-                                contentDescription = null,
-                                tint = if (flow.isActive) colors.inkSecondary else colors.royalGold,
-                                modifier = Modifier.size(18.dp),
-                            )
-                        },
-                        onClick = {
-                            showMenu = false
-                            onToggleActive()
-                        },
-                    )
+                    // 1. Lifecycle actions (spec 4.4)
+                    val L = com.kaivoflow.core.engine.LifecycleState
+                    @Composable
+                    fun item(label: String, icon: String, gold: Boolean, action: () -> Unit) {
+                        DropdownMenuItem(
+                            text = { Text(label, color = if (gold) colors.royalGold else colors.inkPrimary, style = androidx.compose.material3.MaterialTheme.typography.labelMedium) },
+                            leadingIcon = { Icon(KaivoIcons.icon(icon), contentDescription = null, tint = if (gold) colors.royalGold else colors.inkSecondary, modifier = Modifier.size(18.dp)) },
+                            onClick = { showMenu = false; action() },
+                        )
+                    }
+                    when (flow.lifecycle) {
+                        L.Draft -> item("Publish (Run 24/7)", "play", true, onPublish)
+                        L.Published -> {
+                            if ((flow.updatedAt > flow.lifecycleSince)) item("Publish changes", "play", true, onPublish)
+                            item("Pause", "pause", false, onPause)
+                            item("Unpublish (Stop 24/7)", "pause", false, onUnpublish)
+                        }
+                        L.Paused -> {
+                            item("Resume", "play", true, onResume)
+                            item("Unpublish (Stop 24/7)", "pause", false, onUnpublish)
+                        }
+                        L.Error -> {
+                            item("Fix and retry now", "play", true, onRetry)
+                            item("Unpublish (Stop 24/7)", "pause", false, onUnpublish)
+                        }
+                    }
 
                     // 2. Pin / Unpin
                     DropdownMenuItem(
@@ -1885,5 +1872,35 @@ internal fun relativeTime(timestamp: Long): String {
         delta < 3_600_000 -> "${delta / 60_000} min ago"
         delta < 86_400_000 -> "${delta / 3_600_000} h ago"
         else -> "${delta / 86_400_000} d ago"
+    }
+}
+
+
+/**
+ * Lifecycle chip (spec 4.4): Published green with a Live dot, Paused amber, Error red.
+ * "Changes not live" is a cheap approximation here (edited after the last publish); the publish
+ * sheet runs the exact ChangeDetector comparison.
+ */
+@Composable
+private fun LifecycleChip(flow: FlowSummary) {
+    val L = com.kaivoflow.core.engine.LifecycleState
+    val now = System.currentTimeMillis()
+    val timeFmt = remember { java.text.SimpleDateFormat("EEE HH:mm", java.util.Locale.getDefault()) }
+    Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
+        when (flow.lifecycle) {
+            L.Published -> {
+                StatusBadge("Live", BadgeKind.Success)
+                if (flow.updatedAt > flow.lifecycleSince) StatusBadge("Changes not live", BadgeKind.Gold)
+            }
+            L.Paused -> StatusBadge(flow.pausedUntil?.let { "Paused, resumes ${timeFmt.format(java.util.Date(it))}" } ?: "Paused", BadgeKind.Warning)
+            L.Error -> {
+                StatusBadge("Failing", BadgeKind.Error)
+                flow.nextRetryAt?.takeIf { it > now }?.let {
+                    val mins = ((it - now) / 60_000L).coerceAtLeast(1)
+                    StatusBadge("Retrying in ${mins} min", BadgeKind.Neutral)
+                }
+            }
+            L.Draft -> Unit
+        }
     }
 }

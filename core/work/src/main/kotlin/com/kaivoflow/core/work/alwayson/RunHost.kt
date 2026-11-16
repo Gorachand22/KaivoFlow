@@ -42,15 +42,18 @@ import javax.inject.Singleton
 class AndroidRunExecutor @Inject constructor(
     private val flowEngine: FlowEngine,
     private val flows: FlowRepository,
-    private val lifecycle: FlowLifecycleRepository,
+    private val liveFlowSource: LiveFlows,
     private val inbox: SparkInbox,
     private val wakeLocks: WakeLockManager,
 ) : RunExecutor {
 
     override suspend fun execute(record: InboxRecord, onStarted: suspend (String) -> Unit): RunOutcome {
-        val flow = flows.flow(record.flowId) ?: return RunOutcome.Dropped("FlowMissing")
-        val live = lifecycle.snapshot(flow.id)?.state?.isLive ?: flow.isActive
-        if (!live) return RunOutcome.Dropped("FlowNotLive")
+        // Spark Runs execute the PUBLISHED revision. The self-test Flow is built in and never stored.
+        val flow = if (record.flowId == SelfTestFlow.ID) SelfTestFlow.build()
+        else {
+            if (flows.flow(record.flowId) == null) return RunOutcome.Dropped("FlowMissing")
+            liveFlowSource.liveFlow(record.flowId) ?: return RunOutcome.Dropped("FlowNotLive")
+        }
         if (flowEngine.isRunning(flow.id)) return RunOutcome.Busy
 
         val decoded = InboxPayloads.decode(inbox.payloadOf(record))

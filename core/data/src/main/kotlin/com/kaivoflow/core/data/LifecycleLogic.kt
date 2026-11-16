@@ -1,9 +1,5 @@
 package com.kaivoflow.core.data
 
-import com.kaivoflow.core.engine.LifecycleReason
-import com.kaivoflow.core.engine.LifecycleSnapshot
-import com.kaivoflow.core.engine.LifecycleState
-
 /**
  * Android-free decisions around the lifecycle columns, kept apart from Room so they run on the JVM.
  */
@@ -18,17 +14,4 @@ object LifecycleLogic {
     fun isActiveInJson(flowJson: String): Boolean = ACTIVE.containsMatchIn(flowJson)
 
     private val ACTIVE = Regex("\"isActive\"\\s*:\\s*true")
-
-    /**
-     * Phase 1 bridge until the publish UI uses the state machine (AO-16): the old save path still
-     * toggles `Flow.isActive`. Keep the lifecycle column consistent with it without touching Paused
-     * (nothing in Phase 1 can produce Paused) and without inventing a revision (no snapshot exists).
-     */
-    fun syncWithLegacyActive(current: LifecycleSnapshot, isActive: Boolean, now: Long): LifecycleSnapshot = when {
-        isActive && !current.state.isLive && current.state != LifecycleState.Paused ->
-            LifecycleSnapshot(LifecycleState.Published, reason = LifecycleReason.Published, since = now)
-        !isActive && current.state.isLive ->
-            LifecycleSnapshot(LifecycleState.Draft, reason = LifecycleReason.Unpublished, since = now)
-        else -> current
-    }
 }

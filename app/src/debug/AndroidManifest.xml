@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <application>
+        <!-- Debug builds only (spec 7.1, AO-21). Exported so `adb shell am broadcast` can reach it; it never exists in a release APK. -->
+        <receiver
+            android:name=".debug.DiagReceiver"
+            android:exported="true" />
+    </application>
+</manifest>

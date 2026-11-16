@@ -10,7 +10,7 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class MigrationsTest {
-    private val current = 5
+    private val current = 6
 
     @Test fun migrationsFormAContiguousChainFromOneToCurrent() {
         val sorted = ALL_MIGRATIONS.sortedBy { it.startVersion }
@@ -31,11 +31,24 @@ class MigrationsTest {
         assertTrue(ALL_MIGRATIONS.contains(MIGRATION_3_4))
     }
 
-    @Test fun fourToFiveIsRegisteredAndIsTheLastStep() {
+    @Test fun fourToFiveIsRegistered() {
         assertEquals(4, MIGRATION_4_5.startVersion)
         assertEquals(5, MIGRATION_4_5.endVersion)
         assertTrue(ALL_MIGRATIONS.contains(MIGRATION_4_5))
-        assertEquals(MIGRATION_4_5, ALL_MIGRATIONS.last())
+    }
+
+    @Test fun fiveToSixIsRegisteredAndIsTheLastStep() {
+        assertEquals(5, MIGRATION_5_6.startVersion)
+        assertEquals(6, MIGRATION_5_6.endVersion)
+        assertEquals(MIGRATION_5_6, ALL_MIGRATIONS.last())
+    }
+
+    @Test fun schemaSixEntityDefaultsMatchTheMigrationSql() {
+        // ALTER ... `acknowledged` INTEGER NOT NULL DEFAULT 0 must equal @ColumnInfo(defaultValue = "0") and false.
+        val e = ReliabilityEventEntity(at = 1, kind = "k", severity = "info", flowId = null, detail = null, sessionId = null)
+        assertFalse(e.acknowledged)
+        val d = ExpectedRunDailyEntity("f", 0, 1, 2, 3, 4, 5, 6, 7, 8)
+        assertEquals(8L, d.maxMs)
     }
 
     @Test fun stepDataEntitiesHaveNoSqlDefaultsSoTheMigrationDeclaresNone() {
@@ -72,30 +85,6 @@ class MigrationsTest {
     // ---- Phase 1 bridge --------------------------------------------------------------------------
 
     private val now = 5_000L
-    private fun snap(s: LifecycleState) = LifecycleSnapshot(s, publishedRevision = 2, since = 1)
-
-    @Test fun legacyActivationPublishesAndDeactivationDrafts() {
-        val up = LifecycleLogic.syncWithLegacyActive(LifecycleSnapshot(), isActive = true, now = now)
-        assertEquals(LifecycleState.Published, up.state)
-        assertEquals(now, up.since)
-        assertNull(up.publishedRevision)
-        for (live in listOf(LifecycleState.Published, LifecycleState.Error)) {
-            val down = LifecycleLogic.syncWithLegacyActive(snap(live), isActive = false, now = now)
-            assertEquals(LifecycleState.Draft, down.state)
-            assertEquals(LifecycleReason.Unpublished, down.reason)
-        }
-    }
-
-    @Test fun bridgeLeavesConsistentAndPausedRowsAlone() {
-        for (live in listOf(LifecycleState.Published, LifecycleState.Error)) {
-            assertEquals(snap(live), LifecycleLogic.syncWithLegacyActive(snap(live), true, now))
-        }
-        assertEquals(snap(LifecycleState.Draft), LifecycleLogic.syncWithLegacyActive(snap(LifecycleState.Draft), false, now))
-        for (active in listOf(true, false)) {
-            assertEquals(snap(LifecycleState.Paused), LifecycleLogic.syncWithLegacyActive(snap(LifecycleState.Paused), active, now))
-        }
-    }
-
     @Test fun lifecycleColumnsRoundTripThroughTheEntity() {
         val s = LifecycleSnapshot(
             LifecycleState.Error, 3, LifecycleReason.ArmFailed, 10, pausedUntil = null, errorCode = "PortInUse",

@@ -67,6 +67,7 @@ class NotificationListenerRegistrar @Inject constructor(
     private val hub: NotificationListenerHub,
     private val events: DeviceEvents,
     private val flows: FlowRepository,
+    private val liveFlowSource: LiveFlows,
     private val lifecycle: FlowLifecycleRepository,
     private val registrations: TriggerRegistrationRepository,
     private val recorder: ReliabilityRecorder,
@@ -75,8 +76,7 @@ class NotificationListenerRegistrar @Inject constructor(
     private val writer by lazy { RegistrationWriter(registrations, recorder) { clock.now() } }
 
     override suspend fun reconcile(live: List<Flow>, all: List<Flow>, trigger: ReconcileTrigger) {
-        val snapshots = lifecycle.allSnapshots()
-        val liveFlows = flows.all().filter { snapshots[it.id]?.state?.isLive ?: it.isActive }
+        val liveFlows = liveFlowSource.live()
         events.notificationInterest = NotificationInterest.from(liveFlows)
         val wanted = SparkQueries.enabled(liveFlows, SparkTypes.NOTIFICATION)
         if (wanted.isNotEmpty() && hub.reconcile() == ListenerAction.RequestRebind) hub.rebind()

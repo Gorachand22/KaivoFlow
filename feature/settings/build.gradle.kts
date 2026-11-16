@@ -26,6 +26,7 @@ dependencies {
     implementation(project(":core:design"))
     implementation(project(":core:model"))
     implementation(project(":core:data"))
+    implementation(project(":core:engine"))
     implementation(project(":core:work"))
     implementation(project(":feature:permissions"))
 
