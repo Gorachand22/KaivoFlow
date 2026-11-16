@@ -2,11 +2,23 @@ package com.kaivoflow.core.nodes
 
 import com.kaivoflow.core.engine.NodeRegistry
 import com.kaivoflow.core.engine.ScopeBuilder
-import com.kaivoflow.core.engine.StepExecutor
 import com.kaivoflow.core.engine.StepExecutionException
+import com.kaivoflow.core.engine.StepExecutor
 import com.kaivoflow.core.engine.StepResult
 import com.kaivoflow.core.model.Flow
 import com.kaivoflow.core.model.FlowData
+import com.kaivoflow.core.nodes.app.messaging.DiscordNode
+import com.kaivoflow.core.nodes.app.messaging.SlackNode
+import com.kaivoflow.core.nodes.app.messaging.TelegramNode
+import com.kaivoflow.core.nodes.code.script.CodeNode
+import com.kaivoflow.core.nodes.data.items.SetFieldsNode
+import com.kaivoflow.core.nodes.data.items.TemplateNode
+import com.kaivoflow.core.nodes.data.time.DateNode
+import com.kaivoflow.core.nodes.device.files_media.FileNode
+import com.kaivoflow.core.nodes.device.notifications.NotificationSendNode
+import com.kaivoflow.core.nodes.device.telephony.SmsSendNode
+import com.kaivoflow.core.nodes.net.web.HttpNode
+import com.kaivoflow.core.nodes.security.crypto.CryptoNode
 import kotlinx.collections.immutable.persistentMapOf
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals

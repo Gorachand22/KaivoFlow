@@ -2,19 +2,42 @@ package com.kaivoflow.core.nodes
 
 import com.kaivoflow.core.engine.ExecutionMode
 import com.kaivoflow.core.engine.HttpResponseSpec
-import com.kaivoflow.core.engine.StepExecutionException
 import com.kaivoflow.core.engine.StepContext
+import com.kaivoflow.core.engine.StepExecutionException
 import com.kaivoflow.core.engine.StepExecutor
 import com.kaivoflow.core.engine.StepResult
 import com.kaivoflow.core.engine.Values
 import com.kaivoflow.core.model.StepNode
+import com.kaivoflow.core.nodes.ai.chains.AiChatNode
+import com.kaivoflow.core.nodes.ai.chains.AiExtractNode
+import com.kaivoflow.core.nodes.app.messaging.TelegramNode
+import com.kaivoflow.core.nodes.app.productivity.GoogleSheetsNode
+import com.kaivoflow.core.nodes.code.script.CodeNode
+import com.kaivoflow.core.nodes.data.items.AggregateNode
+import com.kaivoflow.core.nodes.data.items.DedupeNode
+import com.kaivoflow.core.nodes.data.items.FieldsNode
+import com.kaivoflow.core.nodes.data.items.FilterNode
+import com.kaivoflow.core.nodes.data.items.JsonNode
+import com.kaivoflow.core.nodes.data.items.SetFieldsNode
+import com.kaivoflow.core.nodes.data.time.DateNode
+import com.kaivoflow.core.nodes.device.files_media.FileNode
+import com.kaivoflow.core.nodes.device.notifications.NotificationSendNode
+import com.kaivoflow.core.nodes.device.telephony.SmsSendNode
+import com.kaivoflow.core.nodes.flow.branching.IfNode
+import com.kaivoflow.core.nodes.flow.branching.MergeNode
+import com.kaivoflow.core.nodes.flow.branching.SwitchNode
+import com.kaivoflow.core.nodes.flow.looping.LoopNode
+import com.kaivoflow.core.nodes.net.web.HttpNode
+import com.kaivoflow.core.nodes.net.web.WeatherNode
+import com.kaivoflow.core.nodes.spark.start.ManualTriggerNode
+import com.kaivoflow.core.nodes.spark.start.ScheduleTriggerNode
+import kotlinx.collections.immutable.toImmutableMap
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
-import kotlinx.collections.immutable.toImmutableMap
 
 class NodeExecutorTest {
 

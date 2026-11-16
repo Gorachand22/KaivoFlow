@@ -1,0 +1,204 @@
+package com.kaivoflow.core.nodes
+
+import com.kaivoflow.core.engine.NodeRegistry
+import com.kaivoflow.core.engine.StepExecutor
+import com.kaivoflow.core.model.StepCategory
+import com.kaivoflow.core.nodes.ai.chains.AiChatNode
+import com.kaivoflow.core.nodes.ai.chains.AiClassifyNode
+import com.kaivoflow.core.nodes.ai.chains.AiExtractNode
+import com.kaivoflow.core.nodes.app.messaging.DiscordNode
+import com.kaivoflow.core.nodes.app.messaging.SlackNode
+import com.kaivoflow.core.nodes.app.messaging.TelegramNode
+import com.kaivoflow.core.nodes.app.productivity.GoogleSheetsNode
+import com.kaivoflow.core.nodes.app.productivity.NotionNode
+import com.kaivoflow.core.nodes.code.script.CodeNode
+import com.kaivoflow.core.nodes.data.items.AggregateNode
+import com.kaivoflow.core.nodes.data.items.ChartNode
+import com.kaivoflow.core.nodes.data.items.CompareNode
+import com.kaivoflow.core.nodes.data.items.DedupeNode
+import com.kaivoflow.core.nodes.data.items.FieldsNode
+import com.kaivoflow.core.nodes.data.items.FilterNode
+import com.kaivoflow.core.nodes.data.items.JsonNode
+import com.kaivoflow.core.nodes.data.items.LimitNode
+import com.kaivoflow.core.nodes.data.items.MathNode
+import com.kaivoflow.core.nodes.data.items.PollChangesNode
+import com.kaivoflow.core.nodes.data.items.RunInfoNode
+import com.kaivoflow.core.nodes.data.items.SetFieldsNode
+import com.kaivoflow.core.nodes.data.items.SortNode
+import com.kaivoflow.core.nodes.data.items.SplitNode
+import com.kaivoflow.core.nodes.data.items.StatsNode
+import com.kaivoflow.core.nodes.data.items.TemplateNode
+import com.kaivoflow.core.nodes.data.items.TextNode
+import com.kaivoflow.core.nodes.data.items.UrlNode
+import com.kaivoflow.core.nodes.data.storage.TableNode
+import com.kaivoflow.core.nodes.data.text.HtmlNode
+import com.kaivoflow.core.nodes.data.text.IcalNode
+import com.kaivoflow.core.nodes.data.text.MarkdownNode
+import com.kaivoflow.core.nodes.data.text.XmlNode
+import com.kaivoflow.core.nodes.data.time.DateNode
+import com.kaivoflow.core.nodes.device.connectivity.NetworkStatusNode
+import com.kaivoflow.core.nodes.device.connectivity.WifiInfoNode
+import com.kaivoflow.core.nodes.device.contacts_calendar.CalendarEventNode
+import com.kaivoflow.core.nodes.device.contacts_calendar.ContactLookupNode
+import com.kaivoflow.core.nodes.device.files_media.FileNode
+import com.kaivoflow.core.nodes.device.io.ClipboardNode
+import com.kaivoflow.core.nodes.device.io.ClipboardReadNode
+import com.kaivoflow.core.nodes.device.io.ShareTextNode
+import com.kaivoflow.core.nodes.device.io.SpeakNode
+import com.kaivoflow.core.nodes.device.io.TorchNode
+import com.kaivoflow.core.nodes.device.io.VibrateNode
+import com.kaivoflow.core.nodes.device.location.LocationNode
+import com.kaivoflow.core.nodes.device.notifications.NotificationSendNode
+import com.kaivoflow.core.nodes.device.notifications.ToastNode
+import com.kaivoflow.core.nodes.device.sensors.BatteryStatusNode
+import com.kaivoflow.core.nodes.device.system.OpenLinkNode
+import com.kaivoflow.core.nodes.device.system.VolumeNode
+import com.kaivoflow.core.nodes.device.telephony.SmsSendNode
+import com.kaivoflow.core.nodes.files.convert.BinaryToolsNode
+import com.kaivoflow.core.nodes.files.convert.CsvNode
+import com.kaivoflow.core.nodes.files.document.PdfNode
+import com.kaivoflow.core.nodes.flow.branching.IfNode
+import com.kaivoflow.core.nodes.flow.branching.MergeNode
+import com.kaivoflow.core.nodes.flow.branching.SwitchNode
+import com.kaivoflow.core.nodes.flow.composition.NoopNode
+import com.kaivoflow.core.nodes.flow.composition.SubFlowNode
+import com.kaivoflow.core.nodes.flow.looping.LoopNode
+import com.kaivoflow.core.nodes.flow.timing.ErrorHandlerNode
+import com.kaivoflow.core.nodes.flow.timing.StopNode
+import com.kaivoflow.core.nodes.flow.timing.WaitNode
+import com.kaivoflow.core.nodes.net.protocols.TcpNode
+import com.kaivoflow.core.nodes.net.web.BinaryUploadNode
+import com.kaivoflow.core.nodes.net.web.GraphQlNode
+import com.kaivoflow.core.nodes.net.web.HttpNode
+import com.kaivoflow.core.nodes.net.web.RssNode
+import com.kaivoflow.core.nodes.net.web.ServiceConnectorNode
+import com.kaivoflow.core.nodes.net.web.WeatherNode
+import com.kaivoflow.core.nodes.net.web.WebDavNode
+import com.kaivoflow.core.nodes.security.auth.TotpNode
+import com.kaivoflow.core.nodes.security.crypto.CryptoNode
+import com.kaivoflow.core.nodes.security.crypto.RandomNode
+import com.kaivoflow.core.nodes.security.crypto.TokenNode
+import com.kaivoflow.core.nodes.spark.device_events.BatteryTriggerNode
+import com.kaivoflow.core.nodes.spark.device_events.BluetoothTriggerNode
+import com.kaivoflow.core.nodes.spark.device_events.BootTriggerNode
+import com.kaivoflow.core.nodes.spark.device_events.GeofenceTriggerNode
+import com.kaivoflow.core.nodes.spark.device_events.HeadsetTriggerNode
+import com.kaivoflow.core.nodes.spark.device_events.NotificationTriggerNode
+import com.kaivoflow.core.nodes.spark.device_events.SmsTriggerNode
+import com.kaivoflow.core.nodes.spark.device_events.WifiTriggerNode
+import com.kaivoflow.core.nodes.spark.incoming.ShareTriggerNode
+import com.kaivoflow.core.nodes.spark.incoming.WebhookTriggerNode
+import com.kaivoflow.core.nodes.spark.start.ManualTriggerNode
+import com.kaivoflow.core.nodes.spark.start.ScheduleTriggerNode
+
+/**
+ * The single list of every Step KaivoFlow can run. The palette, search, inspector forms, the
+ * validator and the executor instantiation all read from [all], so a Step cannot appear in the UI
+ * without being runnable.
+ */
+object NodeCatalog {
+
+    fun executors(devices: DeviceGateway = NoopDeviceGateway): List<StepExecutor> = rawExecutors(devices).map { PlacedExecutor(it) }
+
+    private fun rawExecutors(devices: DeviceGateway): List<StepExecutor> = listOf(
+        // Sparks
+        ManualTriggerNode(),
+        ScheduleTriggerNode(),
+        WebhookTriggerNode(),
+        NotificationTriggerNode(),
+        SmsTriggerNode(),
+        ShareTriggerNode(),
+        BatteryTriggerNode(),
+        GeofenceTriggerNode(),
+        BluetoothTriggerNode(),
+        WifiTriggerNode(),
+        HeadsetTriggerNode(),
+        BootTriggerNode(),
+        // Logic
+        IfNode(),
+        SwitchNode(),
+        MergeNode(),
+        FilterNode(),
+        DedupeNode(),
+        LoopNode(),
+        WaitNode(),
+        StopNode(),
+        ErrorHandlerNode(),
+        SortNode(),
+        LimitNode(),
+        CompareNode(),
+        TableNode(devices),
+        RunInfoNode(),
+        NoopNode(),
+        SubFlowNode(),
+        PollChangesNode(devices),
+        // Transform
+        SetFieldsNode(),
+        FieldsNode(),
+        JsonNode(),
+        TemplateNode(),
+        DateNode(),
+        AggregateNode(),
+        CodeNode(),
+        CryptoNode(),
+        MathNode(),
+        TextNode(),
+        StatsNode(),
+        SplitNode(),
+        UrlNode(),
+        CsvNode(),
+        XmlNode(),
+        HtmlNode(),
+        MarkdownNode(),
+        IcalNode(),
+        BinaryToolsNode(devices),
+        BinaryUploadNode(devices),
+        ChartNode(devices),
+        RandomNode(),
+        TokenNode(),
+        TotpNode(),
+        PdfNode(devices),
+        // AI
+        AiChatNode(),
+        AiExtractNode(),
+        AiClassifyNode(),
+        // SaaS
+        HttpNode(),
+        GoogleSheetsNode(),
+        NotionNode(),
+        TelegramNode(),
+        SlackNode(),
+        DiscordNode(),
+        WeatherNode(),
+        RssNode(),
+        GraphQlNode(),
+        WebDavNode(devices),
+        TcpNode(),
+        ServiceConnectorNode(),
+        // Device
+        NotificationSendNode(devices),
+        SmsSendNode(devices),
+        ClipboardNode(devices),
+        ClipboardReadNode(devices),
+        OpenLinkNode(devices),
+        SpeakNode(devices),
+        VibrateNode(devices),
+        FileNode(devices),
+        BatteryStatusNode(devices),
+        NetworkStatusNode(devices),
+        ToastNode(devices),
+        ShareTextNode(devices),
+        TorchNode(devices),
+        VolumeNode(devices),
+        LocationNode(devices),
+        WifiInfoNode(devices),
+        ContactLookupNode(devices),
+        CalendarEventNode(devices),
+    )
+
+    fun registry(devices: DeviceGateway = NoopDeviceGateway): NodeRegistry = NodeRegistry(executors(devices))
+
+    /** Used by tests and by the "is my catalog complete?" check. */
+    fun countByCategory(devices: DeviceGateway = NoopDeviceGateway): Map<StepCategory, Int> =
+        registry(devices).specs.groupingBy { it.category }.eachCount()
+}

@@ -1,6 +1,8 @@
 package com.kaivoflow.core.nodes
 
 import com.kaivoflow.core.engine.HttpResponseSpec
+import com.kaivoflow.core.nodes.ai.chains.AiExtractNode
+import com.kaivoflow.core.nodes.ai.shared.AiExtractionSchema
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.*
 import org.junit.Test

@@ -6,6 +6,9 @@ import com.kaivoflow.core.engine.HttpResponseSpec
 import com.kaivoflow.core.engine.StepExecutor
 import com.kaivoflow.core.engine.Values
 import com.kaivoflow.core.model.FlowData
+import com.kaivoflow.core.nodes.data.items.PollChangesNode
+import com.kaivoflow.core.nodes.flow.composition.SubFlowNode
+import com.kaivoflow.core.nodes.net.web.ServiceConnectorNode
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue

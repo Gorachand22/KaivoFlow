@@ -351,3 +351,42 @@ Structure:
 - R3: Merges that depend on planned Steps (Summarize, Extract/Convert, Data Table) keep old Steps registered but hidden; the base is not "perfect" until those ship. Accept or schedule them before the next release.
 - R4: Removing `transform.chart`, `saas.tcp` and `random` number/pick leaves existing Flows with Unavailable Steps. Acceptable if there are no external users yet; confirm.
 - R5: Whether `ai.chat`, `ai.extract`, `ai.classify` stay visible (Legacy badge) or move to Hidden once the Agent exists.
+
+## Implementation notes 2A
+
+Status of migration step 5.7.4 (file moves and one-file-per-Step split). No id, param key or port changed; `StepGoldenTest` stayed byte-identical after every category. Categories were moved in the order device, spark, flow, data, files/net/code/security, apps, ai, then the shared kit and catalog files. The full core:model, core:engine, core:nodes (and the pure core:data) suites were green after each one.
+
+### Final layout (`core/nodes/src/main/kotlin/com/kaivoflow/core/nodes/`)
+
+```
+kit/       NodeDsl, Conditions, MiniJson, BinarySupport, CryptoMath, JsonLite, LogicParams, ConnectorSupport
+catalog/   NodeCatalog, CategoryDefs (Placement, CategoryDefs, CatalogAliases, PlacedExecutor)
+spark/     TriggerSpecs, EventTriggerMatcher, MobileTriggerMath, PassThroughTrigger
+  start/ (Manual, Schedule)  incoming/ (Webhook, Share)
+  device_events/ (Notification, Sms, Battery, Geofence, Bluetooth, Wifi, Headset, Boot)
+flow/      branching/ (If, Switch, Merge)  looping/ (Loop)  timing/ (Wait, Stop, ErrorHandler)  composition/ (SubFlow, Noop)
+data/      items/ (Filter, Sort, Limit, Dedupe, Compare, PollChanges, RunInfo, SetFields, Fields, Template, Json,
+                   Math, Text, Url, Split, Aggregate, Stats, Chart)
+           storage/ (Table)  time/ (Date)  text/ (Xml, Html, Markdown, Ical + XmlLite, HtmlLite, MarkdownLite)
+files/     convert/ (Csv, BinaryTools, CsvLite)  document/ (Pdf, PdfLite)
+net/       web/ (BinaryUpload, Http, ServiceConnector, GraphQl, WebDav, Rss, Weather)  protocols/ (Tcp)
+security/  crypto/ (Random, Token, Crypto)  auth/ (Totp)
+code/      script/ (Code)
+app/       messaging/ (Telegram, Slack, Discord)  productivity/ (GoogleSheets, Notion)
+ai/        chains/ (AiChat, AiExtract, AiClassify)  shared/ (AiClient, AiSpec, AiExtractionSchema)
+device/    DeviceGateway, UserFileStore
+  notifications/ (NotificationSend, Toast)  telephony/ (SmsSend)  contacts_calendar/ (ContactLookup, CalendarEvent)
+  location/ (Location)  sensors/ (BatteryStatus)  connectivity/ (NetworkStatus, WifiInfo)
+  files_media/ (File)  system/ (OpenLink, Volume)  io/ (Clipboard, ClipboardRead, ShareText, Speak, Vibrate, Torch)
+```
+
+Each executor sits in its own file named after its class, in a package equal to its folder (`com.kaivoflow.core.nodes.device.io`). A private helper used by one Step moved with it (`ChartPoint`, `ChartSvg`, `ParamResolverLite`, `connectorBody`, `nextPageUrl`, `snippet`). A helper shared by several Steps became `internal` in a small shared file (`kit/ConnectorSupport.kt`, `ai/shared/AiSpec.kt`).
+
+### Kept in place, and why
+
+- Package names kept as `com.kaivoflow.core.nodes` for every class that Android modules import: `NodeCatalog`, `CatalogAliases`, `TriggerSpecs`, `EventTriggerMatcher`, `DeviceGateway`, `NoopDeviceGateway`, `UserFileStore`, `BinarySupport`, `CryptoMath`. Their files moved into folders anyway (Kotlin lets folder and package differ). The same applies to every `kit/` and `catalog/` file, so `kit` and `catalog` are folders only, not packages.
+- Class names keep the `...Node` suffix. The `<Name>Step` rename of 5.3 is deferred: it touches every test and every reference for no layout benefit, and belongs with the id rename (5.7.6).
+- Tests stay flat in the package `com.kaivoflow.core.nodes`; only their imports changed. Mirroring the folders under `src/test` is left for the per-Step test work (5.5.2).
+- `<Category>Steps.kt` auto-assembly (5.4) and `CatalogCompletenessTest` are not part of this change: `NodeCatalog` still lists every executor by hand.
+- Executors were not split into `Params` and `Ops` files (5.2 "larger Step"); this change is a move and a one-file-per-Step split only. Several files remain above the ~300 line guideline (for example `BinaryToolsNode`, `TokenNode`, `WeatherNode`, `XmlLite`).
+- The `app/` folder uses the singular name from 5.1 (the task list said "apps"); the picker tree path is `app/...` too.
