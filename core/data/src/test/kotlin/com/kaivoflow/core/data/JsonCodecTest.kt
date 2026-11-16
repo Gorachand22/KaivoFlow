@@ -276,4 +276,36 @@ class JsonCodecTest {
         assertNotNull("one odd status should not wipe a Run from history", decoded)
         assertEquals(RunStatus.Failed, decoded!!.status)
     }
+
+    @Test
+    fun `item lineage and structured error survive a round trip`() {
+        val item = FlowData(
+            json = mapOf("a" to 1),
+            error = com.kaivoflow.core.model.ItemError("bad row", "s2", "item", 99L),
+            sources = listOf(com.kaivoflow.core.model.ItemRef("s1", 0, 3, port = 1)),
+        )
+        val back = JsonCodec.decodeFlowData(JsonCodec.encodeFlowData(item))
+        assertEquals(item.error, back.error)
+        assertEquals(item.sources, back.sources)
+        // Old app versions read these two fields; they must still be written.
+        val encoded = JsonCodec.encodeFlowData(item)
+        assertEquals("bad row", (encoded["error"] as kotlinx.serialization.json.JsonPrimitive).content)
+        assertEquals(3, (encoded["pairedIndex"] as kotlinx.serialization.json.JsonPrimitive).content.toInt())
+    }
+
+    @Test
+    fun `items stored before lineage existed still decode`() {
+        val legacyWrapped = kotlinx.serialization.json.Json.parseToJsonElement(
+            """{"json":{"a":1},"pairedIndex":2,"error":"old failure"}"""
+        )
+        val item = JsonCodec.decodeFlowData(legacyWrapped)
+        assertEquals(1, (item.json["a"] as Number).toInt())
+        assertEquals(2, item.pairedIndex)
+        assertEquals("old failure", item.error!!.message)
+        assertEquals("legacy", item.error!!.kind)
+        // The even older bare-json shape.
+        val bare = JsonCodec.decodeFlowData(kotlinx.serialization.json.Json.parseToJsonElement("""{"a":5}"""))
+        assertEquals(5, (bare.json["a"] as Number).toInt())
+        assertTrue(bare.sources.isEmpty())
+    }
 }

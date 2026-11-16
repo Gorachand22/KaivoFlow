@@ -4,6 +4,7 @@ import com.kaivoflow.core.engine.StepContext
 import com.kaivoflow.core.engine.StepExecutionException
 import com.kaivoflow.core.engine.StepExecutor
 import com.kaivoflow.core.engine.StepResult
+import com.kaivoflow.core.engine.StopSignal
 import com.kaivoflow.core.engine.Values
 import com.kaivoflow.core.model.NodeSpec
 import com.kaivoflow.core.model.ParamOption
@@ -25,7 +26,7 @@ class StopNode : StepExecutor {
                 label = "Report the Run as",
                 type = ParamType.Select,
                 default = "success",
-                options = persistentListOf(ParamOption("success", "Succeeded"), ParamOption("error", "Failed")),
+                options = persistentListOf(ParamOption("success", "Stopped (no error)"), ParamOption("error", "Failed")),
             ),
             ParamSpec("message", "Message", ParamType.Text, placeholder = "Optional note shown in the Run log"),
         ),
@@ -41,8 +42,12 @@ class StopNode : StepExecutor {
                 Values.asString(params["message"]).ifBlank { "stopped with an error" }
             )
         }
-        Values.asString(params["message"]).takeIf { it.isNotBlank() }?.let { ctx.log(it) }
-        // Downstream Steps are allowed to run: Stop simply ends *its* branch by producing items.
-        return ctx.output(ctx.input)
+        val message = Values.asString(params["message"])
+        message.takeIf { it.isNotBlank() }?.let { ctx.log(it) }
+        // The runner cancels every Step that has not finished and reports the Run as Stopped.
+        return StepResult(
+            outputs = mapOf(0 to ctx.input),
+            stop = StopSignal(message.ifBlank { "Stopped by \"${ctx.step.name}\"." }),
+        )
     }
 }

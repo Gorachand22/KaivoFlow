@@ -2,6 +2,9 @@ package com.kaivoflow.core.engine
 
 import com.kaivoflow.core.model.Flow
 import com.kaivoflow.core.model.FlowData
+import com.kaivoflow.core.model.ItemError
+import com.kaivoflow.core.model.ItemRef
+import com.kaivoflow.core.model.StreamEdge
 import com.kaivoflow.core.model.LogLevel
 import com.kaivoflow.core.model.OnErrorPolicy
 import com.kaivoflow.core.model.RunEvent
@@ -18,6 +21,8 @@ import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.awaitAll
 import kotlinx.collections.immutable.toImmutableList
+import kotlinx.collections.immutable.toImmutableMap
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.async
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.coroutineScope
@@ -93,7 +98,7 @@ class FlowRunner(
         val execution = Execution(flow, RunTrigger(kind = "test", items = effectiveInput.toImmutableList()), RunOptions(mode = ExecutionMode.TestStep), onEvent)
         onEvent(RunEvent.RunStarted(execution.runId, flow.id, 1))
         val result = try {
-            execution.runWithRetries(step, effectiveInput)
+            execution.runWithRetries(step, Collected.of(effectiveInput))
         } catch (e: CancellationException) {
             onEvent(RunEvent.RunFinished(execution.runId, RunStatus.Canceled))
             throw e
@@ -116,7 +121,21 @@ class FlowRunner(
         val durationMs: Long,
         val record: StepRun,
         val errorItems: List<FlowData> = emptyList(),
+        val itemsFailed: Int = 0,
     )
+
+    /** Everything a Step receives: flattened, per Stream and per input port, with item identities. */
+    internal class Collected(
+        val streams: List<StreamInput>,
+        val items: List<FlowData>,
+        val refs: List<ItemRef>,
+        val ports: List<List<FlowData>>,
+    ) {
+        companion object {
+            /** Input that did not come from upstream Steps (trigger items, Test Step input): no lineage. */
+            fun of(items: List<FlowData>) = Collected(emptyList(), items, emptyList(), listOf(items))
+        }
+    }
 
     /**
      * One Run's mutable state. A runner instance is safely reused: all per-Run state lives here,
@@ -132,8 +151,13 @@ class FlowRunner(
         val runId: String = newId()
         val startedAt: Long = clock()
 
-        /** Step outputs keyed by Step NAME so `${'$'}step["Send to Telegram"]` works in expressions. */
-        val stepOutputs = ConcurrentHashMap<String, List<FlowData>>()
+        /**
+         * Step outputs for every output port, keyed by Step ID, so renaming a Step never loses its
+         * data. Expressions still say `${'$'}step("Send to Telegram")`; the scope builder maps the
+         * name to the id through the Flow's Steps.
+         */
+        val stepOutputs = ConcurrentHashMap<String, Map<Int, List<FlowData>>>()
+        @Volatile var stopMessage: String? = null
         val stepRuns: MutableList<StepRun> = Collections.synchronizedList(mutableListOf())
         val errorItems: MutableList<FlowData> = Collections.synchronizedList(mutableListOf())
         val failureMessages: MutableList<String> = Collections.synchronizedList(mutableListOf())
@@ -142,7 +166,24 @@ class FlowRunner(
         lateinit var compiled: CompiledFlow
         private lateinit var selectedTriggerId: String
 
-        private fun snapshotOutputs(): Map<String, List<FlowData>> = HashMap(stepOutputs)
+        private fun snapshotPorts(): Map<String, Map<Int, List<FlowData>>> = HashMap(stepOutputs)
+
+        private fun portZero(ports: Map<String, Map<Int, List<FlowData>>>): Map<String, List<FlowData>> =
+            ports.mapValues { (_, byPort) -> byPort[0].orEmpty() }
+
+        /** Ends the Run after the current Step: remaining work is cancelled, the Run reports Stopped. */
+        private fun requestStop(step: StepNode, message: String) {
+            if (options.mode == ExecutionMode.TestStep || stopMessage != null) return
+            stopMessage = message.ifBlank { "Stopped by \"${step.name}\"." }
+            onEvent(RunEvent.Log(runId, "Run stopped by \"${step.name}\": $stopMessage", LogLevel.Warn))
+            if (this::scope.isInitialized) scope.cancel(CancellationException("Run stopped by ${step.name}"))
+        }
+
+        /** After a Stop: every Step that never finished is reported Skipped instead of vanishing. */
+        private fun markStopped() {
+            val finished = synchronized(stepRuns) { stepRuns.map { it.stepId }.toSet() }
+            compiled.order.filter { it.id !in finished }.forEach { markSkipped(it, "The Run was stopped before this Step ran.") }
+        }
 
         suspend fun execute(): RunRecord {
             compiled = try {
@@ -213,8 +254,11 @@ class FlowRunner(
                 onEvent(RunEvent.Log(runId, message, LogLevel.Error))
                 RunStatus.Failed
             } catch (e: CancellationException) {
-                onEvent(RunEvent.Log(runId, "Run canceled.", LogLevel.Warn))
-                RunStatus.Canceled
+                if (stopMessage == null) onEvent(RunEvent.Log(runId, "Run canceled.", LogLevel.Warn))
+                if (stopMessage != null) {
+                    markStopped()
+                    if (failureMessages.isNotEmpty()) RunStatus.Failed else RunStatus.Canceled
+                } else RunStatus.Canceled
             } catch (e: Throwable) {
                 val message = e.message ?: e::class.java.simpleName
                 failureMessages += message
@@ -235,6 +279,7 @@ class FlowRunner(
                 error = when (status) {
                     RunStatus.Failed -> failureMessages.firstOrNull() ?: "A Step failed."
                     RunStatus.PartialSuccess -> softFailures.firstOrNull()
+                    RunStatus.Canceled -> stopMessage
                     else -> null
                 },
                 triggerData = trigger.meta,
@@ -289,6 +334,8 @@ class FlowRunner(
             }
 
             // Every Step runs at most once per Run; awaiting here is what makes the graph work.
+            // ALL upstream Steps are awaited, not only the live ones: a Merge must see both
+            // branches finished (or empty) before it runs.
             val upstreamResults = compiled.upstream[step.id].orEmpty().map { edge ->
                 edge to memo.getValue(edge.fromStepId).await()
             }
@@ -300,8 +347,8 @@ class FlowRunner(
 
             // A switched-off ordinary Step passes its items straight through instead of dropping them.
             if (step.disabled) {
-                val passed = if (step.isTrigger) trigger.items.toList() else collectInput(step, upstreamResults)
-                return markBypassed(step, passed)
+                val collected = collectInput(step, upstreamResults)
+                return markBypassed(step, collected)
             }
 
             if (!step.isTrigger) {
@@ -316,17 +363,17 @@ class FlowRunner(
                 if (live.isEmpty()) return markSkipped(step, "No items reached this Step.")
             }
 
-            val inputItems = collectInput(step, upstreamResults)
-            if (inputItems.isEmpty() && !step.isTrigger) {
+            val collected = collectInput(step, upstreamResults)
+            if (collected.items.isEmpty() && !step.isTrigger) {
                 return markSkipped(step, "The Step before this one produced no items.")
             }
             // Freeze Output: replay the pinned result instead of executing.
             val frozen = step.frozenOutput
             if (frozen != null && !options.ignoreFrozen && options.mode != ExecutionMode.TestStep) {
-                return useFrozen(step, frozen.toList(), inputItems.size)
+                return useFrozen(step, frozen.toList(), collected.items.size)
             }
 
-            val result = permits.withPermit { runWithRetries(step, inputItems) }
+            val result = permits.withPermit { runWithRetries(step, collected) }
             // Collect error items so the Flow's dedicated error Step can be invoked once at the end.
             result.errorItems.forEach { errorItems += it }
             return result
@@ -336,24 +383,48 @@ class FlowRunner(
         private lateinit var scope: CoroutineScope
         private lateinit var permits: Semaphore
 
-        private fun collectInput(step: StepNode, upstream: List<Pair<com.kaivoflow.core.model.StreamEdge, NodeResult>>): List<FlowData> {
-            val raw = if (step.isTrigger) {
-                if (trigger.items.isEmpty()) {
+        private fun collectInput(step: StepNode, upstream: List<Pair<StreamEdge, NodeResult>>): Collected {
+            if (step.isTrigger) {
+                val raw = if (trigger.items.isEmpty()) {
                     if (options.mode == ExecutionMode.TestStep || trigger.kind.lowercase() in setOf("manual", "schedule", "scheduled", "subflow")) {
                         listOf(FlowData(json = defaultTriggerPayload(step)))
                     } else {
                         emptyList()
                     }
                 } else trigger.items.toList()
-            } else {
-                upstream
-                    .sortedBy { (edge, _) -> compiled.flow.streams.indexOf(edge) }
-                    .flatMap { (edge, result) -> result.outputs[edge.fromPort].orEmpty() }
+                val limit = options.itemLimit ?: flow.settings.maxItemsPerStep
+                if (raw.size <= limit) return Collected.of(raw)
+                onEvent(RunEvent.Log(runId, "\"${step.name}\" received ${raw.size} items; processing the first $limit.", LogLevel.Warn))
+                return Collected.of(raw.take(limit))
             }
+
+            // One entry per incoming Stream, in Stream order. A Stream keeps its destination port,
+            // so a multi-input Step gets separate lists; `items` is the same data flattened.
             val limit = options.itemLimit ?: flow.settings.maxItemsPerStep
-            if (raw.size <= limit) return raw
-            onEvent(RunEvent.Log(runId, "\"${step.name}\" received ${raw.size} items; processing the first $limit.", LogLevel.Warn))
-            return raw.take(limit)
+            val total = upstream.sumOf { (edge, result) -> result.outputs[edge.fromPort].orEmpty().size }
+            var budget = limit
+            val streams = upstream
+                .sortedBy { (edge, _) -> compiled.flow.streams.indexOf(edge) }
+                .map { (edge, result) ->
+                    val all = result.outputs[edge.fromPort].orEmpty()
+                    val taken = all.take(budget.coerceAtLeast(0))
+                    budget -= taken.size
+                    StreamInput(
+                        streamId = edge.id,
+                        fromStepId = edge.fromStepId,
+                        fromPort = edge.fromPort,
+                        toPort = edge.toPort,
+                        items = taken,
+                        refs = taken.indices.map { ItemRef(edge.fromStepId, 0, it, edge.fromPort) },
+                    )
+                }
+            if (total > limit) {
+                onEvent(RunEvent.Log(runId, "\"${step.name}\" received $total items; processing the first $limit.", LogLevel.Warn))
+            }
+            val ports = if (streams.isEmpty()) listOf(emptyList()) else {
+                (0..streams.maxOf { it.toPort }).map { p -> streams.filter { it.toPort == p }.flatMap { it.items } }
+            }
+            return Collected(streams, streams.flatMap { it.items }, streams.flatMap { it.refs }, ports)
         }
 
         private fun defaultTriggerPayload(step: StepNode): Map<String, Any?> {
@@ -446,9 +517,15 @@ class FlowRunner(
             }
         }
 
+        private fun portCountsOf(outputs: Map<Int, List<FlowData>>) =
+            outputs.mapValues { it.value.size }.toImmutableMap()
+
         private fun useFrozen(step: StepNode, items: List<FlowData>, itemsIn: Int): NodeResult {
             val now = clock()
-            stepOutputs[step.name] = items
+            // Pinned items are replayed as they were stored: their old lineage no longer applies.
+            val fresh = items.map { if (it.sources.isEmpty()) it else it.copy(sources = emptyList()) }
+            stepOutputs[step.id] = mapOf(0 to fresh)
+            val counts = persistentMapOfCounts(0 to fresh.size)
             val record = StepRun(
                 stepId = step.id,
                 stepName = step.name,
@@ -456,21 +533,28 @@ class FlowRunner(
                 startedAt = now,
                 finishedAt = now,
                 itemsIn = itemsIn,
-                itemsOut = items.size,
-                output = items.toImmutableList(),
+                itemsOut = fresh.size,
+                output = fresh.toImmutableList(),
+                portCounts = counts,
             )
             stepRuns += record
-            onEvent(RunEvent.StepFinished(runId, step.id, itemsIn, items.size, 0, frozen = true, output = items.toImmutableList()))
-            return NodeResult(StepRunStatus.Frozen, mapOf(0 to items), itemsIn, 0, record)
+            onEvent(RunEvent.StepFinished(runId, step.id, itemsIn, fresh.size, 0, frozen = true, output = fresh.toImmutableList(), portCounts = counts))
+            return NodeResult(StepRunStatus.Frozen, mapOf(0 to fresh), itemsIn, 0, record)
         }
 
+        private fun persistentMapOfCounts(vararg pairs: Pair<Int, Int>) = mapOf(*pairs).toImmutableMap()
+
         /** A disabled Step: reported as Skipped, but its items continue downstream untouched. */
-        private fun markBypassed(step: StepNode, items: List<FlowData>): NodeResult {
+        private fun markBypassed(step: StepNode, collected: Collected): NodeResult {
             val now = clock()
-            val record = StepRun(step.id, step.name, StepRunStatus.Skipped, now, now, itemsIn = items.size, itemsOut = items.size)
+            val outputs = Lineage.fill(mapOf(0 to collected.items), collected.items, collected.refs)
+            val items = outputs.getValue(0)
+            stepOutputs[step.id] = outputs
+            val counts = portCountsOf(outputs)
+            val record = StepRun(step.id, step.name, StepRunStatus.Skipped, now, now, itemsIn = items.size, itemsOut = items.size, portCounts = counts)
             stepRuns += record
             onEvent(RunEvent.StepSkipped(runId, step.id, "This Step is switched off; items passed through."))
-            return NodeResult(StepRunStatus.Skipped, mapOf(0 to items), items.size, 0, record)
+            return NodeResult(StepRunStatus.Skipped, outputs, items.size, 0, record)
         }
 
         private fun markSkipped(step: StepNode, reason: String): NodeResult {
@@ -481,7 +565,8 @@ class FlowRunner(
             return NodeResult(StepRunStatus.Skipped, emptyMap(), 0, 0, record)
         }
 
-        suspend fun runWithRetries(step: StepNode, input: List<FlowData>): NodeResult {
+        suspend fun runWithRetries(step: StepNode, collected: Collected): NodeResult {
+            val input = collected.items
             val executor = registry.executor(step.type)
                 ?: return hardFail(step, "This Step type (${step.type}) is not available on this build.", input, 0)
 
@@ -496,6 +581,7 @@ class FlowRunner(
                 onEvent(RunEvent.StepStarted(runId, step.id, attempt))
                 val attemptStarted = clock()
                 try {
+                    val ports = snapshotPorts()
                     val ctx = StepContext(
                         step = step,
                         flow = flow,
@@ -508,10 +594,14 @@ class FlowRunner(
                         credentials = credentials,
                         clock = clock,
                         timezone = flow.settings.timezone,
-                        stepOutputs = snapshotOutputs(),
+                        stepOutputs = portZero(ports),
                         logger = { message, level -> onEvent(RunEvent.Log(runId, message, level)) },
                         flowInvoker = flowInvoker,
                         subFlowDepth = options.subFlowDepth,
+                        inputs = collected.ports,
+                        inputRefs = collected.refs,
+                        streamInputs = collected.streams,
+                        stepPorts = ports,
                     )
                     val timeout = step.timeoutMs
                     val result = if (timeout != null) {
@@ -520,28 +610,62 @@ class FlowRunner(
                         executor.execute(ctx)
                     }
                     val finished = clock()
-                    val primary = result.port(0)
-                    val itemsOut = result.outputs.values.sumOf { it.size }
+
+                    // Per-item failures: the Step's policy decides what happens to the failed items.
+                    val failures = result.failed.filter { it.inputIndex in input.indices || input.isEmpty() }
+                    if (failures.isNotEmpty() && step.onError != OnErrorPolicy.Continue && step.onError != OnErrorPolicy.ErrorFlow) {
+                        throw StepExecutionException(step.id, step.name, describeFailures(failures, input.size))
+                    }
+                    var outputs = Lineage.fill(result.outputs, input, collected.refs)
+                    var failedItems: List<FlowData> = emptyList()
+                    if (failures.isNotEmpty()) {
+                        failedItems = failures.map { failure -> errorItemFor(step, failure, input, collected.refs, finished) }
+                        if (step.onError == OnErrorPolicy.Continue) {
+                            // Failed items travel on the primary port after the good ones, marked as errors.
+                            outputs = outputs + (0 to outputs[0].orEmpty() + failedItems)
+                        }
+                    }
+                    val itemsOut = outputs.values.sumOf { it.size }
+                    val allFailed = failures.isNotEmpty() && failures.size >= input.size && result.outputs.values.all { it.isEmpty() }
+                    val status = if (allFailed) StepRunStatus.Failed else StepRunStatus.Succeeded
+                    val primary = outputs[0].orEmpty()
+                    val counts = portCountsOf(outputs)
+                    val summary = if (failures.isNotEmpty()) describeFailures(failures, input.size) else null
                     val record = StepRun(
                         stepId = step.id,
                         stepName = step.name,
-                        status = StepRunStatus.Succeeded,
+                        status = status,
                         startedAt = attemptStarted,
                         finishedAt = finished,
                         itemsIn = input.size,
                         itemsOut = itemsOut,
+                        error = summary,
                         output = primary.toImmutableList(),
                         attempts = attempt,
+                        portCounts = counts,
+                        itemsFailed = failures.size,
                     )
-                    stepOutputs[step.name] = primary
+                    stepOutputs[step.id] = outputs
                     stepRuns += record
+                    if (summary != null) {
+                        softFailures += "${step.name}: $summary"
+                        onEvent(RunEvent.Log(runId, "\"${step.name}\" kept going after item errors: $summary", LogLevel.Warn))
+                    }
+                    if (allFailed) onEvent(RunEvent.StepFailed(runId, step.id, summary ?: "All items failed", false))
                     onEvent(
                         RunEvent.StepFinished(
                             runId, step.id, input.size, itemsOut, finished - attemptStarted,
                             output = primary.toImmutableList(),
+                            portCounts = counts,
+                            itemsFailed = failures.size,
                         )
                     )
-                    return NodeResult(StepRunStatus.Succeeded, result.outputs, input.size, finished - attemptStarted, record)
+                    result.stop?.let { requestStop(step, it.message) }
+                    return NodeResult(
+                        status, outputs, input.size, finished - attemptStarted, record,
+                        errorItems = if (step.onError == OnErrorPolicy.ErrorFlow) failedItems else emptyList(),
+                        itemsFailed = failures.size,
+                    )
                 } catch (e: TimeoutCancellationException) {
                     // Distinguish "this Step timed out" from "the whole Run was cancelled".
                     // A dead parent means the Run hit its limit or the user hit Cancel.
@@ -566,15 +690,9 @@ class FlowRunner(
             val message = lastError ?: "Unknown error"
             val finished = clock()
             if (step.onError == OnErrorPolicy.Continue) {
-                val errorItem = FlowData(
-                    json = mapOf(
-                        "error" to message,
-                        "step" to step.name,
-                        "stepId" to step.id,
-                        "failedAt" to finished,
-                    ),
-                    error = message,
-                )
+                val errorItem = wholeStepErrorItem(step, message, finished)
+                val outputs = Lineage.fill(mapOf(0 to listOf(errorItem)), input, collected.refs)
+                val counts = portCountsOf(outputs)
                 val record = StepRun(
                     stepId = step.id,
                     stepName = step.name,
@@ -584,16 +702,45 @@ class FlowRunner(
                     itemsIn = input.size,
                     itemsOut = 1,
                     error = message,
-                    output = listOf(errorItem).toImmutableList(),
+                    output = outputs.getValue(0).toImmutableList(),
                     attempts = attempts,
+                    portCounts = counts,
+                    itemsFailed = input.size,
                 )
                 stepRuns += record
-                stepOutputs[step.name] = listOf(errorItem)
+                stepOutputs[step.id] = outputs
                 softFailures += "${step.name}: $message"
                 onEvent(RunEvent.Log(runId, "\"${step.name}\" failed but the Flow continues: $message", LogLevel.Warn))
-                return NodeResult(StepRunStatus.Failed, mapOf(0 to listOf(errorItem)), input.size, finished - stepStartedAt, record)
+                return NodeResult(StepRunStatus.Failed, outputs, input.size, finished - stepStartedAt, record, itemsFailed = input.size)
             }
             return hardFail(step, message, input, finished - stepStartedAt, attempts, stepStartedAt)
+        }
+
+        private fun describeFailures(failures: List<ItemFailure>, total: Int): String {
+            val first = failures.first()
+            return if (failures.size == 1) "item ${first.inputIndex + 1} of $total failed: ${first.message}"
+            else "${failures.size} of $total items failed (first: item ${first.inputIndex + 1}: ${first.message})"
+        }
+
+        private fun wholeStepErrorItem(step: StepNode, message: String, at: Long) = FlowData(
+            json = mapOf("error" to message, "step" to step.name, "stepId" to step.id, "failedAt" to at),
+            error = ItemError(message, step.id, "step", at),
+        )
+
+        private fun errorItemFor(step: StepNode, failure: ItemFailure, input: List<FlowData>, refs: List<ItemRef>, at: Long): FlowData {
+            val source = input.getOrNull(failure.inputIndex)
+            return FlowData(
+                json = mapOf(
+                    "error" to failure.message,
+                    "step" to step.name,
+                    "stepId" to step.id,
+                    "failedAt" to at,
+                    "itemIndex" to failure.inputIndex,
+                ),
+                binary = source?.binary.orEmpty(),
+                error = ItemError(failure.message, step.id, failure.kind, at),
+                sources = listOfNotNull(refs.getOrNull(failure.inputIndex)),
+            )
         }
 
         private fun hardFail(
@@ -618,11 +765,7 @@ class FlowRunner(
             stepRuns += record
             failureMessages += "${step.name}: $message"
             onEvent(RunEvent.StepFailed(runId, step.id, message, false))
-            val errorItem = FlowData(
-                json = mapOf("error" to message, "step" to step.name, "stepId" to step.id, "failedAt" to now),
-                error = message,
-            )
-            return NodeResult(StepRunStatus.Failed, emptyMap(), input.size, durationMs, record, errorItems = listOf(errorItem))
+            return NodeResult(StepRunStatus.Failed, emptyMap(), input.size, durationMs, record, errorItems = listOf(wholeStepErrorItem(step, message, now)))
         }
 
         private suspend fun runErrorStep(errorStep: StepNode, items: List<FlowData>) {
@@ -643,10 +786,11 @@ class FlowRunner(
                         credentials = credentials,
                         clock = clock,
                         timezone = flow.settings.timezone,
-                        stepOutputs = snapshotOutputs(),
+                        stepOutputs = portZero(snapshotPorts()),
                         logger = { message, level -> onEvent(RunEvent.Log(runId, message, level)) },
                         flowInvoker = flowInvoker,
                         subFlowDepth = options.subFlowDepth,
+                        stepPorts = snapshotPorts(),
                     )
                 )
                 val finished = clock()

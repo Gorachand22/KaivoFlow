@@ -4,6 +4,8 @@ import com.kaivoflow.core.model.BinaryDataRef
 import com.kaivoflow.core.model.ConvertedFrom
 import com.kaivoflow.core.model.Flow
 import com.kaivoflow.core.model.FlowData
+import com.kaivoflow.core.model.ItemError
+import com.kaivoflow.core.model.ItemRef
 import com.kaivoflow.core.model.FlowGroup
 import com.kaivoflow.core.model.FlowSettings
 import com.kaivoflow.core.model.OnErrorPolicy
@@ -318,8 +320,28 @@ object JsonCodec {
                 data.binary.forEach { (key, ref) -> put(key, toJson(ref.asJson()) ?: JsonNull) }
             })
         }
+        // Older readers only know `pairedIndex` and a plain `error` string, so both are still written.
         data.pairedIndex?.let { put("pairedIndex", JsonPrimitive(it)) }
-        data.error?.let { put("error", JsonPrimitive(it)) }
+        data.error?.let { error ->
+            put("error", JsonPrimitive(error.message))
+            put("errorInfo", buildJsonObject {
+                put("stepId", JsonPrimitive(error.stepId))
+                put("kind", JsonPrimitive(error.kind))
+                put("at", JsonPrimitive(error.at))
+            })
+        }
+        if (data.sources.isNotEmpty()) {
+            put("sources", buildJsonArray {
+                data.sources.forEach { ref ->
+                    add(buildJsonObject {
+                        put("step", JsonPrimitive(ref.stepId))
+                        put("run", JsonPrimitive(ref.runIndex))
+                        put("item", JsonPrimitive(ref.itemIndex))
+                        put("port", JsonPrimitive(ref.port))
+                    })
+                }
+            })
+        }
     }
 
     /** Reads both the current wrapped format and the legacy bare-json format. */
@@ -330,12 +352,29 @@ object JsonCodec {
         val binary = (obj["binary"] as? JsonObject)?.entries?.mapNotNull { (key, value) ->
             BinaryDataRef.fromJson(fromJson(value))?.let { key to it }
         }?.toMap() ?: emptyMap()
-        return FlowData(
-            json = json,
-            pairedIndex = (obj["pairedIndex"] as? JsonPrimitive)?.doubleOrNull?.toInt(),
-            error = (obj["error"] as? JsonPrimitive)?.content?.takeUnless { it == "null" },
-            binary = binary,
-        )
+        val message = (obj["error"] as? JsonPrimitive)?.content?.takeUnless { it == "null" }
+        val info = obj["errorInfo"] as? JsonObject
+        val error = message?.let {
+            ItemError(
+                message = it,
+                stepId = (info?.get("stepId") as? JsonPrimitive)?.content.orEmpty(),
+                kind = (info?.get("kind") as? JsonPrimitive)?.content ?: "legacy",
+                at = (info?.get("at") as? JsonPrimitive)?.doubleOrNull?.toLong() ?: 0L,
+            )
+        }
+        val sources = (obj["sources"] as? JsonArray)?.mapNotNull { element ->
+            val ref = element as? JsonObject ?: return@mapNotNull null
+            fun int(key: String) = (ref[key] as? JsonPrimitive)?.doubleOrNull?.toInt()
+            ItemRef(
+                stepId = (ref["step"] as? JsonPrimitive)?.content.orEmpty(),
+                runIndex = int("run") ?: 0,
+                itemIndex = int("item") ?: return@mapNotNull null,
+                port = int("port") ?: 0,
+            )
+        } ?: (obj["pairedIndex"] as? JsonPrimitive)?.doubleOrNull?.toInt()
+            ?.let { listOf(ItemRef(stepId = "", runIndex = 0, itemIndex = it)) }
+            ?: emptyList()
+        return FlowData(json = json, binary = binary, error = error, sources = sources)
     }
 
     // ---- JSON-ish value <-> JsonElement -------------------------------------------------

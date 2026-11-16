@@ -1,6 +1,7 @@
 package com.kaivoflow.core.engine
 
 import com.kaivoflow.core.model.FlowData
+import com.kaivoflow.core.model.ItemRef
 import com.kaivoflow.core.model.NodeSpec
 import com.kaivoflow.core.model.StepNode
 
@@ -85,6 +86,15 @@ class ParamResolver(private val evaluator: ExpressionEvaluator) {
 /**
  * Builds the `$…` scope a Step sees. Mirrors the documented variable surface:
  * `${'$'}json`, `${'$'}items`, `${'$'}vars`, `${'$'}now`, `${'$'}today`, `$run`, `${'$'}step()`, `$index`.
+ *
+ * Lineage: `scope["step"]` maps a Step NAME to the items of that Step. When the current item
+ * descends from items of a Step, only those ancestor items are listed, so `${'$'}step("Fetch")`
+ * returns the paired item rather than the whole output. Steps the item does not descend from
+ * keep their full output. `scope["stepAll"]` always holds the full outputs, and
+ * `scope["sources"]` lists the ancestors of the current item.
+ *
+ * [stepOutputs] and [stepPorts] are keyed by Step id; [stepNames] (id to name) turns ids into
+ * the names expressions use. A key with no entry in [stepNames] is used as the name unchanged.
  */
 class ScopeBuilder(
     private val flowVars: Map<String, Any?>,
@@ -92,7 +102,45 @@ class ScopeBuilder(
     private val stepOutputs: Map<String, List<FlowData>>,
     private val clock: () -> Long = { System.currentTimeMillis() },
     private val timezone: String = "UTC",
+    private val stepNames: Map<String, String> = emptyMap(),
+    private val stepPorts: Map<String, Map<Int, List<FlowData>>> = emptyMap(),
+    private val inputRefs: List<ItemRef> = emptyList(),
 ) {
+    private val fullByName: Map<String, List<Map<String, Any?>>> by lazy {
+        stepOutputs.entries.associate { (key, items) ->
+            (stepNames[key] ?: key) to items.mapIndexed { i, d -> d.json + ("index" to i) }
+        }
+    }
+
+    // build() is called once per item per parameter; the item list must not be rebuilt each time.
+    @Volatile
+    private var cache: Pair<List<FlowData>, List<Map<String, Any?>>>? = null
+
+    private fun itemsOf(input: List<FlowData>): List<Map<String, Any?>> {
+        cache?.let { if (it.first === input) return it.second }
+        val items = input.map { it.json }
+        cache = input to items
+        return items
+    }
+
+    private fun itemAt(ref: ItemRef): FlowData? =
+        stepPorts[ref.stepId]?.get(ref.port)?.getOrNull(ref.itemIndex)
+            ?: if (ref.port == 0) stepOutputs[ref.stepId]?.getOrNull(ref.itemIndex) else null
+
+    /** Walks `sources` links from the current item back through finished Steps. */
+    private fun ancestors(start: ItemRef?): List<ItemRef> {
+        if (start == null) return emptyList()
+        val seen = LinkedHashSet<ItemRef>()
+        val queue = ArrayDeque<ItemRef>()
+        queue.add(start)
+        while (queue.isNotEmpty() && seen.size < MAX_LINEAGE) {
+            val ref = queue.removeFirst()
+            if (ref.stepId.isBlank() || !seen.add(ref)) continue
+            itemAt(ref)?.sources?.forEach { queue.add(it) }
+        }
+        return seen.toList()
+    }
+
     fun build(input: List<FlowData>, index: Int = 0, stepName: String = ""): Map<String, Any?> {
         val first = input.getOrNull(index)?.json ?: emptyMap()
         val nowMillis = clock()
@@ -100,11 +148,22 @@ class ScopeBuilder(
         val zone = runCatching { java.time.ZoneId.of(timezone) }.getOrDefault(java.time.ZoneId.of("UTC"))
         val atZone = now.atZone(zone)
 
-        val previous = stepOutputs.mapValues { (_, items) -> items.mapIndexed { i, d -> d.json + ("index" to i) } }
+        val lineage = ancestors(inputRefs.getOrNull(index))
+        val step: Map<String, Any?> = if (lineage.isEmpty()) fullByName else {
+            val paired = LinkedHashMap<String, Any?>(fullByName)
+            lineage.groupBy { it.stepId }.forEach { (id, refs) ->
+                val name = stepNames[id] ?: id
+                val picked = refs.sortedWith(compareBy({ it.port }, { it.itemIndex })).mapNotNull { ref ->
+                    itemAt(ref)?.let { it.json + ("index" to ref.itemIndex) }
+                }
+                if (picked.isNotEmpty()) paired[name] = picked
+            }
+            paired
+        }
 
         return mapOf(
             "json" to first,
-            "items" to input.map { it.json },
+            "items" to itemsOf(input),
             "item" to first,
             "index" to index,
             "vars" to flowVars.toMap(),
@@ -116,7 +175,15 @@ class ScopeBuilder(
                 "timezone" to timezone,
                 "step" to stepName,
             ),
-            "step" to previous,
+            "step" to step,
+            "stepAll" to fullByName,
+            "sources" to lineage.map {
+                mapOf("stepId" to it.stepId, "step" to (stepNames[it.stepId] ?: it.stepId), "port" to it.port, "itemIndex" to it.itemIndex)
+            },
         )
+    }
+
+    private companion object {
+        const val MAX_LINEAGE = 10_000
     }
 }

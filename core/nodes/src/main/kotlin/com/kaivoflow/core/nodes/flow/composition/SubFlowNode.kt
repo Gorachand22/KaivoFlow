@@ -47,9 +47,8 @@ class SubFlowNode : StepExecutor {
         val out = if (field.isBlank()) result else result.map { item ->
             FlowData(
                 json = mapOf(field to item.json),
-                pairedIndex = item.pairedIndex,
-                error = item.error,
                 binary = item.binary,
+                error = item.error,
             )
         }
         ctx.log("Sub-Flow $flowId returned ${out.size} item(s)")

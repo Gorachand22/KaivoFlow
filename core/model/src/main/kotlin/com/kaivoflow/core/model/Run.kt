@@ -37,7 +37,15 @@ data class StepRun(
     val error: String? = null,
     val output: ImmutableList<FlowData> = persistentListOf(),
     val attempts: Int = 1,
+    /** Items per output port (port index to count); empty for records written before lineage existed. */
+    val portCounts: ImmutableMap<Int, Int> = persistentMapOf(),
+    /** Input items this Step could not process; 0 unless the error policy let the Step continue. */
+    val itemsFailed: Int = 0,
+    /** Which execution of the Step inside the Run this record describes. */
+    val runIndex: Int = 0,
 ) {
+    /** True when some, but not all, items failed and the Step still delivered output. */
+    val isPartial: Boolean get() = itemsFailed > 0 && status == StepRunStatus.Succeeded
     val durationMs: Long? get() = finishedAt?.let { it - startedAt }
 }
 
@@ -55,6 +63,11 @@ sealed interface RunEvent {
         val durationMs: Long,
         val frozen: Boolean = false,
         val output: ImmutableList<FlowData> = persistentListOf(),
+        /** Items per output port (port index to count). */
+        val portCounts: ImmutableMap<Int, Int> = persistentMapOf(),
+        /** Items that failed under a Continue or Error Flow policy. */
+        val itemsFailed: Int = 0,
+        val runIndex: Int = 0,
     ) : RunEvent
 
     data class StepFailed(override val runId: String, val stepId: String, val message: String, val willRetry: Boolean) : RunEvent

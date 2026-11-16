@@ -194,7 +194,7 @@ data class StreamEdge(
 /**
  * A reference to a file travelling through a Flow.
  *
- * The bytes never live inside [FlowData.json]. They are stored once — in app-internal storage or
+ * The bytes never live inside [Item.json]. They are stored once — in app-internal storage or
  * behind an Android Storage Access Framework `content://` URI — and this small immutable handle is
  * what crosses ports. That keeps a 20 MB photo from being copied into every downstream item, keeps
  * Run records tiny, and keeps JSON logs free of base64 blobs.
@@ -247,39 +247,6 @@ data class BinaryDataRef(
 
 /** Backwards-friendly alias for the name used in the engineering handoff notes. */
 typealias BinaryItem = BinaryDataRef
-
-/** A single item of data flowing through a Flow execution graph. */
-data class FlowData(
-    val json: Map<String, Any?> = emptyMap(),
-    /** Index of the input item that produced this item, used for item linking. */
-    val pairedIndex: Int? = null,
-    /** Set when a Step failed but was allowed to continue (onError = Continue). */
-    val error: String? = null,
-    /** Named binary attachments (photos, PDFs, audio, downloads) travelling with this item. */
-    val binary: Map<String, BinaryDataRef> = emptyMap(),
-) {
-    operator fun get(key: String): Any? = json[key]
-    val isError: Boolean get() = error != null
-    val hasBinary: Boolean get() = binary.isNotEmpty()
-
-    fun binaryRef(key: String): BinaryDataRef? = binary[key]
-
-    /** Returns a copy with one attachment added or replaced. */
-    fun withBinary(key: String, ref: BinaryDataRef): FlowData = copy(binary = binary + (key to ref))
-
-    /** Returns a copy with several attachments merged in. */
-    fun plusBinary(refs: Map<String, BinaryDataRef>): FlowData = copy(binary = binary + refs)
-
-    /** Returns a copy with one attachment removed. */
-    fun withoutBinary(key: String): FlowData = copy(binary = binary - key)
-
-    /** Drops every attachment (used when a Run record or export must be byte-free). */
-    fun withoutBinary(): FlowData = if (binary.isEmpty()) this else copy(binary = emptyMap())
-
-    companion object {
-        fun of(vararg pairs: Pair<String, Any?>): FlowData = FlowData(mapOf(*pairs))
-    }
-}
 
 data class FlowSettings(
     /** IANA zone used for schedule Sparks and ${'$'}now. */

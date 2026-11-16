@@ -2,9 +2,11 @@ package com.kaivoflow.core.engine
 
 import com.kaivoflow.core.model.Flow
 import com.kaivoflow.core.model.FlowData
+import com.kaivoflow.core.model.ItemRef
 import com.kaivoflow.core.model.LogLevel
 import com.kaivoflow.core.model.NodeSpec
 import com.kaivoflow.core.model.StepNode
+import kotlinx.coroutines.CancellationException
 
 /** Where a Run is coming from. Behaviour changes subtly (Freeze Output, item limits, logging). */
 enum class ExecutionMode {
@@ -24,7 +26,10 @@ enum class ExecutionMode {
 data class StepContext(
     val step: StepNode,
     val flow: Flow,
-    /** Items arriving on output port 0 of the upstream Step(s). */
+    /**
+     * Every item that reached this Step, flattened in Stream order. Kept for Steps that do not
+     * care which input port an item arrived on; multi-input Steps read [inputs] instead.
+     */
     val input: List<FlowData>,
     val runId: String,
     val mode: ExecutionMode,
@@ -34,7 +39,10 @@ data class StepContext(
     val credentials: CredentialProvider,
     val clock: () -> Long,
     val timezone: String,
-    /** Outputs of Steps that already finished in this Run, keyed by Step id. */
+    /**
+     * Primary-port (port 0) outputs of Steps that already finished in this Run, keyed by Step id.
+     * Ids are stable across renames; expressions reach them by name through [stepNames].
+     */
     val stepOutputs: Map<String, List<FlowData>>,
     val logger: (message: String, level: LogLevel) -> Unit,
     /** Optional composition hook: runs another Flow and returns its terminal items. */
@@ -43,7 +51,41 @@ data class StepContext(
     val subFlowDepth: Int = 0,
     /** Spec of the executor running this Step; lets the resolver honour `supportsExpression`. Bound by [NodeRegistry]. */
     val spec: NodeSpec? = null,
+    /**
+     * Items per input port: `inputs[toPort]`. Ports that are connected but received nothing hold
+     * an empty list. Empty when the context was not built by the runner (unit tests); use
+     * [inputPort] to read it safely.
+     */
+    val inputs: List<List<FlowData>> = emptyList(),
+    /** Identity of each item in [input], same order. Empty when not built by the runner. */
+    val inputRefs: List<ItemRef> = emptyList(),
+    /** One entry per incoming Stream (in Stream order), with its own items and refs. */
+    val streamInputs: List<StreamInput> = emptyList(),
+    /** Outputs of finished Steps for every output port, keyed by Step id, then port. */
+    val stepPorts: Map<String, Map<Int, List<FlowData>>> = emptyMap(),
+    /** Execution number of this Step inside the Run (always 0 until Loops exist). */
+    val runIndex: Int = 0,
 ) {
+    private val scopeBuilder: ScopeBuilder by lazy {
+        ScopeBuilder(
+            flowVars = flow.vars,
+            runId = runId,
+            stepOutputs = stepOutputs,
+            clock = clock,
+            timezone = timezone,
+            stepNames = flow.steps.associate { it.id to it.name },
+            stepPorts = stepPorts,
+            inputRefs = inputRefs,
+        )
+    }
+
+    /** Items that arrived on input port [port]; port 0 falls back to [input] outside the runner. */
+    fun inputPort(port: Int): List<FlowData> =
+        if (inputs.isEmpty()) (if (port == 0) input else emptyList()) else inputs.getOrElse(port) { emptyList() }
+
+    /** Identity of the input item at [index], or null when lineage is not tracked (plain tests). */
+    fun refOf(index: Int): ItemRef? = inputRefs.getOrNull(index)
+
     /**
      * Step-level params, resolved against item 0. Use only for values that must not depend on an
      * item (operation, credential, mode). Executors that process items one by one use [paramsFor].
@@ -54,13 +96,7 @@ data class StepContext(
     fun paramsFor(index: Int): Map<String, Any?> =
         ParamResolver(evaluator).resolveParams(step, scope(index), spec)
 
-    fun scope(index: Int = 0): Map<String, Any?> = ScopeBuilder(
-        flowVars = flow.vars,
-        runId = runId,
-        stepOutputs = stepOutputs,
-        clock = clock,
-        timezone = timezone,
-    ).build(input, index, step.name)
+    fun scope(index: Int = 0): Map<String, Any?> = scopeBuilder.build(input, index, step.name)
 
     fun stringParam(key: String, params: Map<String, Any?> = params()): String = Values.asString(params[key])
 
@@ -81,12 +117,55 @@ data class StepContext(
     fun output(items: List<FlowData>) = StepResult(mapOf(0 to items))
 
     fun outputOf(vararg columns: Pair<String, Any?>) = output(listOf(FlowData(mapOf(*columns))))
+
+    /**
+     * Runs [block] once per input item and keeps going when one item throws. Results become
+     * port 0; each failure is reported in [StepResult.failed] so the runner can apply the Step's
+     * error policy per item instead of discarding the whole Step. Output items get this input
+     * item as their source.
+     */
+    suspend fun perItem(block: suspend (index: Int, item: FlowData) -> List<FlowData>?): StepResult {
+        val out = ArrayList<FlowData>()
+        val failed = ArrayList<ItemFailure>()
+        input.forEachIndexed { index, item ->
+            try {
+                val produced = block(index, item) ?: return@forEachIndexed
+                val ref = refOf(index)
+                produced.forEach { out += if (ref != null) it.copy(sources = listOf(ref)) else it }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Throwable) {
+                failed += ItemFailure(index, e.message?.takeIf { it.isNotBlank() } ?: e::class.java.simpleName)
+            }
+        }
+        return StepResult(mapOf(0 to out), failed = failed)
+    }
 }
+
+/** Items that reached a Step over one incoming Stream. */
+data class StreamInput(
+    val streamId: String,
+    val fromStepId: String,
+    val fromPort: Int,
+    val toPort: Int,
+    val items: List<FlowData>,
+    val refs: List<ItemRef>,
+)
+
+/** One input item a Step could not process. [inputIndex] indexes [StepContext.input]. */
+data class ItemFailure(val inputIndex: Int, val message: String, val kind: String = "item")
+
+/** Asks the runner to end the whole Run after this Step (see the Stop Step). */
+data class StopSignal(val message: String)
 
 data class StepResult(
     /** Keyed by output port index. Missing ports mean "nothing on that branch". */
     val outputs: Map<Int, List<FlowData>> = emptyMap(),
     val logs: List<String> = emptyList(),
+    /** Input items that failed individually; the Step's error policy decides what happens to them. */
+    val failed: List<ItemFailure> = emptyList(),
+    /** When set, the runner cancels the remaining Steps and ends the Run as stopped. */
+    val stop: StopSignal? = null,
 ) {
     fun port(index: Int): List<FlowData> = outputs[index] ?: emptyList()
     val primary: List<FlowData> get() = port(0)
