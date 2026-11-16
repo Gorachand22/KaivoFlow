@@ -18,7 +18,7 @@ import kotlinx.collections.immutable.persistentListOf
 /** Compare the incoming items with a saved baseline and describe what changed. */
 class CompareNode : StepExecutor {
     override val spec = NodeSpec(
-        id = "logic.compare",
+        id = "data.compare",
         title = "Compare lists",
         category = StepCategory.Logic,
         subtitle = "Find added, removed, changed and matching rows",

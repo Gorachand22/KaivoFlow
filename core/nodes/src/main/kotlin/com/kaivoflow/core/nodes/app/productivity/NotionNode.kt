@@ -15,7 +15,7 @@ import kotlinx.collections.immutable.persistentListOf
 
 class NotionNode : StepExecutor {
     override val spec = NodeSpec(
-        id = "saas.notion",
+        id = "app.notion",
         title = "Save to Notion",
         category = StepCategory.Saas,
         subtitle = "Create a page in a database",

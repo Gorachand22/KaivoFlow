@@ -11,7 +11,7 @@ import kotlinx.collections.immutable.persistentListOf
 
 class FilterNode : StepExecutor {
     override val spec = NodeSpec(
-        id = "logic.filter",
+        id = "data.filter",
         title = "Filter",
         category = StepCategory.Logic,
         subtitle = "Keep only items that match a condition",

@@ -20,7 +20,7 @@ import kotlinx.collections.immutable.persistentListOf
 /** Read an RSS or Atom feed into ordinary items. */
 class RssNode : StepExecutor {
     override val spec = NodeSpec(
-        id = "saas.rss",
+        id = "net.rss",
         title = "Feed reader",
         category = StepCategory.Saas,
         subtitle = "Read new posts from an RSS or Atom feed",

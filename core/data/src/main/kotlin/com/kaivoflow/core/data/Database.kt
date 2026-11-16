@@ -273,8 +273,11 @@ interface DataTableDao {
         EngineSessionEntity::class,
         EngineHeartbeatEntity::class,
         ReliabilityEventEntity::class,
+        StepExecutionEntity::class,
+        StepPortDataEntity::class,
+        StepPinEntity::class,
     ],
-    version = 4,
+    version = 5,
     exportSchema = true,
 )
 abstract class KaivoDatabase : RoomDatabase() {
@@ -289,6 +292,8 @@ abstract class KaivoDatabase : RoomDatabase() {
     abstract fun sparkInboxDao(): SparkInboxDao
     abstract fun scheduleDao(): ScheduleDao
     abstract fun engineTelemetryDao(): EngineTelemetryDao
+    abstract fun stepDataDao(): StepDataDao
+    abstract fun stepPinDao(): StepPinDao
 
     companion object {
         const val NAME = "kaivoflow.db"

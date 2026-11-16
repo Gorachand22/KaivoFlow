@@ -38,6 +38,12 @@ data class NodeSpec(
     val alsoIn: ImmutableList<String> = persistentListOf(),
     /** Ids of Steps this one absorbs; feeds the AliasMap. */
     val replaces: ImmutableList<String> = persistentListOf(),
+    /**
+     * Native parameter schema for Steps that need kinds the legacy [ParamSpec] list cannot express
+     * (assignments, conditions). Its param keys and order must equal [params]; [params] stays as the
+     * fallback view for the current inspector. Null means "derive from [params]".
+     */
+    val paramSchema: ParamSchema? = null,
 ) {
     val isTrigger: Boolean get() = kind == NodeKind.Trigger
 }

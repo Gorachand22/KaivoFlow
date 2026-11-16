@@ -15,7 +15,7 @@ import java.security.SecureRandom
 /** Keep only the first, last or a slice of the incoming list. */
 class LimitNode : StepExecutor {
     override val spec = NodeSpec(
-        id = "logic.limit",
+        id = "data.limit",
         title = "Limit items",
         category = StepCategory.Logic,
         subtitle = "Take just the items you need",

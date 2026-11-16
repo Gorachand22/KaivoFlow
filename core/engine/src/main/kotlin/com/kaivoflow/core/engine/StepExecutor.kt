@@ -78,6 +78,11 @@ data class StepContext(
             stepNames = flow.steps.associate { it.id to it.name },
             stepPorts = stepPorts,
             inputRefs = inputRefs,
+            flowId = flow.id,
+            flowName = flow.name,
+            stepId = step.id,
+            mode = mode.name,
+            attempt = attempt,
         )
     }
 

@@ -34,7 +34,7 @@ class JsonCodecTest {
         steps = listOf(
             StepNode(
                 id = "s1",
-                type = "trigger.schedule",
+                type = "spark.schedule",
                 name = "Every morning",
                 params = persistentMapOf(
                     "frequency" to "daily",
@@ -53,7 +53,7 @@ class JsonCodecTest {
             ),
             StepNode(
                 id = "s2",
-                type = "saas.http",
+                type = "net.http",
                 name = "Fetch weather",
                 params = persistentMapOf(
                     "method" to "GET",
@@ -188,7 +188,7 @@ class JsonCodecTest {
               "id": "flow-9",
               "name": "Future",
               "steps": [
-                {"id":"a","type":"trigger.manual","name":"Start","brandNewField":{"deep":[1,2,3]}}
+                {"id":"a","type":"spark.manual","name":"Start","brandNewField":{"deep":[1,2,3]}}
               ],
               "streams": [],
               "futureTopLevel": "ignore me",
@@ -200,7 +200,7 @@ class JsonCodecTest {
         assertNotNull(decoded)
         assertEquals("flow-9", decoded!!.id)
         assertEquals(1, decoded.steps.size)
-        assertEquals("trigger.manual", decoded.steps[0].type)
+        assertEquals("spark.manual", decoded.steps[0].type)
     }
 
     @Test

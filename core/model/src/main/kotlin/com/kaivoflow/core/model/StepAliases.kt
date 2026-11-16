@@ -27,6 +27,10 @@ data class ConvertedStep(
     val params: Map<String, Any?>,
     val legacyParams: Map<String, Any?> = emptyMap(),
     val warnings: List<String> = emptyList(),
+    /** Target id when it depends on the old params (one old id splitting over several Steps); null uses the alias target. */
+    val type: String? = null,
+    /** Set when these params have no replacement: the Step stays as stored and loads as an Unavailable Step with this message. */
+    val unconvertible: String? = null,
 )
 
 /**
@@ -164,9 +168,10 @@ class StepNormalizer(val map: AliasMap = AliasMap.EMPTY) {
         if (converterId == null) return StepUpgrade(step.copy(type = target.newId), emptyList())
         val converter = map.converter(converterId) ?: return null
         val result = converter.convert(step.params)
+        if (result.unconvertible != null) return null
         return StepUpgrade(
             step.copy(
-                type = target.newId,
+                type = result.type ?: target.newId,
                 params = result.params.toImmutableMap(),
                 legacyParams = (step.legacyParams + result.legacyParams).toImmutableMap(),
                 convertedFrom = ConvertedFrom(step.type, converter.id, converter.version),
@@ -192,6 +197,8 @@ class StepNormalizer(val map: AliasMap = AliasMap.EMPTY) {
         }
         val target = map.alias(step.type)
         if (target != null) {
+            val unconvertible = target.converterId?.let { map.converter(it) }?.convert(step.params)?.unconvertible
+            if (unconvertible != null) return UnavailableStep(step, UnavailableReason.Removed, unconvertible, target.newId)
             return UnavailableStep(
                 step,
                 UnavailableReason.Removed,

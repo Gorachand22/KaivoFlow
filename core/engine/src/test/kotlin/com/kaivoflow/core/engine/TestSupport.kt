@@ -31,7 +31,7 @@ class StubEvaluator : ExpressionEvaluator {
 
 object TestSpecs {
     val manualTrigger = NodeSpec(
-        id = "trigger.manual",
+        id = "spark.manual",
         title = "Manual Spark",
         category = StepCategory.Trigger,
         subtitle = "Start the Flow when you tap Run",

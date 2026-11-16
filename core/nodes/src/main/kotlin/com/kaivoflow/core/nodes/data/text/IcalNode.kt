@@ -22,7 +22,7 @@ import java.util.UUID
 /** Build a standards-compliant calendar invite (.ics) that any calendar app can open. */
 class IcalNode : StepExecutor {
     override val spec = NodeSpec(
-        id = "transform.ical",
+        id = "data.ical",
         title = "Calendar invite",
         category = StepCategory.Transform,
         subtitle = "Create an .ics event from your items",

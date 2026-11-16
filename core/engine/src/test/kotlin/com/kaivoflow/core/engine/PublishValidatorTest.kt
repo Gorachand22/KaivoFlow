@@ -26,7 +26,7 @@ class PublishValidatorTest {
         FlowValidator(
             registry(
                 *(SparkTypes.all - SparkTypes.MANUAL).map { trig(it) }.toTypedArray(),
-                act("device.sms"), act("saas.http"), act("device.clipboard_read"), act("device.open"), act("logic.approval"),
+                act("device.sms"), act("net.http"), act("device.clipboard"), act("device.open"), act("logic.approval"),
             ),
         ),
     )
@@ -250,13 +250,13 @@ class PublishValidatorTest {
 
     @Test fun `side effect after an attacker controllable spark warns until an approval step exists`() {
         val sms = spark(SparkTypes.SMS, mapOf("senderContains" to "BANK"))
-        val post = step("post", "saas.http", "Send to server", mapOf("method" to "POST"))
+        val post = step("post", "net.http", "Send to server", mapOf("method" to "POST"))
         val risky = check(flow(sms, post, streams = listOf(StreamEdge("e", "sp", "post", 0))))
         val w = risky.warnings.single { it.code == "side_effect_without_approval" }
         assertEquals("post", w.stepId)
         assertTrue(w.message.contains("Send to server"))
         assertTrue(risky.canPublish)
-        val get = step("get", "saas.http", "Read", mapOf("method" to "GET"))
+        val get = step("get", "net.http", "Read", mapOf("method" to "GET"))
         assertFalse("side_effect_without_approval" in check(flow(sms, get)).warningCodes())
         assertFalse("side_effect_without_approval" in check(flow(schedule, post)).warningCodes())
         assertFalse("side_effect_without_approval" in check(flow(sms, post, step("ok", "logic.approval"))).warningCodes())
@@ -274,7 +274,8 @@ class PublishValidatorTest {
     }
 
     @Test fun `foreground only steps warn`() {
-        assertTrue("foreground_only_step" in check(flow(schedule, step("c", "device.clipboard_read", "Read clipboard"))).warningCodes())
+        assertTrue("foreground_only_step" in check(flow(schedule, step("c", "device.clipboard", "Read clipboard", params = mapOf("operation" to "read")))).warningCodes())
+        assertFalse("copying is fine in the background", "foreground_only_step" in check(flow(schedule, step("c", "device.clipboard", "Copy", params = mapOf("operation" to "write")))).warningCodes())
         assertTrue("foreground_only_step" in check(flow(schedule, step("o", "device.open"))).warningCodes())
         assertFalse("foreground_only_step" in check(flow(schedule, step("d", "device.open", disabled = true))).warningCodes())
     }

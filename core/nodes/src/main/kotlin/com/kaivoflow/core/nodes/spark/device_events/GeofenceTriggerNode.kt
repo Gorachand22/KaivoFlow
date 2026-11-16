@@ -44,6 +44,15 @@ class GeofenceTriggerNode : PassThroughTrigger() {
                     ParamOption("both", "Both"),
                 ),
             ),
+            ParamSpec(
+                key = "dwellSeconds",
+                label = "Stay for (seconds)",
+                type = ParamType.Number,
+                default = 0,
+                advanced = true,
+                hint = "0 fires on arrival. A number fires only after the phone stays inside this long (up to 24 hours). Not used when leaving.",
+                showWhen = mapOf("transition" to listOf("enter", "both")),
+            ),
         ),
         keywords = persistentListOf("geofence", "location", "arrive", "leave", "place", "gps", "home", "office"),
         requiresSensitivePermission = "android.permission.ACCESS_FINE_LOCATION",
@@ -58,6 +67,27 @@ class GeofenceTriggerNode : PassThroughTrigger() {
                     "bad_geofence",
                     "Latitude must be between -90 and 90, longitude between -180 and 180.",
                     IssueSeverity.Blocking,
+                    step.id,
+                )
+            )
+        }
+        val dwell = step.paramNumber("dwellSeconds", 0.0)
+        if (!dwell.isFinite() || dwell < 0 || dwell > com.kaivoflow.core.engine.alwayson.GeofenceConstants.MAX_DWELL_SEC) {
+            return listOf(
+                ValidationIssue(
+                    "bad_geofence_dwell",
+                    "Stay for must be between 0 and 86400 seconds (24 hours).",
+                    IssueSeverity.Blocking,
+                    step.id,
+                )
+            )
+        }
+        if (dwell > 0 && step.paramString("transition", "enter") == "exit") {
+            return listOf(
+                ValidationIssue(
+                    "geofence_dwell_ignored",
+                    "Stay for is not used when the Spark fires on leaving; it will be ignored.",
+                    IssueSeverity.Warning,
                     step.id,
                 )
             )

@@ -19,7 +19,7 @@ import java.time.format.DateTimeFormatter
 /** Date formatting and arithmetic, since mobiles rarely pre-format timestamps. */
 class DateNode : StepExecutor {
     override val spec = NodeSpec(
-        id = "transform.date",
+        id = "data.date",
         title = "Date & time",
         category = StepCategory.Transform,
         subtitle = "Parse, format, shift, compare or convert dates",

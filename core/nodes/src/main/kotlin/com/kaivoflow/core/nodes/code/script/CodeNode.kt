@@ -27,7 +27,7 @@ import kotlinx.collections.immutable.persistentListOf
  */
 class CodeNode : StepExecutor {
     override val spec = NodeSpec(
-        id = "transform.code",
+        id = "code.javascript",
         title = "Code",
         category = StepCategory.Transform,
         subtitle = "Run a small JavaScript snippet on your items",

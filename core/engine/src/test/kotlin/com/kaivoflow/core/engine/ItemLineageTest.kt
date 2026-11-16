@@ -102,7 +102,7 @@ class ItemLineageTest {
     @Test
     fun `one to one Step links each output to the input at the same position`() {
         val flow = flowOf(
-            step("t", "trigger.manual"),
+            step("t", "spark.manual"),
             step("set", "test.set", params = mapOf("field" to "x", "value" to 1)),
             streams = listOf(e("t", "set")),
         )
@@ -115,7 +115,7 @@ class ItemLineageTest {
     @Test
     fun `one to many Step links every output to the single input`() {
         val flow = flowOf(
-            step("t", "trigger.manual"), step("fan", "test.fan"),
+            step("t", "spark.manual"), step("fan", "test.fan"),
             streams = listOf(e("t", "fan")),
         )
         val out = run(flow, items(7)).outputOf("fan")
@@ -126,7 +126,7 @@ class ItemLineageTest {
     @Test
     fun `one to many with several inputs only claims what it can prove`() {
         // 2 inputs, 6 outputs, none of them an input: the runner does not guess.
-        val flow = flowOf(step("t", "trigger.manual"), step("fan", "test.fan"), streams = listOf(e("t", "fan")))
+        val flow = flowOf(step("t", "spark.manual"), step("fan", "test.fan"), streams = listOf(e("t", "fan")))
         val out = run(flow, items(1, 2)).outputOf("fan")
         assertEquals(6, out.size)
         assertTrue(out.all { it.sources.isEmpty() })
@@ -134,7 +134,7 @@ class ItemLineageTest {
 
     @Test
     fun `many to one Step links the output to every input`() {
-        val flow = flowOf(step("t", "trigger.manual"), step("sum", "test.collapse"), streams = listOf(e("t", "sum")))
+        val flow = flowOf(step("t", "spark.manual"), step("sum", "test.collapse"), streams = listOf(e("t", "sum")))
         val out = run(flow, items(1, 2, 3)).outputOf("sum")
         assertEquals(1, out.size)
         assertEquals((0..2).map { ItemRef("t", 0, it, 0) }, out[0].sources)
@@ -143,7 +143,7 @@ class ItemLineageTest {
     @Test
     fun `sourceless Spark produces items without sources even if the trigger items carried some`() {
         val stale = item("n" to 1).copy(sources = listOf(ItemRef("elsewhere", 0, 4)))
-        val flow = flowOf(step("t", "trigger.manual"), step("p", "test.pass"), streams = listOf(e("t", "p")))
+        val flow = flowOf(step("t", "spark.manual"), step("p", "test.pass"), streams = listOf(e("t", "p")))
         val record = run(flow, listOf(stale))
         assertTrue(record.outputOf("t").all { it.sources.isEmpty() })
         assertEquals(listOf(ItemRef("t", 0, 0, 0)), record.outputOf("p")[0].sources)
@@ -152,7 +152,7 @@ class ItemLineageTest {
     @Test
     fun `pass-through branching keeps the original input index on both ports`() {
         val flow = flowOf(
-            step("t", "trigger.manual"),
+            step("t", "spark.manual"),
             step("if", "test.if", params = mapOf("field" to "ok")),
             step("yes", "test.pass"), step("no", "test.pass"),
             streams = listOf(e("t", "if"), e("if", "yes", 0), e("if", "no", 1)),
@@ -170,7 +170,7 @@ class ItemLineageTest {
     fun `stale sources copied from the input are replaced`() {
         // test.set uses item.copy(), which would drag the input's own sources along.
         val flow = flowOf(
-            step("t", "trigger.manual"),
+            step("t", "spark.manual"),
             step("a", "test.set", params = mapOf("field" to "a", "value" to 1)),
             step("b", "test.set", params = mapOf("field" to "b", "value" to 2)),
             streams = listOf(e("t", "a"), e("a", "b")),
@@ -185,7 +185,7 @@ class ItemLineageTest {
     @Test
     fun `multi-input Step receives separate lists per toPort and a flat input`() {
         val flow = flowOf(
-            step("t", "trigger.manual"),
+            step("t", "spark.manual"),
             step("a", "test.set", params = mapOf("field" to "from", "value" to "a")),
             step("b", "test.set", params = mapOf("field" to "from", "value" to "b")),
             step("join", "test.capture"),
@@ -205,7 +205,7 @@ class ItemLineageTest {
     @Test
     fun `a connected port with no items is an empty list, not missing`() {
         val flow = flowOf(
-            step("t", "trigger.manual"),
+            step("t", "spark.manual"),
             step("if", "test.if", params = mapOf("field" to "ok")),
             step("join", "test.capture"),
             streams = listOf(e("t", "if"), e("if", "join", fromPort = 0, toPort = 0), e("if", "join", fromPort = 1, toPort = 1)),
@@ -221,7 +221,7 @@ class ItemLineageTest {
     @Test
     fun `outputs are keyed by Step id and expressions see the current name`() {
         fun flowNamed(name: String) = flowOf(
-            step("t", "trigger.manual", name = "Start"),
+            step("t", "spark.manual", name = "Start"),
             step("fetch", "test.set", name = name, params = mapOf("field" to "v", "value" to 5)),
             step("probe", "test.capture"),
             streams = listOf(e("t", "fetch"), e("fetch", "probe")),
@@ -242,7 +242,7 @@ class ItemLineageTest {
     @Test
     fun `step lookup returns the item paired through lineage`() {
         val flow = flowOf(
-            step("t", "trigger.manual", name = "Start"),
+            step("t", "spark.manual", name = "Start"),
             step("a", "test.set", name = "Enrich", params = mapOf("field" to "e", "value" to 1)),
             step("probe", "test.capture"),
             streams = listOf(e("t", "a"), e("a", "probe")),
@@ -261,7 +261,7 @@ class ItemLineageTest {
     @Test
     fun `pairing survives a filtering branch`() {
         val flow = flowOf(
-            step("t", "trigger.manual", name = "Start"),
+            step("t", "spark.manual", name = "Start"),
             step("if", "test.if", params = mapOf("field" to "ok")),
             step("probe", "test.capture"),
             streams = listOf(e("t", "if"), e("if", "probe", fromPort = 0)),
@@ -277,7 +277,7 @@ class ItemLineageTest {
     @Test
     fun `after a many to one Step the step lookup lists every source item`() {
         val flow = flowOf(
-            step("t", "trigger.manual", name = "Start"),
+            step("t", "spark.manual", name = "Start"),
             step("sum", "test.collapse"),
             step("probe", "test.capture"),
             streams = listOf(e("t", "sum"), e("sum", "probe")),
@@ -292,7 +292,7 @@ class ItemLineageTest {
     @Test
     fun `a step with no lineage link keeps its full output in the lookup`() {
         val flow = flowOf(
-            step("t", "trigger.manual", name = "Start"),
+            step("t", "spark.manual", name = "Start"),
             step("side", "test.set", name = "Side", params = mapOf("field" to "s", "value" to 1)),
             step("probe", "test.capture"),
             streams = listOf(e("t", "side"), e("t", "probe")),
@@ -307,7 +307,7 @@ class ItemLineageTest {
 
     private fun partialFlow(policy: OnErrorPolicy, withHandler: Boolean = false): Flow {
         val steps = mutableListOf(
-            step("t", "trigger.manual"),
+            step("t", "spark.manual"),
             step("work", "test.peritem").copy(onError = policy),
             step("after", "test.capture"),
         )
@@ -379,7 +379,7 @@ class ItemLineageTest {
     @Test
     fun `Stop ends the Run, skips what never ran and reports the message`() {
         val flow = flowOf(
-            step("t", "trigger.manual"),
+            step("t", "spark.manual"),
             step("stop", "test.stop"),
             step("after", "test.pass"),
             step("slow", "test.slow", params = mapOf("ms" to 20_000)),

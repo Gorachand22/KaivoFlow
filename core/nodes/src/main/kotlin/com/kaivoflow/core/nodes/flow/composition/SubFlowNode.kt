@@ -17,7 +17,7 @@ import kotlinx.collections.immutable.persistentListOf
 /** Calls another Flow as a Step (one of the original composition tools, with the API connector and change polling). */
 class SubFlowNode : StepExecutor {
     override val spec = NodeSpec(
-        id = "logic.subflow",
+        id = "flow.subflow",
         title = "Run another Flow",
         category = StepCategory.Logic,
         subtitle = "Reuse a Flow and bring its items back",

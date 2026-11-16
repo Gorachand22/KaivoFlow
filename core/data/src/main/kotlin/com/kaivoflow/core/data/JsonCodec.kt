@@ -244,7 +244,16 @@ object JsonCodec {
         )
     }.getOrNull()
 
+    /**
+     * Run documents written by this version are slim (spec 5.10 item 5): per Step only counts and
+     * status, no `output` items; the items live in the Step execution store under (runId, stepId,
+     * runIndex). [decodeRun] still reads the `output` arrays of older documents, so old Runs keep
+     * their data until retention removes them. `v` is 2 for slim documents, absent in old ones.
+     */
+    const val RUN_JSON_VERSION = 2
+
     fun encodeRun(run: RunRecord): String = buildJsonObject {
+        put("v", JsonPrimitive(RUN_JSON_VERSION))
         put("id", JsonPrimitive(run.id))
         put("flowId", JsonPrimitive(run.flowId))
         put("flowName", JsonPrimitive(run.flowName))
@@ -266,11 +275,13 @@ object JsonCodec {
                         put("itemsOut", JsonPrimitive(stepRun.itemsOut))
                         put("error", stepRun.error?.let { JsonPrimitive(it) } ?: JsonNull)
                         put("attempts", JsonPrimitive(stepRun.attempts))
-                        put("output", buildJsonArray {
-                            stepRun.output.take(20).forEach { data ->
-                                add(encodeFlowData(data))
-                            }
-                        })
+                        put("runIndex", JsonPrimitive(stepRun.runIndex))
+                        put("itemsFailed", JsonPrimitive(stepRun.itemsFailed))
+                        if (stepRun.portCounts.isNotEmpty()) {
+                            put("portCounts", buildJsonObject {
+                                stepRun.portCounts.forEach { (port, n) -> put(port.toString(), JsonPrimitive(n)) }
+                            })
+                        }
                     }
                 )
             }
@@ -300,8 +311,16 @@ object JsonCodec {
                     itemsOut = step.long("itemsOut").toInt(),
                     error = step.str("error").ifBlank { null },
                     attempts = step.long("attempts").toInt().coerceAtLeast(1),
+                    // Present only in documents written before slimming (up to 20 items); absent afterwards.
                     output = (step["output"] as? JsonArray)?.map { decodeFlowData(it) }
                         ?.toImmutableList() ?: kotlinx.collections.immutable.persistentListOf(),
+                    portCounts = (step["portCounts"] as? JsonObject)?.entries?.mapNotNull { (k, v) ->
+                        val port = k.toIntOrNull() ?: return@mapNotNull null
+                        val n = (v as? JsonPrimitive)?.doubleOrNull?.toInt() ?: return@mapNotNull null
+                        port to n
+                    }?.toMap()?.toImmutableMap() ?: kotlinx.collections.immutable.persistentMapOf(),
+                    itemsFailed = step.long("itemsFailed").toInt(),
+                    runIndex = step.long("runIndex").toInt(),
                 )
             }?.toImmutableList() ?: kotlinx.collections.immutable.persistentListOf(),
         )

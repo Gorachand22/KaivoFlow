@@ -152,7 +152,7 @@ data class StepNode(
     /** Set when a converter produced this Step, so a fixed converter can be re-run safely. */
     val convertedFrom: ConvertedFrom? = null,
 ) {
-    val isTrigger: Boolean get() = type.startsWith("trigger.")
+    val isTrigger: Boolean get() = type.startsWith("spark.")
 
     fun param(key: String): Any? = params[key]
 

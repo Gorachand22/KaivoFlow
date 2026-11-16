@@ -21,7 +21,7 @@ class CanvasGeometryTest {
     )
 
     private fun step(id: String, x: Float = 0f, y: Float = 0f, trigger: Boolean = false) =
-        StepNode(id = id, type = if (trigger) "trigger.manual" else "transform.set", name = id, x = x, y = y)
+        StepNode(id = id, type = if (trigger) "spark.manual" else "data.set", name = id, x = x, y = y)
 
     private fun stream(from: String, to: String, port: Int = 0) = StreamEdge("$from-$to-$port", from, to, fromPort = port)
 

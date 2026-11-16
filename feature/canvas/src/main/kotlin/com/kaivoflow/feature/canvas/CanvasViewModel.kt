@@ -927,8 +927,8 @@ object PromptToFlow {
 
         // 2. Data + processing
         when {
-            text.contains("weather") -> add("saas.weather", "Weather", mapOf("city" to "Bhubaneswar"))
-            text.contains("sheet") && !text.contains("summarise") -> add("saas.sheets", "Google Sheets", mapOf("action" to "read"))
+            text.contains("weather") -> add("net.http", "Weather", mapOf("url" to "https://api.open-meteo.com/v1/forecast", "query" to mapOf("latitude" to "20.2961", "longitude" to "85.8245", "current" to "temperature_2m,weather_code", "daily" to "temperature_2m_max,temperature_2m_min", "forecast_days" to "1", "timezone" to "auto")))
+            text.contains("sheet") && !text.contains("summarise") -> add("app.google_sheets", "Google Sheets", mapOf("action" to "read"))
         }
         if (text.contains("summar") || text.contains("summarise") || text.contains("summarize") || text.contains("extract")) {
             add(
@@ -948,10 +948,10 @@ object PromptToFlow {
 
         // 3. Destination
         when {
-            text.contains("telegram") -> add("saas.telegram", "Send to Telegram", mapOf("chatId" to "@my_channel", "text" to "{{ \$json.answer }}"))
-            text.contains("sheet") && text.contains("log") -> add("saas.sheets", "Log to Sheets", mapOf("action" to "append"))
-            text.contains("notion") -> add("saas.notion", "Save to Notion")
-            text.contains("slack") -> add("saas.slack", "Send to Slack")
+            text.contains("telegram") -> add("app.telegram", "Send to Telegram", mapOf("chatId" to "@my_channel", "text" to "{{ \$json.answer }}"))
+            text.contains("sheet") && text.contains("log") -> add("app.google_sheets", "Log to Sheets", mapOf("action" to "append"))
+            text.contains("notion") -> add("app.notion", "Save to Notion")
+            text.contains("slack") -> add("app.slack", "Send to Slack")
             text.contains("copy") || text.contains("clipboard") -> add("device.clipboard", "Copy to clipboard", mapOf("text" to "{{ \$json.answer }}"))
             text.contains("file") || text.contains("save") -> add("device.file", "Save to a file", mapOf("fileName" to "notes.txt"))
             else -> add("device.notify", "Tell me", mapOf("title" to "KaivoFlow", "body" to "{{ \$json.answer }}"))

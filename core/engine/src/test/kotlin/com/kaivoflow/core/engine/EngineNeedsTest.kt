@@ -33,7 +33,7 @@ class EngineNeedsTest {
         expected.forEach { (type, need) -> assertEquals(type, need, SparkTypes.need(type)) }
         SparkTypes.all.forEach { assertTrue("$it classified", it in expected) }
         assertEquals(EngineNeed.None, SparkTypes.need("trigger.unknown"))
-        assertEquals(EngineNeed.None, SparkTypes.need("saas.http"))
+        assertEquals(EngineNeed.None, SparkTypes.need("net.http"))
     }
 
     @Test fun `required and wanted sparks start the engine in Published and Error`() {
@@ -71,9 +71,9 @@ class EngineNeedsTest {
     }
 
     @Test fun `disabled sparks and non-spark steps are ignored`() {
-        val f = flow("a", SparkTypes.WEBHOOK, "saas.http", disabled = setOf("a-0"))
+        val f = flow("a", SparkTypes.WEBHOOK, "net.http", disabled = setOf("a-0"))
         assertFalse(EngineNeeds.compute(listOf(ef(f))).engineNeeded)
-        assertFalse(EngineNeeds.compute(listOf(ef(flow("b", "saas.http")))).engineNeeded)
+        assertFalse(EngineNeeds.compute(listOf(ef(flow("b", "net.http")))).engineNeeded)
     }
 
     @Test fun `always-on mode forces the engine`() {

@@ -28,10 +28,10 @@ class NodeCatalogTest {
         NodeCatalog.executors().forEach { executor ->
             if (executor.spec.kind == NodeKind.Trigger) {
                 assertTrue("${executor.spec.id} should be able to start a Flow", executor.spec.canStartFlow)
-                assertTrue("${executor.spec.id} must use the trigger. prefix", executor.spec.id.startsWith("trigger."))
+                assertTrue("${executor.spec.id} must use the spark. prefix", executor.spec.id.startsWith("spark."))
             } else {
                 assertTrue("${executor.spec.id} is an action and must not claim to start Flows", !executor.spec.canStartFlow)
-                assertTrue("${executor.spec.id} is an action but uses the trigger. prefix", !executor.spec.id.startsWith("trigger."))
+                assertTrue("${executor.spec.id} is an action but uses the spark. prefix", !executor.spec.id.startsWith("spark."))
             }
         }
     }
@@ -72,11 +72,11 @@ class NodeCatalogTest {
 
     @Test
     fun `search finds steps by legacy and plain names`() {
-        assertTrue(registry.search("http").any { it.id == "saas.http" })
-        assertTrue(registry.search("network call").any { it.id == "saas.http" })
-        assertTrue(registry.search("telegram").any { it.id == "saas.telegram" })
-        assertTrue(registry.search("bank sms").any { it.id == "trigger.notification" })
-        assertTrue(registry.search("if").any { it.id == "logic.if" })
+        assertTrue(registry.search("http").any { it.id == "net.http" })
+        assertTrue(registry.search("network call").any { it.id == "net.http" })
+        assertTrue(registry.search("telegram").any { it.id == "app.telegram" })
+        assertTrue(registry.search("bank sms").any { it.id == "spark.notification" })
+        assertTrue(registry.search("if").any { it.id == "flow.if" })
         assertEquals(0, registry.search("zzzzz").size)
     }
 
@@ -92,8 +92,8 @@ class NodeCatalogTest {
     @Test
     fun `sensitive permission steps declare what they need`() {
         val sensitive = registry.specs.filter { it.requiresSensitivePermission != null }
-        assertTrue(sensitive.any { it.id == "trigger.notification" })
-        assertTrue(sensitive.any { it.id == "trigger.sms" })
+        assertTrue(sensitive.any { it.id == "spark.notification" })
+        assertTrue(sensitive.any { it.id == "spark.sms" })
         assertTrue(sensitive.any { it.id == "device.sms" })
     }
 
@@ -104,11 +104,11 @@ class NodeCatalogTest {
             name = "Valid flow",
             steps = kotlinx.collections.immutable.persistentListOf(
                 com.kaivoflow.core.model.StepNode(
-                    id = "t", type = "trigger.manual", name = "Start", y = 0f,
+                    id = "t", type = "spark.manual", name = "Start", y = 0f,
                 ),
                 com.kaivoflow.core.model.StepNode(
-                    id = "w", type = "saas.weather", name = "Weather", y = 10f,
-                    params = kotlinx.collections.immutable.persistentMapOf("city" to "Bhubaneswar"),
+                    id = "w", type = "net.http", name = "Weather", y = 10f,
+                    params = kotlinx.collections.immutable.persistentMapOf("url" to "https://api.open-meteo.com/v1/forecast"),
                 ),
                 com.kaivoflow.core.model.StepNode(
                     id = "n", type = "device.notify", name = "Tell me", y = 20f,

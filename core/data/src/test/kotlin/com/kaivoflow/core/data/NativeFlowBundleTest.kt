@@ -18,7 +18,7 @@ import org.junit.Test
 /** The `.kaivoflow` backup must restore everything except secrets and local file handles. */
 class NativeFlowBundleTest {
 
-    private val known = setOf("trigger.manual", "saas.http", "device.notify", "trigger.geofence")
+    private val known = setOf("spark.manual", "net.http", "device.notify", "spark.geofence")
 
     private fun sample() = Flow(
         id = "flow-1",
@@ -26,10 +26,10 @@ class NativeFlowBundleTest {
         tags = persistentListOf("daily", "personal"),
         vars = persistentMapOf("city" to "Bhubaneswar", "apiToken" to "DO-NOT-SHIP"),
         steps = persistentListOf(
-            StepNode(id = "t", type = "trigger.manual", name = "Start", x = 12f, y = 4f),
+            StepNode(id = "t", type = "spark.manual", name = "Start", x = 12f, y = 4f),
             StepNode(
                 id = "h",
-                type = "saas.http",
+                type = "net.http",
                 name = "Fetch",
                 x = 40f,
                 y = 120f,
@@ -72,7 +72,7 @@ class NativeFlowBundleTest {
         assertEquals("Morning digest", restored.name)
         assertEquals(listOf("daily", "personal"), restored.tags.toList())
         assertEquals("Bhubaneswar", restored.vars["city"])
-        val fetch = restored.steps.first { it.id.isNotBlank() && it.type == "saas.http" }
+        val fetch = restored.steps.first { it.id.isNotBlank() && it.type == "net.http" }
         assertEquals("https://example.com/api", fetch.paramString("url"))
         assertEquals("GET", fetch.paramString("method"))
         assertEquals("Review the URL before sharing", fetch.notes)
@@ -93,7 +93,7 @@ class NativeFlowBundleTest {
         val preview = NativeFlowBundle.preview(bytes, known)
         assertTrue(preview.rebind.any { it.contains("Fetch") })
         assertTrue(preview.redactedCount >= 2)
-        val fetch = preview.flow.steps.first { it.type == "saas.http" }
+        val fetch = preview.flow.steps.first { it.type == "net.http" }
         assertEquals("", fetch.paramString("authToken"))
         assertEquals("", preview.flow.vars["apiToken"]?.toString())
     }
@@ -118,7 +118,7 @@ class NativeFlowBundleTest {
         assertEquals(0L, restored.createdAt)
         assertFalse(restored.isFavorite)
 
-        val frozen = restored.steps.first { it.type == "saas.http" }.frozenOutput
+        val frozen = restored.steps.first { it.type == "net.http" }.frozenOutput
         assertNull("a local content URI was imported", frozen?.first()?.binaryRef("photo"))
     }
 
@@ -160,7 +160,7 @@ class NativeFlowBundleTest {
         val bytes = NativeFlowBundle.export(sample()) { setOf("authToken") }
         val tampered = String(bytes, Charsets.UTF_8).replace("\"authToken\":\"\"", "\"authToken\":\"SMUGGLED\"")
         val preview = NativeFlowBundle.preview(tampered.toByteArray(), known)
-        assertEquals("", preview.flow.steps.first { it.type == "saas.http" }.paramString("authToken"))
+        assertEquals("", preview.flow.steps.first { it.type == "net.http" }.paramString("authToken"))
     }
 
     private fun assertThrowsInvalid(block: () -> Unit) {

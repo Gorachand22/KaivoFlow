@@ -1,5 +1,14 @@
 package com.kaivoflow.core.engine
 
+import com.kaivoflow.core.engine.stepdata.NoopStepExecutionRecorder
+import com.kaivoflow.core.engine.stepdata.ParentRef
+import com.kaivoflow.core.engine.stepdata.PinReader
+import com.kaivoflow.core.engine.stepdata.PinnedData
+import com.kaivoflow.core.engine.stepdata.RawPort
+import com.kaivoflow.core.engine.stepdata.StepErrorInfo
+import com.kaivoflow.core.engine.stepdata.StepExecutionCapture
+import com.kaivoflow.core.engine.stepdata.StepExecutionKey
+import com.kaivoflow.core.engine.stepdata.StepExecutionRecorder
 import com.kaivoflow.core.model.Flow
 import com.kaivoflow.core.model.FlowData
 import com.kaivoflow.core.model.ItemError
@@ -30,7 +39,10 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withPermit
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
+import kotlinx.coroutines.withTimeoutOrNull
 import java.util.Collections
 import java.util.concurrent.ConcurrentHashMap
 
@@ -67,11 +79,19 @@ class FlowRunner(
     private val newId: () -> String = { java.util.UUID.randomUUID().toString() },
     /** Supplied by the app so a Step can compose another Flow without importing Android/Room. */
     private val flowInvoker: FlowInvoker? = null,
+    /** Receives the inputs and outputs of every finished Step. The default drops everything. */
+    private val recorder: StepExecutionRecorder = NoopStepExecutionRecorder,
+    /** Pinned data replayed for Steps in manual Runs; null means pins are not used. */
+    private val pins: PinReader? = null,
 ) {
     private val validator = FlowValidator(registry)
     val compiler = FlowCompiler(validator)
 
     fun validate(flow: Flow): ValidationReport = validator.validate(flow)
+
+    private companion object {
+        const val FLUSH_TIMEOUT_MS = 5_000L
+    }
 
     /** Runs a whole Flow. Cancelling the calling coroutine cancels the Run cleanly. */
     suspend fun run(
@@ -81,7 +101,22 @@ class FlowRunner(
         onEvent: (RunEvent) -> Unit = {},
         /** Called once the Run has a Spark and is about to execute, with a Running record to persist. */
         onRunStarted: (suspend (RunRecord) -> Unit)? = null,
-    ): RunRecord = Execution(flow, trigger, options, onEvent, onRunStarted).execute()
+    ): RunRecord = try {
+        Execution(flow, trigger, options, onEvent, onRunStarted).execute()
+    } finally {
+        flushRecorder()
+    }
+
+    /**
+     * Makes sure everything recorded so far reached the store, also when the Run was cancelled or
+     * crashed, so finished Steps always keep their data. Bounded, and never fails the caller.
+     */
+    private suspend fun flushRecorder() {
+        if (recorder === NoopStepExecutionRecorder) return
+        withContext(NonCancellable) {
+            try { withTimeoutOrNull(FLUSH_TIMEOUT_MS) { recorder.flush() } } catch (_: Throwable) { }
+        }
+    }
 
     /**
      * Executes one Step on its own — the "Test Step" button in the inspector.
@@ -94,7 +129,8 @@ class FlowRunner(
         onEvent: (RunEvent) -> Unit = {},
     ): StepRun {
         val step = flow.step(stepId) ?: throw KaivoException("Step not found: $stepId")
-        val effectiveInput = if (input.isEmpty()) listOf(FlowData()) else input
+        val pinnedInput = if (input.isEmpty()) pinnedParentItems(flow, stepId) else emptyList()
+        val effectiveInput = if (input.isNotEmpty()) input else pinnedInput.ifEmpty { listOf(FlowData()) }
         val execution = Execution(flow, RunTrigger(kind = "test", items = effectiveInput.toImmutableList()), RunOptions(mode = ExecutionMode.TestStep), onEvent)
         onEvent(RunEvent.RunStarted(execution.runId, flow.id, 1))
         val result = try {
@@ -102,6 +138,8 @@ class FlowRunner(
         } catch (e: CancellationException) {
             onEvent(RunEvent.RunFinished(execution.runId, RunStatus.Canceled))
             throw e
+        } finally {
+            flushRecorder()
         }
         onEvent(
             RunEvent.RunFinished(
@@ -112,6 +150,17 @@ class FlowRunner(
             )
         )
         return result.record
+    }
+
+    /** Items of the pinned parents of [stepId] (for Test Step without explicit input); empty when none are pinned. */
+    private suspend fun pinnedParentItems(flow: Flow, stepId: String): List<FlowData> {
+        val reader = pins ?: return emptyList()
+        val out = ArrayList<FlowData>()
+        for (edge in flow.streams.filter { it.toStepId == stepId }) {
+            val data = try { reader.pinnedFor(flow.id, edge.fromStepId) } catch (e: CancellationException) { throw e } catch (_: Throwable) { null }
+            data?.ports?.getOrNull(edge.fromPort)?.let { out += it }
+        }
+        return out
     }
 
     internal class NodeResult(
@@ -210,13 +259,13 @@ class FlowRunner(
             val expectedType = when (kind) {
                 // Manual testing and Sub-Flow composition may use whichever Spark is enabled.
                 "manual", "test", "subflow" -> null
-                "schedule", "scheduled" -> "trigger.schedule"
-                else -> if (kind.startsWith("trigger.")) kind else "trigger.$kind"
+                "schedule", "scheduled" -> "spark.schedule"
+                else -> if (kind.startsWith("spark.")) kind else "spark.$kind"
             }
             val selected = if (requested != null) {
                 enabledTriggers.firstOrNull { it.id == requested && (expectedType == null || it.type == expectedType) }
             } else if (expectedType == null) {
-                enabledTriggers.firstOrNull { it.type == "trigger.manual" } ?: enabledTriggers.firstOrNull()
+                enabledTriggers.firstOrNull { it.type == "spark.manual" } ?: enabledTriggers.firstOrNull()
             } else {
                 enabledTriggers.firstOrNull { it.type == expectedType }
             }
@@ -367,10 +416,22 @@ class FlowRunner(
             if (collected.items.isEmpty() && !step.isTrigger) {
                 return markSkipped(step, "The Step before this one produced no items.")
             }
+            // Pinned data (manual Runs only): replay it instead of executing. Production Runs and
+            // Runs with ignoreFrozen execute the Step normally.
+            if (pins != null && options.mode == ExecutionMode.Manual && !options.ignoreFrozen) {
+                val pinned = try {
+                    pins.pinnedFor(flow.id, step.id)
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (_: Throwable) {
+                    null
+                }
+                if (pinned != null) return usePinned(step, pinned, collected)
+            }
             // Freeze Output: replay the pinned result instead of executing.
             val frozen = step.frozenOutput
             if (frozen != null && !options.ignoreFrozen && options.mode != ExecutionMode.TestStep) {
-                return useFrozen(step, frozen.toList(), collected.items.size)
+                return useFrozen(step, frozen.toList(), collected)
             }
 
             val result = permits.withPermit { runWithRetries(step, collected) }
@@ -430,7 +491,7 @@ class FlowRunner(
         private fun defaultTriggerPayload(step: StepNode): Map<String, Any?> {
             val now = clock()
             return when (step.type) {
-                "trigger.webhook" -> mapOf(
+                "spark.webhook" -> mapOf(
                     "headers" to mapOf(
                         "host" to "kaivoflow.local",
                         "user-agent" to "KaivoFlow/1.0",
@@ -444,7 +505,7 @@ class FlowRunner(
                     "timestamp" to now,
                     "executionId" to runId,
                 )
-                "trigger.notification" -> mapOf(
+                "spark.notification" -> mapOf(
                     "app" to "com.whatsapp",
                     "appName" to "WhatsApp",
                     "title" to (step.params["titleContains"] as? String ?: "Notification"),
@@ -453,47 +514,47 @@ class FlowRunner(
                     "timestamp" to now,
                     "executionId" to runId,
                 )
-                "trigger.sms" -> mapOf(
+                "spark.sms" -> mapOf(
                     "from" to (step.params["senderContains"] as? String ?: "+919876543210"),
                     "body" to (step.params["bodyContains"] as? String ?: "Sample SMS message body"),
                     "timestamp" to now,
                     "executionId" to runId,
                 )
-                "trigger.battery" -> mapOf(
+                "spark.battery" -> mapOf(
                     "level" to (step.params["threshold"] as? Number ?: 15),
                     "isCharging" to false,
                     "temperature" to 31.5,
                     "timestamp" to now,
                     "executionId" to runId,
                 )
-                "trigger.wifi" -> mapOf(
+                "spark.wifi" -> mapOf(
                     "ssid" to (step.params["ssidContains"] as? String ?: "MyHome_WiFi"),
                     "event" to (step.params["event"] as? String ?: "connected"),
                     "ipAddress" to "192.168.1.100",
                     "timestamp" to now,
                     "executionId" to runId,
                 )
-                "trigger.bluetooth" -> mapOf(
+                "spark.bluetooth" -> mapOf(
                     "name" to (step.params["deviceNameContains"] as? String ?: "Wireless Headphones"),
                     "event" to (step.params["event"] as? String ?: "connected"),
                     "address" to "12:34:56:78:9A:BC",
                     "timestamp" to now,
                     "executionId" to runId,
                 )
-                "trigger.geofence" -> mapOf(
+                "spark.geofence" -> mapOf(
                     "transition" to (step.params["transition"] as? String ?: "enter"),
                     "latitude" to (step.params["latitude"] as? Number ?: 20.2961),
                     "longitude" to (step.params["longitude"] as? Number ?: 85.8245),
                     "timestamp" to now,
                     "executionId" to runId,
                 )
-                "trigger.headset" -> mapOf(
+                "spark.headset" -> mapOf(
                     "event" to (step.params["event"] as? String ?: "plugged"),
                     "hasMic" to true,
                     "timestamp" to now,
                     "executionId" to runId,
                 )
-                "trigger.boot" -> mapOf(
+                "spark.boot" -> mapOf(
                     "event" to "boot_completed",
                     "reason" to "reboot",
                     "boot" to true,
@@ -501,7 +562,7 @@ class FlowRunner(
                     "timestamp" to now,
                     "executionId" to runId,
                 )
-                "trigger.share" -> mapOf(
+                "spark.share" -> mapOf(
                     "text" to "https://kaivoflow.app",
                     "type" to "text",
                     "timestamp" to now,
@@ -520,7 +581,79 @@ class FlowRunner(
         private fun portCountsOf(outputs: Map<Int, List<FlowData>>) =
             outputs.mapValues { it.value.size }.toImmutableMap()
 
-        private fun useFrozen(step: StepNode, items: List<FlowData>, itemsIn: Int): NodeResult {
+        /** Inputs of a Step for the recorder: one raw port per destination port, with the parents that fed it. */
+        private fun rawInputs(collected: Collected?): List<RawPort> {
+            if (collected == null) return emptyList()
+            return collected.ports.mapIndexed { p, items ->
+                RawPort(
+                    port = p,
+                    items = items,
+                    parents = collected.streams.filter { it.toPort == p }.map { ParentRef(it.fromStepId, it.fromPort) },
+                )
+            }
+        }
+
+        /** Hands one finished Step to the recorder. Cheap, never blocks, never fails the Run. */
+        private fun recordStep(
+            step: StepNode,
+            collected: Collected?,
+            outputs: Map<Int, List<FlowData>>,
+            status: StepRunStatus,
+            startedAt: Long,
+            finishedAt: Long,
+            attempts: Int = 1,
+            error: String? = null,
+            pinned: Boolean = false,
+        ) {
+            if (recorder === NoopStepExecutionRecorder) return
+            try {
+                recorder.record(
+                    StepExecutionCapture(
+                        key = StepExecutionKey(runId, step.id, 0),
+                        flowId = flow.id,
+                        status = status,
+                        startedAt = startedAt,
+                        finishedAt = finishedAt,
+                        attempts = attempts,
+                        inputs = rawInputs(collected),
+                        outputs = outputs.entries.sortedBy { it.key }.map { (port, items) -> RawPort(port = port, items = items) },
+                        error = error?.let { StepErrorInfo(message = it) },
+                        pinned = pinned,
+                        manual = options.mode != ExecutionMode.Production,
+                    ),
+                )
+            } catch (e: CancellationException) {
+                throw e
+            } catch (_: Throwable) {
+                // Capture must never fail a Run.
+            }
+        }
+
+        /** Replays user-pinned data on every pinned port; the Step itself does not execute. */
+        private fun usePinned(step: StepNode, pinned: PinnedData, collected: Collected): NodeResult {
+            val now = clock()
+            val outputs = LinkedHashMap<Int, List<FlowData>>()
+            pinned.ports.forEachIndexed { port, items ->
+                // Pinned items are replayed as stored: their old lineage no longer applies.
+                outputs[port] = items.map { if (it.sources.isEmpty()) it else it.copy(sources = emptyList()) }
+            }
+            if (outputs.isEmpty()) outputs[0] = emptyList()
+            stepOutputs[step.id] = outputs
+            val counts = portCountsOf(outputs)
+            val primary = outputs[0].orEmpty()
+            val itemsOut = outputs.values.sumOf { it.size }
+            val record = StepRun(
+                stepId = step.id, stepName = step.name, status = StepRunStatus.Frozen, startedAt = now, finishedAt = now,
+                itemsIn = collected.items.size, itemsOut = itemsOut, output = primary.toImmutableList(), portCounts = counts,
+            )
+            stepRuns += record
+            recordStep(step, collected, outputs, StepRunStatus.Frozen, now, now, pinned = true)
+            onEvent(RunEvent.StepFinished(runId, step.id, collected.items.size, itemsOut, 0, frozen = true, output = primary.toImmutableList(), portCounts = counts))
+            return NodeResult(StepRunStatus.Frozen, outputs, collected.items.size, 0, record)
+        }
+
+        private fun useFrozen(step: StepNode, items: List<FlowData>, collected: Collected): NodeResult {
+            val itemsIn = collected.items.size
             val now = clock()
             // Pinned items are replayed as they were stored: their old lineage no longer applies.
             val fresh = items.map { if (it.sources.isEmpty()) it else it.copy(sources = emptyList()) }
@@ -538,6 +671,7 @@ class FlowRunner(
                 portCounts = counts,
             )
             stepRuns += record
+            recordStep(step, collected, mapOf(0 to fresh), StepRunStatus.Frozen, now, now, pinned = true)
             onEvent(RunEvent.StepFinished(runId, step.id, itemsIn, fresh.size, 0, frozen = true, output = fresh.toImmutableList(), portCounts = counts))
             return NodeResult(StepRunStatus.Frozen, mapOf(0 to fresh), itemsIn, 0, record)
         }
@@ -553,6 +687,7 @@ class FlowRunner(
             val counts = portCountsOf(outputs)
             val record = StepRun(step.id, step.name, StepRunStatus.Skipped, now, now, itemsIn = items.size, itemsOut = items.size, portCounts = counts)
             stepRuns += record
+            recordStep(step, collected, outputs, StepRunStatus.Skipped, now, now)
             onEvent(RunEvent.StepSkipped(runId, step.id, "This Step is switched off; items passed through."))
             return NodeResult(StepRunStatus.Skipped, outputs, items.size, 0, record)
         }
@@ -568,7 +703,7 @@ class FlowRunner(
         suspend fun runWithRetries(step: StepNode, collected: Collected): NodeResult {
             val input = collected.items
             val executor = registry.executor(step.type)
-                ?: return hardFail(step, "This Step type (${step.type}) is not available on this build.", input, 0)
+                ?: return hardFail(step, "This Step type (${step.type}) is not available on this build.", input, 0, collected = collected)
 
             val attempts = if (step.retry.enabled || step.onError == OnErrorPolicy.Retry) {
                 step.retry.maxAttempts.coerceAtLeast(1)
@@ -647,6 +782,7 @@ class FlowRunner(
                     )
                     stepOutputs[step.id] = outputs
                     stepRuns += record
+                    recordStep(step, collected, outputs, status, attemptStarted, finished, attempt, summary)
                     if (summary != null) {
                         softFailures += "${step.name}: $summary"
                         onEvent(RunEvent.Log(runId, "\"${step.name}\" kept going after item errors: $summary", LogLevel.Warn))
@@ -709,11 +845,12 @@ class FlowRunner(
                 )
                 stepRuns += record
                 stepOutputs[step.id] = outputs
+                recordStep(step, collected, outputs, StepRunStatus.Failed, stepStartedAt, finished, attempts, message)
                 softFailures += "${step.name}: $message"
                 onEvent(RunEvent.Log(runId, "\"${step.name}\" failed but the Flow continues: $message", LogLevel.Warn))
                 return NodeResult(StepRunStatus.Failed, outputs, input.size, finished - stepStartedAt, record, itemsFailed = input.size)
             }
-            return hardFail(step, message, input, finished - stepStartedAt, attempts, stepStartedAt)
+            return hardFail(step, message, input, finished - stepStartedAt, attempts, stepStartedAt, collected)
         }
 
         private fun describeFailures(failures: List<ItemFailure>, total: Int): String {
@@ -750,6 +887,7 @@ class FlowRunner(
             durationMs: Long,
             attempts: Int = 1,
             startedAtOverride: Long? = null,
+            collected: Collected? = null,
         ): NodeResult {
             val now = clock()
             val record = StepRun(
@@ -763,6 +901,7 @@ class FlowRunner(
                 attempts = attempts,
             )
             stepRuns += record
+            recordStep(step, collected, emptyMap(), StepRunStatus.Failed, record.startedAt, now, attempts, message)
             failureMessages += "${step.name}: $message"
             onEvent(RunEvent.StepFailed(runId, step.id, message, false))
             return NodeResult(StepRunStatus.Failed, emptyMap(), input.size, durationMs, record, errorItems = listOf(wholeStepErrorItem(step, message, now)))

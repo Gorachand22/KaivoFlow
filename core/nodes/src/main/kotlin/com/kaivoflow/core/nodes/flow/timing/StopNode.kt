@@ -15,7 +15,7 @@ import kotlinx.collections.immutable.persistentListOf
 
 class StopNode : StepExecutor {
     override val spec = NodeSpec(
-        id = "logic.stop",
+        id = "flow.stop",
         title = "Stop",
         category = StepCategory.Logic,
         subtitle = "End the Run here and return these items",

@@ -11,7 +11,7 @@ import kotlinx.collections.immutable.persistentListOf
 
 class ErrorHandlerNode : StepExecutor {
     override val spec = NodeSpec(
-        id = "logic.onError",
+        id = "flow.on_error",
         title = "When a Step fails",
         category = StepCategory.Logic,
         subtitle = "Clean up or alert when something breaks",

@@ -15,7 +15,7 @@ import kotlinx.collections.immutable.persistentListOf
  */
 class IfNode : StepExecutor {
     override val spec = NodeSpec(
-        id = "logic.if",
+        id = "flow.if",
         title = "If",
         category = StepCategory.Logic,
         subtitle = "Send items down the true or false branch",

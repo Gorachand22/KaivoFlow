@@ -48,4 +48,16 @@ fun ParamSpec.toDef(): ParamDef {
 }
 
 /** The schema view of a Step's legacy parameter list. */
-fun NodeSpec.toSchema(): ParamSchema = ParamSchema(version = 1, params = params.map { it.toDef() }.toImmutableList())
+fun NodeSpec.toSchema(): ParamSchema = paramSchema ?: ParamSchema(version = 1, params = params.map { it.toDef() }.toImmutableList())
+
+/**
+ * Returns a copy of this spec whose schema is the compat schema with the listed keys switched to a
+ * native [ParamKind] (for example `Assignments`). Keys and order stay those of [NodeSpec.params].
+ */
+fun NodeSpec.withKinds(vararg kinds: Pair<String, ParamKind>): NodeSpec {
+    val byKey = kinds.toMap()
+    val base = ParamSchema(version = 1, params = params.map { it.toDef() }.toImmutableList())
+    val missing = byKey.keys - params.map { it.key }.toSet()
+    require(missing.isEmpty()) { "withKinds: unknown params $missing in $id" }
+    return copy(paramSchema = base.copy(params = base.params.map { d -> byKey[d.key]?.let { d.copy(kind = it) } ?: d }.toImmutableList()))
+}

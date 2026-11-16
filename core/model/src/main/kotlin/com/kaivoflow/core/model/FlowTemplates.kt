@@ -24,10 +24,9 @@ object FlowTemplates {
             description = "Tap to build a short message and post it as a phone notification.",
             iconKey = "sparkles",
             build = {
-                val trigger = step("trigger.manual", "Tap to run", 0f, 0f)
-                val text = step("transform.template", "Write briefing", 0f, 180f,
-                    "template" to "Good morning! Today is {{ ${'$'}today }}. You have {{ ${'$'}json.items.size }} thing(s) to check.",
-                    "outputField" to "text")
+                val trigger = step("spark.manual", "Tap to run", 0f, 0f)
+                val text = step("data.set", "Write briefing", 0f, 180f,
+                    "assignments" to listOf(mapOf("name" to "text", "type" to "any", "value" to "Good morning! Today is {{ ${'$'}today }}. You have {{ ${'$'}json.items.size }} thing(s) to check.")))
                 val notify = step("device.notify", "Show briefing", 0f, 360f,
                     "title" to "Morning briefing",
                     "body" to "{{ ${'$'}json.text }}",
@@ -42,7 +41,7 @@ object FlowTemplates {
             description = "Turn any incoming webhook payload into an on-device notification.",
             iconKey = "webhook",
             build = {
-                val trigger = step("trigger.webhook", "Incoming webhook", 0f, 0f,
+                val trigger = step("spark.webhook", "Incoming webhook", 0f, 0f,
                     "path" to "phone-alert", "method" to "POST")
                 val notify = step("device.notify", "Show alert", 0f, 220f,
                     "title" to "Webhook received",
@@ -57,11 +56,10 @@ object FlowTemplates {
             description = "When the battery drops below 20%, write a message and notify once.",
             iconKey = "battery",
             build = {
-                val trigger = step("trigger.battery", "Battery low", 0f, 0f,
+                val trigger = step("spark.battery", "Battery low", 0f, 0f,
                     "threshold" to 20, "alsoWhenCharging" to false)
-                val text = step("transform.template", "Write reminder", 0f, 180f,
-                    "template" to "Battery is at {{ ${'$'}json.level }}%. Plug in soon.",
-                    "outputField" to "text")
+                val text = step("data.set", "Write reminder", 0f, 180f,
+                    "assignments" to listOf(mapOf("name" to "text", "type" to "any", "value" to "Battery is at {{ ${'$'}json.level }}%. Plug in soon.")))
                 val notify = step("device.notify", "Notify me", 0f, 360f,
                     "title" to "Battery low",
                     "body" to "{{ ${'$'}json.text }}",
@@ -76,11 +74,10 @@ object FlowTemplates {
             description = "Turn a bank/merchant notification into a line and append it to a local file.",
             iconKey = "file",
             build = {
-                val trigger = step("trigger.notification", "Bank notification", 0f, 0f,
+                val trigger = step("spark.notification", "Bank notification", 0f, 0f,
                     "textContains" to "debited")
-                val text = step("transform.template", "Format entry", 0f, 180f,
-                    "template" to "{{ ${'$'}today }} | {{ ${'$'}json.title }} | {{ ${'$'}json.text }}",
-                    "outputField" to "entry")
+                val text = step("data.set", "Format entry", 0f, 180f,
+                    "assignments" to listOf(mapOf("name" to "entry", "type" to "any", "value" to "{{ ${'$'}today }} | {{ ${'$'}json.title }} | {{ ${'$'}json.text }}")))
                 val file = step("device.file", "Append log", 0f, 360f,
                     "action" to "write",
                     "fileName" to "expenses.txt",
@@ -95,9 +92,10 @@ object FlowTemplates {
             description = "Call a REST endpoint, pick the list from its response and notify per item.",
             iconKey = "plug",
             build = {
-                val trigger = step("trigger.schedule", "Every morning", 0f, 0f,
+                val trigger = step("spark.schedule", "Every morning", 0f, 0f,
                     "frequency" to "daily", "time" to "08:00")
-                val call = step("saas.connector", "Fetch updates", 0f, 180f,
+                val call = step("net.http", "Fetch updates", 0f, 180f,
+                    "preset" to "paged",
                     "method" to "GET",
                     "url" to "https://api.example.com/updates",
                     "responsePath" to "data.items",

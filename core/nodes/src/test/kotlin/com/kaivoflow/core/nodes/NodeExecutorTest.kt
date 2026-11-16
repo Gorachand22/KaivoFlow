@@ -28,7 +28,6 @@ import com.kaivoflow.core.nodes.flow.branching.MergeNode
 import com.kaivoflow.core.nodes.flow.branching.SwitchNode
 import com.kaivoflow.core.nodes.flow.looping.LoopNode
 import com.kaivoflow.core.nodes.net.web.HttpNode
-import com.kaivoflow.core.nodes.net.web.WeatherNode
 import com.kaivoflow.core.nodes.spark.start.ManualTriggerNode
 import com.kaivoflow.core.nodes.spark.start.ScheduleTriggerNode
 import kotlinx.collections.immutable.toImmutableMap
@@ -52,7 +51,7 @@ class NodeExecutorTest {
         val result = node.execute(
             ctx(
                 stepOf(
-                    "saas.http",
+                    "net.http",
                     params = mapOf(
                         "method" to "GET",
                         "url" to "https://api.test/items",
@@ -78,7 +77,7 @@ class NodeExecutorTest {
         node.execute(
             ctx(
                 stepOf(
-                    "saas.http",
+                    "net.http",
                     params = mapOf(
                         "method" to "POST",
                         "url" to "https://api.test/items",
@@ -104,7 +103,7 @@ class NodeExecutorTest {
         http.responder = { HttpResponseSpec(status = 401, bodyText = "{\"error\":\"bad key\"}") }
         val error = runCatching {
             HttpNode().execute(
-                ctx(stepOf("saas.http", params = mapOf("method" to "GET", "url" to "https://api.test/x")), listOf(item()), http = http)
+                ctx(stepOf("net.http", params = mapOf("method" to "GET", "url" to "https://api.test/x")), listOf(item()), http = http)
             )
         }.exceptionOrNull()
         assertTrue(error is StepExecutionException)
@@ -117,7 +116,7 @@ class NodeExecutorTest {
         http.responder = { HttpResponseSpec(status = 404, body = mapOf("missing" to true)) }
         val result = HttpNode().execute(
             ctx(
-                stepOf("saas.http", params = mapOf("method" to "GET", "url" to "https://api.test/x", "ignoreHttpErrors" to true)),
+                stepOf("net.http", params = mapOf("method" to "GET", "url" to "https://api.test/x", "ignoreHttpErrors" to true)),
                 listOf(item()),
                 http = http,
             )
@@ -128,7 +127,7 @@ class NodeExecutorTest {
     @Test
     fun `http node rejects a url without a scheme`() = runBlocking {
         val error = runCatching {
-            HttpNode().execute(ctx(stepOf("saas.http", params = mapOf("url" to "api.test/x")), listOf(item())))
+            HttpNode().execute(ctx(stepOf("net.http", params = mapOf("url" to "api.test/x")), listOf(item())))
         }.exceptionOrNull()
         assertTrue(error!!.message!!.contains("http"))
     }
@@ -139,7 +138,7 @@ class NodeExecutorTest {
         val result = IfNode().execute(
             ctx(
                 stepOf(
-                    "logic.if",
+                    "flow.if",
                     params = mapOf(
                         "combinator" to "all",
                         "conditions" to listOf(mapOf("left" to "{{ \$json.amount }}", "operator" to "Greater", "right" to 500)),
@@ -158,7 +157,7 @@ class NodeExecutorTest {
         val result = FilterNode().execute(
             ctx(
                 stepOf(
-                    "logic.filter",
+                    "data.filter",
                     params = mapOf("conditions" to listOf(mapOf("left" to "{{ \$json.tags }}", "operator" to "Contains", "right" to "food"))),
                 ),
                 listOf(item("tags" to "food,coffee"), item("tags" to "travel")),
@@ -171,7 +170,7 @@ class NodeExecutorTest {
     fun `switch routes into the matching branch and else`() = runBlocking {
         val result = SwitchNode().execute(
             ctx(
-                stepOf("logic.switch", params = mapOf("field" to "{{ \$json.type }}", "case1" to "invoice", "case2" to "receipt")),
+                stepOf("flow.switch", params = mapOf("field" to "{{ \$json.type }}", "case1" to "invoice", "case2" to "receipt")),
                 listOf(item("type" to "invoice"), item("type" to "receipt"), item("type" to "note")),
             )
         )
@@ -184,7 +183,7 @@ class NodeExecutorTest {
     fun `dedupe removes repeats by field`() = runBlocking {
         val result = DedupeNode().execute(
             ctx(
-                stepOf("logic.dedupe", params = mapOf("fields" to "id")),
+                stepOf("data.dedupe", params = mapOf("fields" to "id")),
                 listOf(item("id" to 1), item("id" to 1), item("id" to 2)),
             )
         )
@@ -194,16 +193,16 @@ class NodeExecutorTest {
     @Test
     fun `merge combines two branches from step outputs`() = runBlocking {
         val mergeStep = StepNode(
-            id = "m", type = "logic.merge", name = "M",
+            id = "m", type = "flow.merge", name = "M",
             params = mapOf("mode" to "zip").toImmutableMap(),
         )
         val flow = com.kaivoflow.core.model.Flow(
             id = "f",
             name = "flow",
             steps = kotlinx.collections.immutable.persistentListOf(
-                StepNode("a", "transform.set", "A", y = 0f),
-                StepNode("m", "logic.merge", "M", y = 10f),
-                StepNode("b", "transform.set", "B", y = 0f),
+                StepNode("a", "data.set", "A", y = 0f),
+                StepNode("m", "flow.merge", "M", y = 10f),
+                StepNode("b", "data.set", "B", y = 0f),
             ),
             streams = kotlinx.collections.immutable.persistentListOf(
                 com.kaivoflow.core.model.StreamEdge("s1", "a", "m"),
@@ -230,7 +229,7 @@ class NodeExecutorTest {
     fun `loop respects its safety limit`() = runBlocking {
         val many = (1..20).map { item("n" to it) }
         val error = runCatching {
-            LoopNode().execute(ctx(stepOf("logic.loop", params = mapOf("maxIterations" to 5)), many))
+            LoopNode().execute(ctx(stepOf("flow.loop", params = mapOf("maxIterations" to 5)), many))
         }.exceptionOrNull()
         assertTrue(error!!.message!!.contains("safety limit"))
     }
@@ -241,7 +240,7 @@ class NodeExecutorTest {
         val result = SetFieldsNode().execute(
             ctx(
                 stepOf(
-                    "transform.set",
+                    "data.set",
                     params = mapOf(
                         "fields" to mapOf("label" to "{{ \$json.merchant }}", "amount" to 10),
                         "keepOtherFields" to true,
@@ -299,7 +298,7 @@ class NodeExecutorTest {
         val result = DateNode().execute(
             ctx(
                 stepOf(
-                    "transform.date",
+                    "data.date",
                     params = mapOf("action" to "format", "source" to "2026-11-13T04:30:00Z", "pattern" to "dd MMM yyyy HH:mm"),
                 ),
                 listOf(item()),
@@ -453,7 +452,7 @@ class NodeExecutorTest {
         val result = TelegramNode().execute(
             ctx(
                 stepOf(
-                    "saas.telegram",
+                    "app.telegram",
                     params = mapOf("credential" to "cred-1", "chatId" to "@chan", "text" to "Spent {{ \$json.amount }}", "parseMode" to "HTML"),
                 ),
                 listOf(item("amount" to 99)),
@@ -475,7 +474,7 @@ class NodeExecutorTest {
         GoogleSheetsNode().execute(
             ctx(
                 stepOf(
-                    "saas.sheets",
+                    "app.google_sheets",
                     params = mapOf(
                         "action" to "append",
                         "credential" to "cred-1",
@@ -504,36 +503,13 @@ class NodeExecutorTest {
         }
         val result = GoogleSheetsNode().execute(
             ctx(
-                stepOf("saas.sheets", params = mapOf("action" to "read", "credential" to "cred-1", "spreadsheetId" to "s", "range" to "A1")),
+                stepOf("app.google_sheets", params = mapOf("action" to "read", "credential" to "cred-1", "spreadsheetId" to "s", "range" to "A1")),
                 listOf(item()),
                 http = http,
             )
         )
         assertEquals("2026-11-13", result.port(0).single().json["date"])
         assertEquals("100", result.port(0).single().json["amount"])
-    }
-
-    @Test
-    fun `weather node returns readable conditions`() = runBlocking {
-        val http = RecordingHttp()
-        http.responder = {
-            HttpResponseSpec(
-                status = 200,
-                body = mapOf(
-                    "current" to mapOf("temperature_2m" to 31.5, "relative_humidity_2m" to 60, "wind_speed_10m" to 8, "weather_code" to 61),
-                    "daily" to mapOf(
-                        "temperature_2m_max" to listOf(34.0),
-                        "temperature_2m_min" to listOf(24.0),
-                        "precipitation_probability_max" to listOf(70),
-                    ),
-                ),
-            )
-        }
-        val result = WeatherNode().execute(
-            ctx(stepOf("saas.weather", params = mapOf("city" to "Bhubaneswar")), listOf(item()), http = http)
-        )
-        assertEquals("Rain", result.port(0).single().json["condition"])
-        assertEquals("Bhubaneswar", result.port(0).single().json["city"])
     }
 
     // ---------------------------------------------------------------- device
@@ -582,7 +558,7 @@ class NodeExecutorTest {
     fun `schedule trigger rejects an impossible time`() = runBlocking {
         val error = runCatching {
             ScheduleTriggerNode().execute(
-                ctx(stepOf("trigger.schedule", params = mapOf("frequency" to "daily", "time" to "25:99")), listOf(item()))
+                ctx(stepOf("spark.schedule", params = mapOf("frequency" to "daily", "time" to "25:99")), listOf(item()))
             )
         }.exceptionOrNull()
         assertTrue(error is StepExecutionException)
@@ -591,7 +567,7 @@ class NodeExecutorTest {
 
     @Test
     fun `triggers pass run items through`() = runBlocking {
-        val result = ManualTriggerNode().execute(ctx(stepOf("trigger.manual"), listOf(item("a" to 1))))
+        val result = ManualTriggerNode().execute(ctx(stepOf("spark.manual"), listOf(item("a" to 1))))
         assertEquals(1, result.port(0).size)
     }
 
@@ -604,7 +580,7 @@ class NodeExecutorTest {
         }
         val result = node.execute(
             ctx(
-                stepOf("transform.code", params = mapOf("mode" to "all", "code" to "return 1")),
+                stepOf("code.javascript", params = mapOf("mode" to "all", "code" to "return 1")),
                 listOf(item("amount" to 10)),
                 evaluator = scripted,
             )

@@ -170,6 +170,8 @@ interface RunRepository {
 
 class RoomRunRepository(
     private val runDao: RunDao,
+    /** When set, pruning or clearing Runs also deletes their stored Step data (it does not cascade from `runs`). */
+    private val stepData: StepDataDao? = null,
     private val io: CoroutineDispatcher = Dispatchers.IO,
 ) : RunRepository {
 
@@ -200,10 +202,16 @@ class RoomRunRepository(
         )
     }
 
-    override suspend fun clear() = withContext(io) { runDao.clear() }
+    override suspend fun clear() = withContext(io) {
+        stepData?.deleteAll()
+        runDao.clear()
+    }
 
     override suspend fun pruneOlderThan(days: Int) = withContext(io) {
-        runDao.deleteOlderThan(System.currentTimeMillis() - days * 86_400_000L)
+        val before = System.currentTimeMillis() - days * 86_400_000L
+        // Step data first: it finds its Runs through the `runs` rows that are deleted next.
+        stepData?.deleteForRunsOlderThan(before)
+        runDao.deleteOlderThan(before)
     }
 }
 

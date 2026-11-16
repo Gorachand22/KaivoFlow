@@ -26,6 +26,14 @@ import com.kaivoflow.core.network.KtorHttpGateway
 import com.kaivoflow.core.nodes.NodeCatalog
 import dagger.hilt.android.qualifiers.ApplicationContext
 import com.kaivoflow.core.engine.RunRetention
+import com.kaivoflow.core.engine.stepdata.ChannelStepExecutionRecorder
+import com.kaivoflow.core.engine.stepdata.PinStore
+import com.kaivoflow.core.engine.stepdata.StepDataPolicy
+import com.kaivoflow.core.engine.stepdata.StepDataRedactor
+import com.kaivoflow.core.engine.stepdata.StepDataStore
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
 import com.kaivoflow.core.model.LogLevel
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.flow.first
@@ -61,7 +69,18 @@ class FlowEngine @Inject constructor(
     private val deviceGateway: AndroidDeviceGateway,
     private val notifications: RunNotifications,
     private val variableRepository: WorkflowVariableRepository,
+    private val stepData: StepDataStore,
+    private val pinStore: PinStore,
 ) {
+    // Step data capture: redacted, limited and written off the Run's thread (bounded channel).
+    private val captureRecorder: ChannelStepExecutionRecorder by lazy {
+        ChannelStepExecutionRecorder(
+            sink = stepData,
+            scope = CoroutineScope(SupervisorJob() + Dispatchers.IO),
+            policy = StepDataPolicy(redactor = StepDataRedactor()),
+        )
+    }
+
     private val expressionEvaluator: com.kaivoflow.core.engine.ExpressionEvaluator by lazy {
         // KaivoFlow's own pure-Kotlin expression engine (safe navigation, whitelisted library, limits).
         KaivoExpressionEvaluator()
@@ -115,6 +134,8 @@ class FlowEngine @Inject constructor(
             http = http,
             credentials = credentials,
             flowInvoker = subFlowInvoker,
+            recorder = captureRecorder,
+            pins = pinStore,
         )
     }
 
@@ -264,6 +285,7 @@ class FlowEngine @Inject constructor(
     /** Age limit via the repository; the per-Flow count cap is applied by [pruneHistory]. */
     suspend fun pruneHistory() {
         runCatching { runRepository.pruneOlderThan(RunRetention.MAX_AGE_DAYS) }
+        runCatching { RunRetention.pruneStepData(stepData) }
     }
 
     /** "Test Step" from the inspector: runs exactly one Step, persists nothing. */

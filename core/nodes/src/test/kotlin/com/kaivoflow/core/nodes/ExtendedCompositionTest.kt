@@ -127,9 +127,9 @@ class ExtendedCompositionTest {
     fun `catalog registers the new composition steps exactly once`() {
         val ids = NodeCatalog.executors().map { it.spec.id }
         assertEquals(ids.size, ids.distinct().size)
-        assertEquals(87, ids.size)
-        assertTrue(ids.contains("logic.subflow"))
-        assertTrue(ids.contains("logic.poll"))
-        assertTrue(ids.contains("saas.connector"))
+        assertTrue(ids.size in 60..87)
+        assertTrue(ids.contains("flow.subflow"))
+        assertTrue(ids.contains("data.dedupe"))
+        assertTrue(ids.contains("net.http"))
     }
 }

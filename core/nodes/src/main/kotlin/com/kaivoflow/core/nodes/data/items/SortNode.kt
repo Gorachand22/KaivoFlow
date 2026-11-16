@@ -18,13 +18,20 @@ import java.time.Instant
 /** Stable ordering by a field, with numeric, text and date-time awareness. */
 class SortNode : StepExecutor {
     override val spec = NodeSpec(
-        id = "logic.sort",
+        id = "data.sort",
         title = "Sort items",
         category = StepCategory.Logic,
         subtitle = "Put your items in the order you want",
         iconKey = "sortByAlpha",
         params = persistentListOf(
-            textParam("field", "Sort by field", placeholder = "date", required = true),
+            ParamSpec(
+                key = "mode",
+                label = "Sort",
+                type = ParamType.Select,
+                default = "field",
+                options = selectOptions("field" to "By a field", "random" to "Shuffle randomly"),
+            ),
+            textParam("field", "Sort by field", placeholder = "date", required = true, showWhen = mapOf("mode" to listOf("field"))),
             ParamSpec(
                 key = "direction",
                 label = "Order",
@@ -40,11 +47,13 @@ class SortNode : StepExecutor {
                 options = selectOptions("auto" to "Automatic", "number" to "Numbers", "text" to "Text", "date" to "Date-time"),
             ),
         ),
-        keywords = persistentListOf("sort", "order", "ascending", "descending", "rank", "arrange"),
+        keywords = persistentListOf("sort", "order", "ascending", "descending", "rank", "arrange", "shuffle", "random"),
+        replaces = persistentListOf("transform.random"),
     )
 
     override suspend fun execute(ctx: StepContext): StepResult {
         val params = ctx.step.params
+        if (Values.asString(params["mode"], "field") == "random") return ctx.output(ctx.input.shuffled(java.security.SecureRandom()))
         val field = Values.asString(params["field"])
         if (field.isBlank()) throw StepExecutionException(ctx.step.id, ctx.step.name, "choose a field to sort by")
         val direction = Values.asString(params["direction"], "asc")

@@ -205,5 +205,43 @@ val MIGRATION_3_4: Migration = object : Migration(3, 4) {
     }
 }
 
+/**
+ * Schema 5 (Step execution data and pins, spec P2-data-panels-params section 5.2). The statements must
+ * stay equivalent to what Room generates for StepDataEntities.kt: same columns, nullability, primary
+ * keys, foreign key and index names, or the post-migration schema validation throws on first open.
+ * Idempotent (IF NOT EXISTS); nothing existing is touched. Existing Runs keep their `runJson`; they simply
+ * have no stored Step data (the panels show "data not captured" for them).
+ */
+internal fun SupportSQLiteDatabase.createStepDataTables() {
+    execSQL(
+        "CREATE TABLE IF NOT EXISTS `step_executions` (`runId` TEXT NOT NULL, `stepId` TEXT NOT NULL, `runIndex` INTEGER NOT NULL, " +
+            "`flowId` TEXT NOT NULL, `status` TEXT NOT NULL, `startedAt` INTEGER NOT NULL, `finishedAt` INTEGER, " +
+            "`attempts` INTEGER NOT NULL, `errorJson` TEXT, `pinned` INTEGER NOT NULL, `manual` INTEGER NOT NULL, " +
+            "`dataDropped` INTEGER NOT NULL, PRIMARY KEY(`runId`, `stepId`, `runIndex`))",
+    )
+    execSQL("CREATE INDEX IF NOT EXISTS `index_step_executions_stepId_startedAt` ON `step_executions` (`stepId`, `startedAt`)")
+    execSQL("CREATE INDEX IF NOT EXISTS `index_step_executions_flowId_startedAt` ON `step_executions` (`flowId`, `startedAt`)")
+    execSQL(
+        "CREATE TABLE IF NOT EXISTS `step_port_data` (`runId` TEXT NOT NULL, `stepId` TEXT NOT NULL, `runIndex` INTEGER NOT NULL, " +
+            "`direction` TEXT NOT NULL, `port` INTEGER NOT NULL, `label` TEXT, `itemCount` INTEGER NOT NULL, " +
+            "`storedCount` INTEGER NOT NULL, `bytes` INTEGER NOT NULL, `truncationJson` TEXT, `schemaJson` TEXT, " +
+            "`parentsJson` TEXT NOT NULL, `itemsBlob` BLOB NOT NULL, `offsetsBlob` BLOB NOT NULL, " +
+            "PRIMARY KEY(`runId`, `stepId`, `runIndex`, `direction`, `port`), " +
+            "FOREIGN KEY(`runId`, `stepId`, `runIndex`) REFERENCES `step_executions`(`runId`, `stepId`, `runIndex`) " +
+            "ON UPDATE NO ACTION ON DELETE CASCADE )",
+    )
+    execSQL(
+        "CREATE TABLE IF NOT EXISTS `step_pins` (`flowId` TEXT NOT NULL, `stepId` TEXT NOT NULL, `portsJson` TEXT NOT NULL, " +
+            "`bytes` INTEGER NOT NULL, `pinnedAt` INTEGER NOT NULL, `source` TEXT NOT NULL, PRIMARY KEY(`flowId`, `stepId`))",
+    )
+}
+
+/** v4 -> v5: Step execution data tables and pins. Additive only. */
+val MIGRATION_4_5: Migration = object : Migration(4, 5) {
+    override fun migrate(db: SupportSQLiteDatabase) {
+        db.createStepDataTables()
+    }
+}
+
 /** Ordered, contiguous list from the oldest known schema to [KaivoDatabase] current version. */
-val ALL_MIGRATIONS: Array<Migration> = arrayOf(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4)
+val ALL_MIGRATIONS: Array<Migration> = arrayOf(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5)

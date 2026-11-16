@@ -65,7 +65,7 @@ class TriggerReliabilityTest {
 
     @Test fun manualAndScheduleTicksProvideOneItem() = runBlocking {
         for ((type, kind) in listOf(TriggerSpecs.MANUAL to "manual", TriggerSpecs.SCHEDULE to "scheduled")) {
-            val f = flow(spark("t", type), spark("a", "transform.set", mapOf("fields" to mapOf("value" to 1))),
+            val f = flow(spark("t", type), spark("a", "data.set", mapOf("fields" to mapOf("value" to 1))),
                 streams = listOf(StreamEdge("e", "t", "a")))
             val record = runner().run(f, RunTrigger(kind = kind))
             assertEquals(RunStatus.Succeeded, record.status)
@@ -76,8 +76,8 @@ class TriggerReliabilityTest {
 
     @Test fun onlySelectedSparkReceivesEvent() = runBlocking {
         val f = flow(spark("one", TriggerSpecs.NOTIFICATION), spark("two", TriggerSpecs.NOTIFICATION),
-            spark("a", "transform.template", mapOf("template" to "first")),
-            spark("b", "transform.template", mapOf("template" to "second")),
+            spark("a", "data.set", mapOf("assignments" to listOf(mapOf("name" to "text", "type" to "any", "value" to "first")))),
+            spark("b", "data.set", mapOf("assignments" to listOf(mapOf("name" to "text", "type" to "any", "value" to "second")))),
             streams = listOf(StreamEdge("e1", "one", "a"), StreamEdge("e2", "two", "b")))
         val record = runner().run(f, RunTrigger(kind = TriggerSpecs.NOTIFICATION,
             startAtStepId = "two", items = persistentListOf(FlowData(mapOf("text" to "event")))))
@@ -89,7 +89,7 @@ class TriggerReliabilityTest {
     }
 
     @Test fun invalidOrWrongSparkIdFailsWithoutRunningActions() = runBlocking {
-        val f = flow(spark("t", TriggerSpecs.MANUAL), spark("a", "transform.template", mapOf("template" to "hello")),
+        val f = flow(spark("t", TriggerSpecs.MANUAL), spark("a", "data.set", mapOf("assignments" to listOf(mapOf("name" to "text", "type" to "any", "value" to "hello")))),
             streams = listOf(StreamEdge("e", "t", "a")))
         for (trigger in listOf(RunTrigger(kind = "manual", startAtStepId = "missing"),
             RunTrigger(kind = "scheduled", startAtStepId = "t"), RunTrigger(kind = "webhook"))) {
@@ -100,7 +100,7 @@ class TriggerReliabilityTest {
     }
     @Test fun emptyWebhookPayloadDoesNotInventAnEventItem() = runBlocking {
         val f = flow(spark("t", TriggerSpecs.WEBHOOK, mapOf("path" to "test")),
-            spark("a", "transform.template", mapOf("template" to "hello")),
+            spark("a", "data.set", mapOf("assignments" to listOf(mapOf("name" to "text", "type" to "any", "value" to "hello")))),
             streams = listOf(StreamEdge("e", "t", "a")))
         val record = runner().run(f, RunTrigger(kind = "webhook"))
         assertEquals(StepRunStatus.Skipped, record.stepRuns.first { it.stepId == "a" }.status)

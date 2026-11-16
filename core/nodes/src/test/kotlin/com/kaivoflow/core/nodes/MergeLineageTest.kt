@@ -46,11 +46,11 @@ class MergeLineageTest {
     fun `re-joining both branches of an If keeps the false branch items`() {
         val record = run(
             steps = listOf(
-                step("t", "trigger.manual"),
-                step("if", "logic.if", bigIf),
-                step("a", "transform.set", setField("branch", "big")),
-                step("b", "transform.set", setField("branch", "small")),
-                step("m", "logic.merge", mapOf("mode" to "append")),
+                step("t", "spark.manual"),
+                step("if", "flow.if", bigIf),
+                step("a", "data.set", setField("branch", "big")),
+                step("b", "data.set", setField("branch", "small")),
+                step("m", "flow.merge", mapOf("mode" to "append")),
             ),
             edges = listOf(
                 edge("t", "if"), edge("if", "a", fromPort = 0), edge("if", "b", fromPort = 1),
@@ -69,8 +69,8 @@ class MergeLineageTest {
     fun `If wired straight into both Merge inputs delivers true and false items`() {
         val record = run(
             steps = listOf(
-                step("t", "trigger.manual"), step("if", "logic.if", bigIf),
-                step("m", "logic.merge", mapOf("mode" to "append")),
+                step("t", "spark.manual"), step("if", "flow.if", bigIf),
+                step("m", "flow.merge", mapOf("mode" to "append")),
             ),
             edges = listOf(edge("t", "if"), edge("if", "m", fromPort = 0, toPort = 0), edge("if", "m", fromPort = 1, toPort = 1)),
             items = listOf(item("amount" to 900), item("amount" to 100)),
@@ -82,8 +82,8 @@ class MergeLineageTest {
     fun `legacy Flows with both Streams on port 0 still merge by stream`() {
         val record = run(
             steps = listOf(
-                step("t", "trigger.manual"), step("if", "logic.if", bigIf),
-                step("m", "logic.merge", mapOf("mode" to "zip")),
+                step("t", "spark.manual"), step("if", "flow.if", bigIf),
+                step("m", "flow.merge", mapOf("mode" to "zip")),
             ),
             edges = listOf(edge("t", "if"), edge("if", "m", fromPort = 0), edge("if", "m", fromPort = 1)),
             items = listOf(item("amount" to 900), item("amount" to 100)),
@@ -100,10 +100,10 @@ class MergeLineageTest {
         val doc = BinaryDataRef("kaivo://files/d1", "application/pdf", "d1.pdf", 20)
         val record = run(
             steps = listOf(
-                step("t", "trigger.manual"),
-                step("a", "logic.noop"),
-                step("b", "transform.set", setField("extra", 1)),
-                step("m", "logic.merge", mapOf("mode" to "zip")),
+                step("t", "spark.manual"),
+                step("a", "flow.noop"),
+                step("b", "data.set", setField("extra", 1)),
+                step("m", "flow.merge", mapOf("mode" to "zip")),
             ),
             edges = listOf(edge("t", "a"), edge("t", "b"), edge("a", "m", toPort = 0), edge("b", "m", toPort = 1)),
             items = listOf(FlowData(mapOf("n" to 1)).withBinary("photo", photo).withBinary("doc", doc)),
@@ -119,8 +119,8 @@ class MergeLineageTest {
     fun `append Merge sources each item to its own input`() {
         val record = run(
             steps = listOf(
-                step("t", "trigger.manual"), step("if", "logic.if", bigIf),
-                step("m", "logic.merge", mapOf("mode" to "append")),
+                step("t", "spark.manual"), step("if", "flow.if", bigIf),
+                step("m", "flow.merge", mapOf("mode" to "append")),
             ),
             edges = listOf(edge("t", "if"), edge("if", "m", fromPort = 0, toPort = 0), edge("if", "m", fromPort = 1, toPort = 1)),
             items = listOf(item("amount" to 100), item("amount" to 900)),
@@ -134,10 +134,10 @@ class MergeLineageTest {
     fun `Merge waits for the slow branch`() {
         val record = run(
             steps = listOf(
-                step("t", "trigger.manual"),
-                step("fast", "transform.set", setField("who", "fast")),
-                step("slow", "logic.wait", mapOf("seconds" to 0.15)),
-                step("m", "logic.merge", mapOf("mode" to "append")),
+                step("t", "spark.manual"),
+                step("fast", "data.set", setField("who", "fast")),
+                step("slow", "flow.wait", mapOf("seconds" to 0.15)),
+                step("m", "flow.merge", mapOf("mode" to "append")),
             ),
             edges = listOf(edge("t", "fast"), edge("t", "slow"), edge("fast", "m", toPort = 0), edge("slow", "m", toPort = 1)),
             items = listOf(item("n" to 1)),
@@ -149,9 +149,9 @@ class MergeLineageTest {
     fun `Stop ends the Run and skips the rest`() {
         val record = run(
             steps = listOf(
-                step("t", "trigger.manual"),
-                step("stop", "logic.stop", mapOf("status" to "success", "message" to "nothing to do")),
-                step("after", "transform.set", setField("x", 1)),
+                step("t", "spark.manual"),
+                step("stop", "flow.stop", mapOf("status" to "success", "message" to "nothing to do")),
+                step("after", "data.set", setField("x", 1)),
             ),
             edges = listOf(edge("t", "stop"), edge("stop", "after")),
             items = listOf(item("n" to 1)),
@@ -166,8 +166,8 @@ class MergeLineageTest {
     fun `Stop in error mode still fails the Run`() {
         val record = run(
             steps = listOf(
-                step("t", "trigger.manual"),
-                step("stop", "logic.stop", mapOf("status" to "error", "message" to "bad input")),
+                step("t", "spark.manual"),
+                step("stop", "flow.stop", mapOf("status" to "error", "message" to "bad input")),
             ),
             edges = listOf(edge("t", "stop")),
             items = listOf(item("n" to 1)),

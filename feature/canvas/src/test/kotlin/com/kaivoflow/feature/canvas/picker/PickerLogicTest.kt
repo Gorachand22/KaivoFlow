@@ -32,14 +32,14 @@ class PickerLogicTest {
         lifecycle = lifecycle, role = role, alsoIn = alsoIn.toImmutableList(),
     )
 
-    private val manual = spec("trigger.manual", "Manual", "spark/start", "Run by tapping", kind = NodeKind.Trigger)
+    private val manual = spec("spark.manual", "Manual", "spark/start", "Run by tapping", kind = NodeKind.Trigger)
     private val battery = spec(
-        "trigger.battery", "Battery level", "spark/device_events", "When charge changes",
+        "spark.battery", "Battery level", "spark/device_events", "When charge changes",
         kind = NodeKind.Trigger, alsoIn = listOf("device/sensors"),
     )
     private val http = spec("net.http", "HTTP Request", "net/web", "Call any web address", listOf("curl", "api", "fetch"))
-    private val ifStep = spec("logic.if", "If", "flow/branching", "Split by a condition", listOf("condition"))
-    private val setStep = spec("transform.set", "Edit Fields", "data/items", "Set or rename fields", listOf("set", "assign"))
+    private val ifStep = spec("flow.if", "If", "flow/branching", "Split by a condition", listOf("condition"))
+    private val setStep = spec("data.set", "Edit Fields", "data/items", "Set or rename fields", listOf("set", "assign"))
     private val wifi = spec("device.wifi", "Wi-Fi state", "device/connectivity", "Read network status", listOf("network"))
     private val oldAi = spec("ai.ask", "Ask AI", "ai/chains", "Old single prompt", lifecycle = Lifecycle.Legacy)
     private val newAi = spec("ai.chain", "AI Chain", "ai/chains", "Ask a model")
@@ -56,7 +56,7 @@ class PickerLogicTest {
 
     @Test fun modesFilterSparks() {
         val noSpark = PickerLogic.available(all, hasSpark = false, sparksOnly = true, includeSparks = false)
-        assertEquals(setOf("trigger.manual", "trigger.battery"), noSpark.map { it.id }.toSet())
+        assertEquals(setOf("spark.manual", "spark.battery"), noSpark.map { it.id }.toSet())
         val withSpark = PickerLogic.available(all, hasSpark = true, sparksOnly = false, includeSparks = false)
         assertTrue(withSpark.none { PickerLogic.isSpark(it) })
         val another = PickerLogic.available(all, hasSpark = true, sparksOnly = false, includeSparks = true)
@@ -75,7 +75,7 @@ class PickerLogicTest {
     @Test fun alsoInListsSparkUnderDeviceSubcategory() {
         val dev = PickerLogic.page(PickerLogic.offerable(all), "device")!!
         val sensors = dev.sections.single { it.subKey == "sensors" }
-        assertEquals(listOf("trigger.battery"), sensors.steps.map { it.id })
+        assertEquals(listOf("spark.battery"), sensors.steps.map { it.id })
         // empty planned and empty subs are not shown
         assertEquals(setOf("sensors", "connectivity"), dev.sections.map { it.subKey }.toSet())
     }
@@ -94,10 +94,10 @@ class PickerLogicTest {
 
     @Test fun searchRanksExactTitleThenPrefixThenKeyword() {
         val idx = PickerLogic.SearchIndex(PickerLogic.offerable(all))
-        assertEquals("logic.if", idx.search("if").first().spec.id)
+        assertEquals("flow.if", idx.search("if").first().spec.id)
         assertEquals("net.http", idx.search("http").first().spec.id)
         assertEquals("net.http", idx.search("curl").first().spec.id)
-        assertEquals("transform.set", idx.search("assign").first().spec.id)
+        assertEquals("data.set", idx.search("assign").first().spec.id)
     }
 
     @Test fun searchMatchesSubtitleAndCategoryAndMultiWord() {
@@ -177,8 +177,8 @@ class PickerLogicTest {
 
     @Test fun resolveDropsUnknownAndHiddenAndKeepsOrder() {
         val offer = PickerLogic.offerable(all)
-        val r = PickerLogic.resolve(listOf("net.http", "gone.id", "x.hidden", "logic.if", "net.http"), offer)
-        assertEquals(listOf("net.http", "logic.if"), r.map { it.id })
+        val r = PickerLogic.resolve(listOf("net.http", "gone.id", "x.hidden", "flow.if", "net.http"), offer)
+        assertEquals(listOf("net.http", "flow.if"), r.map { it.id })
     }
 
     @Test fun breadcrumb() {

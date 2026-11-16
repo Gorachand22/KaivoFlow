@@ -15,7 +15,7 @@ import kotlinx.collections.immutable.persistentListOf
 
 class SwitchNode : StepExecutor {
     override val spec = NodeSpec(
-        id = "logic.switch",
+        id = "flow.switch",
         title = "Switch",
         category = StepCategory.Logic,
         subtitle = "Route items into up to four branches by value",

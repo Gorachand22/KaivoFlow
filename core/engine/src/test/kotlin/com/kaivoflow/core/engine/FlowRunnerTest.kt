@@ -51,7 +51,7 @@ class FlowRunnerTest {
 
     @Test
     fun `linear flow passes items through and reports success`() = runBlocking {
-        val flow = flowOf(step("t", "trigger.manual"), step("a", "test.set", params = mapOf("field" to "ok", "value" to true), y = 10f), streams = listOf(s("t", "a")))
+        val flow = flowOf(step("t", "spark.manual"), step("a", "test.set", params = mapOf("field" to "ok", "value" to true), y = 10f), streams = listOf(s("t", "a")))
         val record = runner().run(flow, RunTrigger(items = listOf(item("id" to 1)).toImmutableList()))
         assertEquals(RunStatus.Succeeded, record.status)
         assertEquals(2, record.stepRuns.size)
@@ -71,7 +71,7 @@ class FlowRunnerTest {
         // Override "test.pass" with the counting version.
         val reg = NodeRegistry(listOf(ManualTriggerExecutor(), PassExecutor(), countingPass, SetExecutor(), IfExecutor()))
         val flow = flowOf(
-            step("t", "trigger.manual"),
+            step("t", "spark.manual"),
             step("if", "test.if", params = mapOf("field" to "flag"), y = 10f),
             step("yes", "test.pass", y = 20f),
             step("no", "test.pass", y = 20f),
@@ -88,7 +88,7 @@ class FlowRunnerTest {
     @Test
     fun `failing step stops the run and downstream is skipped`() = runBlocking {
         val flow = flowOf(
-            step("t", "trigger.manual"),
+            step("t", "spark.manual"),
             step("bad", "test.fail", y = 10f),
             step("after", "test.pass", y = 20f),
             streams = listOf(s("t", "bad"), s("bad", "after")),
@@ -103,7 +103,7 @@ class FlowRunnerTest {
     @Test
     fun `continue on error emits an error item and keeps flowing`() = runBlocking {
         val flow = flowOf(
-            step("t", "trigger.manual"),
+            step("t", "spark.manual"),
             step("bad", "test.fail", y = 10f).copy(onError = OnErrorPolicy.Continue),
             step("after", "test.set", params = mapOf("field" to "seen", "value" to "yes"), y = 20f),
             streams = listOf(s("t", "bad"), s("bad", "after")),
@@ -121,7 +121,7 @@ class FlowRunnerTest {
         val flaky = FlakyExecutor(failuresBeforeSuccess = 2)
         val reg = NodeRegistry(listOf(ManualTriggerExecutor(), flaky, PassExecutor()))
         val flow = flowOf(
-            step("t", "trigger.manual"),
+            step("t", "spark.manual"),
             step("f", "test.flaky", y = 10f).copy(
                 onError = OnErrorPolicy.Retry,
                 retry = RetryPolicy(enabled = true, maxAttempts = 3, initialDelayMs = 1),
@@ -138,7 +138,7 @@ class FlowRunnerTest {
     fun `without retry enabled a flaky step fails once`() = runBlocking {
         val flaky = FlakyExecutor(failuresBeforeSuccess = 1)
         val reg = NodeRegistry(listOf(ManualTriggerExecutor(), flaky, PassExecutor()))
-        val flow = flowOf(step("t", "trigger.manual"), step("f", "test.flaky", y = 10f), streams = listOf(s("t", "f")))
+        val flow = flowOf(step("t", "spark.manual"), step("f", "test.flaky", y = 10f), streams = listOf(s("t", "f")))
         val record = runner(reg).run(flow, RunTrigger(items = listOf(item()).toImmutableList()))
         assertEquals(RunStatus.Failed, record.status)
         assertEquals(1, flaky.calls.get())
@@ -148,7 +148,7 @@ class FlowRunnerTest {
     fun `frozen output is replayed instead of executing`() = runBlocking {
         val frozen = persistentListOf(FlowData(mapOf("pinned" to true)))
         val flow = flowOf(
-            step("t", "trigger.manual"),
+            step("t", "spark.manual"),
             step("f", "test.fail", y = 10f).copy(frozenOutput = frozen),
             streams = listOf(s("t", "f")),
         )
@@ -161,7 +161,7 @@ class FlowRunnerTest {
     fun `ignoreFrozen re-executes the step`() = runBlocking {
         val frozen = persistentListOf(FlowData(mapOf("pinned" to true)))
         val flow = flowOf(
-            step("t", "trigger.manual"),
+            step("t", "spark.manual"),
             step("f", "test.fail", y = 10f).copy(frozenOutput = frozen),
             streams = listOf(s("t", "f")),
         )
@@ -172,7 +172,7 @@ class FlowRunnerTest {
     @Test
     fun `disabled step passes items straight through`() = runBlocking {
         val flow = flowOf(
-            step("t", "trigger.manual"),
+            step("t", "spark.manual"),
             step("off", "test.pass", y = 10f, disabled = true),
             step("after", "test.pass", y = 20f),
             streams = listOf(s("t", "off"), s("off", "after")),
@@ -208,7 +208,7 @@ class FlowRunnerTest {
         }
         val reg = NodeRegistry(listOf(ManualTriggerExecutor(), PassExecutor(), latchExecutor))
         val flow = flowOf(
-            step("t", "trigger.manual"),
+            step("t", "spark.manual"),
             step("a", "test.slow", params = mapOf("ms" to 1), y = 10f),
             step("b", "test.slow", params = mapOf("ms" to 1), y = 10f),
             step("join", "test.pass", y = 20f),
@@ -222,7 +222,7 @@ class FlowRunnerTest {
     @Test
     fun `merge step concatenates items in stream order`() = runBlocking {
         val flow = flowOf(
-            step("t", "trigger.manual"),
+            step("t", "spark.manual"),
             step("a", "test.set", params = mapOf("field" to "from", "value" to "a"), y = 10f),
             step("b", "test.set", params = mapOf("field" to "from", "value" to "b"), y = 10f),
             step("join", "test.pass", y = 20f),
@@ -236,7 +236,7 @@ class FlowRunnerTest {
 
     @Test
     fun `cancelling the coroutine cancels the run`() = runBlocking {
-        val flow = flowOf(step("t", "trigger.manual"), step("slow", "test.slow", params = mapOf("ms" to 5_000), y = 10f), streams = listOf(s("t", "slow")))
+        val flow = flowOf(step("t", "spark.manual"), step("slow", "test.slow", params = mapOf("ms" to 5_000), y = 10f), streams = listOf(s("t", "slow")))
         val job = async { runner().run(flow, RunTrigger(items = listOf(item()).toImmutableList())) }
         delay(150)
         job.cancel()
@@ -249,7 +249,7 @@ class FlowRunnerTest {
     @Test
     fun `run timeout stops the flow`() = runBlocking {
         val flow = flowOf(
-            step("t", "trigger.manual"),
+            step("t", "spark.manual"),
             step("slow", "test.slow", params = mapOf("ms" to 5_000), y = 10f),
             streams = listOf(s("t", "slow")),
             settings = FlowSettings(executionTimeoutMs = 200),
@@ -264,7 +264,7 @@ class FlowRunnerTest {
     @Test
     fun `step timeout is reported against the step`() = runBlocking {
         val flow = flowOf(
-            step("t", "trigger.manual"),
+            step("t", "spark.manual"),
             step("slow", "test.slow", params = mapOf("ms" to 2_000), y = 10f).copy(timeoutMs = 100),
             streams = listOf(s("t", "slow")),
         )
@@ -276,7 +276,7 @@ class FlowRunnerTest {
     @Test
     fun `error items are routed to the error step`() = runBlocking {
         val flow = flowOf(
-            step("t", "trigger.manual"),
+            step("t", "spark.manual"),
             step("bad", "test.fail", y = 10f),
             step("handler", "test.set", params = mapOf("field" to "handled", "value" to true), y = 0f),
             streams = listOf(s("t", "bad")),
@@ -292,7 +292,7 @@ class FlowRunnerTest {
     @Test
     fun `events are emitted in a coherent order`() = runBlocking {
         val events = mutableListOf<RunEvent>()
-        val flow = flowOf(step("t", "trigger.manual"), step("a", "test.pass", y = 10f), streams = listOf(s("t", "a")))
+        val flow = flowOf(step("t", "spark.manual"), step("a", "test.pass", y = 10f), streams = listOf(s("t", "a")))
         runner().run(flow, RunTrigger(items = listOf(item()).toImmutableList()), onEvent = { events += it })
 
         assertTrue(events.first() is RunEvent.RunStarted)
@@ -305,14 +305,14 @@ class FlowRunnerTest {
     @Test
     fun `item limit truncates input`() = runBlocking {
         val items = (1..50).map { item("n" to it) }
-        val flow = flowOf(step("t", "trigger.manual"), step("a", "test.pass", y = 10f), streams = listOf(s("t", "a")))
+        val flow = flowOf(step("t", "spark.manual"), step("a", "test.pass", y = 10f), streams = listOf(s("t", "a")))
         val record = runner().run(flow, RunTrigger(items = items.toImmutableList()), RunOptions(itemLimit = 5))
         assertEquals(5, record.stepRuns.first { it.stepId == "a" }.itemsIn)
     }
 
     @Test
     fun `thousand step flow completes`() = runBlocking {
-        val steps = mutableListOf(step("t", "trigger.manual", y = 0f))
+        val steps = mutableListOf(step("t", "spark.manual", y = 0f))
         val streams = mutableListOf<StreamEdge>()
         var previous = "t"
         for (i in 1..1_000) {
@@ -332,7 +332,7 @@ class FlowRunnerTest {
     @Test
     fun `testStep runs only the requested step`() = runBlocking {
         val flow = flowOf(
-            step("t", "trigger.manual"),
+            step("t", "spark.manual"),
             step("a", "test.set", params = mapOf("field" to "x", "value" to 1), y = 10f),
             streams = listOf(s("t", "a")),
         )

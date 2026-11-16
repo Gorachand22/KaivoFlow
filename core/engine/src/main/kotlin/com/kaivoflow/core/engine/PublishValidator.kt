@@ -355,7 +355,7 @@ class PublishValidator(private val structure: FlowValidator) {
                 )
             }
         }
-        flow.steps.filter { !it.disabled && it.type in FOREGROUND_ONLY }.forEach {
+        flow.steps.filter { !it.disabled && (it.type in FOREGROUND_ONLY || (it.type == "device.clipboard" && it.paramString("operation") == "read")) }.forEach {
             out += warning(
                 "foreground_only_step",
                 "\"${it.name}\" needs the app on screen and may fail when a Spark starts the Flow in the background.",
@@ -418,7 +418,7 @@ class PublishValidator(private val structure: FlowValidator) {
         const val MAX_GEOFENCE_RADIUS_M = 100_000.0
         const val MIN_RELIABLE_GEOFENCE_RADIUS_M = 100.0
         const val SMS_SEND = "device.sms"
-        const val HTTP = "saas.http"
+        const val HTTP = "net.http"
 
         private val FREQUENCIES = setOf("minutes", "hourly", "daily", "weekly", "monthly")
         private val TIME_OF_DAY = Regex("^([01]?[0-9]|2[0-3]):[0-5][0-9]$")

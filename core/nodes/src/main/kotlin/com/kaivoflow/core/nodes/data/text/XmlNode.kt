@@ -18,7 +18,7 @@ import kotlinx.collections.immutable.persistentListOf
 /** Convert between a compact JSON-ish representation and XML. */
 class XmlNode : StepExecutor {
     override val spec = NodeSpec(
-        id = "transform.xml",
+        id = "data.xml",
         title = "XML",
         category = StepCategory.Transform,
         subtitle = "Turn XML into fields, or fields into XML",

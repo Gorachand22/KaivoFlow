@@ -15,7 +15,7 @@ import kotlinx.collections.immutable.persistentListOf
 /** A deliberately transparent pass-through Step for notes, branching and debugging. */
 class NoopNode : StepExecutor {
     override val spec = NodeSpec(
-        id = "logic.noop",
+        id = "flow.noop",
         title = "Pass through",
         category = StepCategory.Logic,
         subtitle = "Leave items untouched, optionally add a note",

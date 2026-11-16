@@ -141,8 +141,8 @@ fun StepPickerSheet(
     val searchTops = remember(searchPool) { PickerLogic.visibleTops(searchPool) }
     val searchCounts = remember(searchPool) { PickerLogic.counts(searchPool) }
     val homeTops = remember(steps) { PickerLogic.visibleTops(steps) }
-    val recentSpecs = remember(recents, steps) { PickerLogic.resolve(recents, steps) }
-    val favouriteSpecs = remember(favourites, steps) { PickerLogic.resolve(favourites, steps) }
+    val recentSpecs = remember(recents, steps) { PickerLogic.resolve(recents, steps, com.kaivoflow.core.nodes.CatalogAliases.map) }
+    val favouriteSpecs = remember(favourites, steps) { PickerLogic.resolve(favourites, steps, com.kaivoflow.core.nodes.CatalogAliases.map) }
     val favouriteIds = remember(favourites) { favourites.toSet() }
 
     // Search is debounced about 120 ms; blank clears at once.
@@ -312,7 +312,7 @@ fun StepPickerSheet(
                                 CategoryPageContent(
                                     page = page,
                                     favouriteIds = favouriteIds,
-                                    highlightId = if (sparksOnly) "trigger.manual" else null,
+                                    highlightId = if (sparksOnly) "spark.manual" else null,
                                     gestures = gestures,
                                     onPick = pick,
                                     onToggleFavourite = toggleFavourite,

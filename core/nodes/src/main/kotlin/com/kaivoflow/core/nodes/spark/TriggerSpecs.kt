@@ -9,18 +9,18 @@ package com.kaivoflow.core.nodes
  * through [TriggerSpecs] is what stops "the trigger is configured but never fires" bugs.
  */
 object TriggerSpecs {
-    const val MANUAL = "trigger.manual"
-    const val SCHEDULE = "trigger.schedule"
-    const val WEBHOOK = "trigger.webhook"
-    const val NOTIFICATION = "trigger.notification"
-    const val SMS = "trigger.sms"
-    const val SHARE = "trigger.share"
-    const val BATTERY_LOW = "trigger.battery"
-    const val GEOFENCE = "trigger.geofence"
-    const val BLUETOOTH = "trigger.bluetooth"
-    const val WIFI = "trigger.wifi"
-    const val HEADSET = "trigger.headset"
-    const val BOOT = "trigger.boot"
+    const val MANUAL = "spark.manual"
+    const val SCHEDULE = "spark.schedule"
+    const val WEBHOOK = "spark.webhook"
+    const val NOTIFICATION = "spark.notification"
+    const val SMS = "spark.sms"
+    const val SHARE = "spark.share"
+    const val BATTERY_LOW = "spark.battery"
+    const val GEOFENCE = "spark.geofence"
+    const val BLUETOOTH = "spark.bluetooth"
+    const val WIFI = "spark.wifi"
+    const val HEADSET = "spark.headset"
+    const val BOOT = "spark.boot"
 
     val all = listOf(
         MANUAL, SCHEDULE, WEBHOOK, NOTIFICATION, SMS, SHARE, BATTERY_LOW,

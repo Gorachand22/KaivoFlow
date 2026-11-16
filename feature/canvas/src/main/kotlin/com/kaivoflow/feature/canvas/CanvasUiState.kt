@@ -157,34 +157,32 @@ object StepSummaries {
         if (spec == null) return "Unknown Step"
         fun param(key: String): String = params[key]?.toString().orEmpty()
         return when (spec.id) {
-            "saas.http" -> {
+            "net.http" -> {
                 val method = param("method").ifBlank { "GET" }
                 val host = param("url").removePrefix("https://").removePrefix("http://").substringBefore('/')
                 if (host.isBlank()) "Choose a URL" else "$method • $host"
             }
-            "saas.telegram" -> param("chatId").ifBlank { "Choose a chat" }
-            "saas.sheets" -> param("range").ifBlank { "Pick a range" }
-            "saas.notion" -> param("databaseId").ifBlank { "Pick a database" }
+            "app.telegram" -> param("chatId").ifBlank { "Choose a chat" }
+            "app.google_sheets" -> param("range").ifBlank { "Pick a range" }
+            "app.notion" -> param("databaseId").ifBlank { "Pick a database" }
             "ai.chat", "ai.extract", "ai.classify" -> param("model").ifBlank { "Choose a model" }
-            "trigger.schedule" -> when (param("frequency")) {
+            "spark.schedule" -> when (param("frequency")) {
                 "minutes" -> "Every ${param("interval").ifBlank { "15" }} minutes"
                 "hourly" -> "Every hour"
                 "weekly" -> "Weekly at ${param("time").ifBlank { "08:00" }}"
                 "monthly" -> "Monthly at ${param("time").ifBlank { "08:00" }}"
                 else -> "Daily at ${param("time").ifBlank { "08:00" }}"
             }
-            "trigger.notification" -> param("textContains").ifBlank { "Any notification" }
-            "trigger.webhook" -> "/hook/${param("path").ifBlank { "my-flow" }}"
-            "transform.template" -> param("template").take(40).ifBlank { "Write some text" }
-            "transform.set" -> "${(params["fields"] as? Map<*, *>)?.size ?: 0} fields"
-            "transform.code" -> "JavaScript"
-            "logic.if" -> "Branches into 2"
-            "logic.switch" -> "Branches into 5"
-            "logic.loop" -> "${param("batchSize").ifBlank { "1" }} at a time"
-            "logic.wait" -> "Wait ${param("seconds").ifBlank { "1" }}s"
+            "spark.notification" -> param("textContains").ifBlank { "Any notification" }
+            "spark.webhook" -> "/hook/${param("path").ifBlank { "my-flow" }}"
+            "data.set" -> "${((params["fields"] as? Map<*, *>)?.size ?: 0) + ((params["assignments"] as? List<*>)?.size ?: 0)} fields"
+            "code.javascript" -> "JavaScript"
+            "flow.if" -> "Branches into 2"
+            "flow.switch" -> "Branches into 5"
+            "flow.loop" -> "${param("batchSize").ifBlank { "1" }} at a time"
+            "flow.wait" -> "Wait ${param("seconds").ifBlank { "1" }}s"
             "device.notify" -> param("title").ifBlank { "Notification" }
             "device.file" -> param("fileName").ifBlank { "state.json" }
-            "saas.weather" -> param("city").ifBlank { "Bhubaneswar" }
             else -> spec.subtitle
         }
     }

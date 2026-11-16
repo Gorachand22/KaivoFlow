@@ -16,7 +16,7 @@ import kotlinx.collections.immutable.persistentListOf
 
 class GoogleSheetsNode : StepExecutor {
     override val spec = NodeSpec(
-        id = "saas.sheets",
+        id = "app.google_sheets",
         title = "Google Sheets",
         category = StepCategory.Saas,
         subtitle = "Append rows or read a range",

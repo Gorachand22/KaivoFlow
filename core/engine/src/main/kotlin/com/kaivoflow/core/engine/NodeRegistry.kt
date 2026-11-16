@@ -51,6 +51,15 @@ class NodeRegistry(catalog: List<StepExecutor>) {
         return score
     }
 
+    /** A param with a showWhen rule is only required while it is visible (any listed sibling matches its stored or default value). */
+    private fun isShown(param: com.kaivoflow.core.model.ParamSpec, spec: NodeSpec, step: StepNode): Boolean {
+        if (param.showWhen.isEmpty()) return true
+        return param.showWhen.any { (key, allowed) ->
+            val effective = step.params[key] ?: spec.params.firstOrNull { it.key == key }?.default
+            allowed.any { it == effective || it?.toString() == effective?.toString() }
+        }
+    }
+
     /** Validator entry point: spec-level plus executor-level checks. */
     fun validate(step: StepNode): List<ValidationIssue> {
         val executor = byType[step.type]
@@ -63,7 +72,7 @@ class NodeRegistry(catalog: List<StepExecutor>) {
             )
         val spec = executor.spec
         val issues = mutableListOf<ValidationIssue>()
-        spec.params.filter { it.required }.forEach { param ->
+        spec.params.filter { it.required && isShown(it, spec, step) }.forEach { param ->
             val value = step.params[param.key]
             if (Values.isBlank(value)) {
                 issues += validationError(

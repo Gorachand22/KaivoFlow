@@ -15,7 +15,7 @@ import kotlinx.collections.immutable.persistentListOf
 
 class SlackNode : StepExecutor {
     override val spec = NodeSpec(
-        id = "saas.slack",
+        id = "app.slack",
         title = "Send to Slack",
         category = StepCategory.Saas,
         subtitle = "Post to a channel with an incoming webhook",

@@ -15,7 +15,7 @@ import kotlinx.collections.immutable.persistentListOf
 
 class DiscordNode : StepExecutor {
     override val spec = NodeSpec(
-        id = "saas.discord",
+        id = "app.discord",
         title = "Send to Discord",
         category = StepCategory.Saas,
         subtitle = "Post to a channel webhook",

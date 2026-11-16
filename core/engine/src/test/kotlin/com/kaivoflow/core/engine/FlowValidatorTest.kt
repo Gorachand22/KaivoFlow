@@ -42,21 +42,21 @@ class FlowValidatorTest {
     @Test
     fun `valid linear flow passes`() {
         val report = validator.validate(
-            flow(step("t", "trigger.manual", y = 0f), step("a", "test.pass", y = 100f), streams = listOf(stream("t", "a")))
+            flow(step("t", "spark.manual", y = 0f), step("a", "test.pass", y = 100f), streams = listOf(stream("t", "a")))
         )
         assertEquals(emptyList<ValidationIssue>(), report.blocking)
     }
 
     @Test
     fun `unconnected step is flagged`() {
-        val report = validator.validate(flow(step("t", "trigger.manual"), step("a", "test.pass", y = 100f)))
+        val report = validator.validate(flow(step("t", "spark.manual"), step("a", "test.pass", y = 100f)))
         assertTrue(report.issues.any { it.code == "unconnected_step" && it.stepId == "a" })
     }
 
     @Test
     fun `dangling stream is flagged`() {
         val report = validator.validate(
-            flow(step("t", "trigger.manual"), streams = listOf(stream("t", "ghost")))
+            flow(step("t", "spark.manual"), streams = listOf(stream("t", "ghost")))
         )
         assertTrue(report.issues.any { it.code == "dangling_stream" })
     }
@@ -65,20 +65,20 @@ class FlowValidatorTest {
     fun `cycle is detected and reported once`() {
         val report = validator.validate(
             flow(
-                step("t", "trigger.manual"),
+                step("t", "spark.manual"),
                 step("a", "test.pass", y = 100f),
                 step("b", "test.pass", y = 200f),
                 streams = listOf(stream("t", "a"), stream("a", "b"), stream("b", "a")),
             )
         )
         assertTrue(report.issues.any { it.code == "cycle" })
-        assertTrue(validator.detectCycle(flow(step("t", "trigger.manual"), streams = emptyList())) == null)
+        assertTrue(validator.detectCycle(flow(step("t", "spark.manual"), streams = emptyList())) == null)
     }
 
     @Test
     fun `missing required param is flagged`() {
         val report = validator.validate(
-            flow(step("t", "trigger.manual"), step("s", "test.set", y = 50f), streams = listOf(stream("t", "s")))
+            flow(step("t", "spark.manual"), step("s", "test.set", y = 50f), streams = listOf(stream("t", "s")))
         )
         assertTrue(report.issues.any { it.code == "missing_param" && it.stepId == "s" })
     }
@@ -86,7 +86,7 @@ class FlowValidatorTest {
     @Test
     fun `unknown step type is flagged not crashed`() {
         val report = validator.validate(
-            flow(step("t", "trigger.manual"), step("x", "does.not.exist", y = 60f), streams = listOf(stream("t", "x")))
+            flow(step("t", "spark.manual"), step("x", "does.not.exist", y = 60f), streams = listOf(stream("t", "x")))
         )
         assertTrue(report.issues.any { it.code == "unknown_step_type" })
     }
@@ -95,7 +95,7 @@ class FlowValidatorTest {
     fun `port out of range is flagged`() {
         val report = validator.validate(
             flow(
-                step("t", "trigger.manual"),
+                step("t", "spark.manual"),
                 step("p", "test.pass", y = 50f),
                 streams = listOf(stream("t", "p"), stream("p", "t", port = 3)),
             )
@@ -107,7 +107,7 @@ class FlowValidatorTest {
     fun `unreachable branch is flagged`() {
         val report = validator.validate(
             flow(
-                step("t", "trigger.manual"),
+                step("t", "spark.manual"),
                 step("a", "test.pass", y = 100f),
                 step("orphan", "test.pass", y = 200f),
                 step("orphanChild", "test.pass", y = 300f),
@@ -124,7 +124,7 @@ class FlowValidatorTest {
         val compiler = FlowCompiler(validator)
         val compiled = compiler.compile(
             flow(
-                step("t", "trigger.manual", y = 0f),
+                step("t", "spark.manual", y = 0f),
                 step("c", "test.pass", y = 200f),
                 step("b", "test.pass", y = 100f),
                 streams = listOf(stream("t", "b"), stream("b", "c")),
@@ -138,7 +138,7 @@ class FlowValidatorTest {
         val f = Flow(
             id = "f",
             name = "n",
-            steps = persistentListOf(step("t", "trigger.manual"), step("a", "test.pass", y = 50f)),
+            steps = persistentListOf(step("t", "spark.manual"), step("a", "test.pass", y = 50f)),
             streams = persistentListOf(stream("t", "a")),
             settings = com.kaivoflow.core.model.FlowSettings(errorStepId = "t"),
         )

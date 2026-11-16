@@ -77,13 +77,17 @@ class IntegrationFlowTest {
             id = "morning",
             name = "Morning digest",
             steps = persistentListOf(
-                step("t", "trigger.schedule", "Every morning", 0f),
-                step("w", "saas.weather", "Weather", 100f, mapOf("city" to "Bhubaneswar")),
+                step("t", "spark.schedule", "Every morning", 0f),
+                step("w", "net.http", "Weather", 100f, mapOf("url" to "https://api.open-meteo.com/v1/forecast")),
                 step(
-                    "txt", "transform.template", "Write the digest", 200f,
+                    "txt", "data.set", "Write the digest", 200f,
                     mapOf(
-                        "template" to "{{ \$json.city }}: {{ \$json.condition }}, {{ \$json.temperature }}°C (low {{ \$json.min }} / high {{ \$json.max }})",
-                        "outputField" to "digest",
+                        "assignments" to listOf(
+                            mapOf(
+                                "name" to "digest", "type" to "any",
+                                "value" to "{{ \$json.current.temperature_2m }}°C, humidity {{ \$json.current.relative_humidity_2m }}%",
+                            ),
+                        ),
                     ),
                 ),
                 step(
@@ -112,7 +116,7 @@ class IntegrationFlowTest {
         assertEquals("Good morning", devices.notifications[0].first)
         assertTrue(
             "digest should contain the weather: ${devices.notifications[0].second}",
-            devices.notifications[0].second.contains("Bhubaneswar") && devices.notifications[0].second.contains("Overcast"),
+            devices.notifications[0].second.contains("29.5"),
         )
         // The Golden Current animation is driven by these events.
         assertTrue(events.count { it is RunEvent.StepFinished } == 4)
@@ -129,7 +133,7 @@ class IntegrationFlowTest {
             id = "ai-error",
             name = "AI with a safety net",
             steps = persistentListOf(
-                step("t", "trigger.manual", "Start", 0f),
+                step("t", "spark.manual", "Start", 0f),
                 step(
                     "ai", "ai.chat", "Ask AI", 100f,
                     mapOf("credential" to "cred-1", "model" to "gpt-4o-mini", "prompt" to "hi"),
@@ -161,8 +165,8 @@ class IntegrationFlowTest {
             id = "frozen",
             name = "Frozen demo",
             steps = persistentListOf(
-                step("t", "trigger.manual", "Start", 0f),
-                step("w", "saas.weather", "Weather", 100f, mapOf("city" to "Nowhere"), frozen = pinned),
+                step("t", "spark.manual", "Start", 0f),
+                step("w", "net.http", "Weather", 100f, mapOf("url" to "https://api.open-meteo.com/v1/forecast"), frozen = pinned),
                 step("n", "device.notify", "Tell me", 200f, mapOf("title" to "Weather", "body" to "{{ \$json.city }}")),
             ),
             streams = persistentListOf(StreamEdge("s1", "t", "w"), StreamEdge("s2", "w", "n")),
@@ -185,8 +189,8 @@ class IntegrationFlowTest {
             id = "single",
             name = "Single",
             steps = persistentListOf(
-                step("t", "trigger.manual", "Start", 0f),
-                step("w", "saas.weather", "Weather", 100f, mapOf("city" to "Bhubaneswar")),
+                step("t", "spark.manual", "Start", 0f),
+                step("w", "net.http", "Weather", 100f, mapOf("url" to "https://api.open-meteo.com/v1/forecast")),
                 step("n", "device.notify", "Tell me", 200f, mapOf("title" to "x", "body" to "y")),
             ),
             streams = persistentListOf(StreamEdge("s1", "t", "w"), StreamEdge("s2", "w", "n")),

@@ -11,13 +11,13 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class FlowStructureBundleTest {
-    private val known = setOf("trigger.manual", "saas.http")
+    private val known = setOf("spark.manual", "net.http")
     private fun sample() = Flow(
         id = "original-flow", name = "Test flow", vars = persistentMapOf("token" to "VAR_SECRET"),
         tags = persistentListOf("PRIVATE_TAG"), settings = FlowSettings(errorStepId = "action"),
         steps = persistentListOf(
-            StepNode("start", "trigger.manual", "Start", params = persistentMapOf("secret" to "SECRET_PARAM")),
-            StepNode("action", "saas.http", "Call API", params = persistentMapOf("headers" to mapOf("Authorization" to "Bearer SECRET_HEADER"), "url" to "https://SECRET_URL"),
+            StepNode("start", "spark.manual", "Start", params = persistentMapOf("secret" to "SECRET_PARAM")),
+            StepNode("action", "net.http", "Call API", params = persistentMapOf("headers" to mapOf("Authorization" to "Bearer SECRET_HEADER"), "url" to "https://SECRET_URL"),
                 notes = "SECRET_NOTE", frozenOutput = persistentListOf(FlowData(mapOf("payload" to "SECRET_OUTPUT"))), x = 5f, y = 9f),
         ), streams = persistentListOf(StreamEdge("edge", "start", "action", label = "ok")),
     )

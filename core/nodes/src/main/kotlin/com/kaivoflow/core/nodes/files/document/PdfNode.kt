@@ -19,7 +19,7 @@ import kotlinx.collections.immutable.persistentListOf
 /** Best-effort text extraction from an attachment's PDF text layer. */
 class PdfNode(private val gateway: DeviceGateway = NoopDeviceGateway) : StepExecutor {
     override val spec = NodeSpec(
-        id = "transform.pdf",
+        id = "files.pdf",
         title = "PDF text",
         category = StepCategory.Transform,
         subtitle = "Read the text layer, page count and file size from a PDF",

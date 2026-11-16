@@ -12,7 +12,6 @@ import com.kaivoflow.core.nodes.app.messaging.SlackNode
 import com.kaivoflow.core.nodes.app.messaging.TelegramNode
 import com.kaivoflow.core.nodes.code.script.CodeNode
 import com.kaivoflow.core.nodes.data.items.SetFieldsNode
-import com.kaivoflow.core.nodes.data.items.TemplateNode
 import com.kaivoflow.core.nodes.data.time.DateNode
 import com.kaivoflow.core.nodes.device.files_media.FileNode
 import com.kaivoflow.core.nodes.device.notifications.NotificationSendNode
@@ -95,7 +94,7 @@ class PerItemParamsTest {
     }
 
     @Test fun `set text template date and crypto resolve per item`() {
-        val text = run(TemplateNode(), mapOf("template" to "Dear {{ \$json.name }}", "outputField" to "text"), two)
+        val text = run(SetFieldsNode(), mapOf("assignments" to listOf(mapOf("name" to "text", "type" to "any", "value" to "Dear {{ \$json.name }}"))), two)
         assertEquals(listOf("Dear Asha", "Dear Ravi"), text.primary.map { it.json["text"] })
 
         val hash = run(CryptoNode(), mapOf("action" to "sha256", "input" to "{{ \$json.name }}", "outputField" to "h"), two)
@@ -114,7 +113,7 @@ class PerItemParamsTest {
     }
 
     @Test fun `expression results containing braces are not evaluated a second time`() {
-        val out = run(TemplateNode(), mapOf("template" to "{{ \$json.name }}", "outputField" to "t"), listOf(item("name" to "{{ \$vars.secret }}")), flow = Flow(id = "f", name = "F", vars = persistentMapOf("secret" to "LEAK")))
+        val out = run(SetFieldsNode(), mapOf("assignments" to listOf(mapOf("name" to "t", "type" to "any", "value" to "{{ \$json.name }}"))), listOf(item("name" to "{{ \$vars.secret }}")), flow = Flow(id = "f", name = "F", vars = persistentMapOf("secret" to "LEAK")))
         assertEquals("{{ \$vars.secret }}", out.primary.single().json["t"])
     }
 
@@ -146,9 +145,9 @@ class PerItemParamsTest {
         assertEquals(mapOf("greeting" to "hello"), scope["vars"])
         assertFalse(scope.containsKey("env"))
 
-        val out = run(TemplateNode(), mapOf("template" to "{{ \$vars.greeting }}", "outputField" to "t"), listOf(item("a" to 1)), flow = flow)
+        val out = run(SetFieldsNode(), mapOf("assignments" to listOf(mapOf("name" to "t", "type" to "any", "value" to "{{ \$vars.greeting }}"))), listOf(item("a" to 1)), flow = flow)
         assertEquals("hello", out.primary.single().json["t"])
-        val env = run(TemplateNode(), mapOf("template" to "{{ \$env.PATH }}", "outputField" to "t"), listOf(item("a" to 1)), flow = flow)
+        val env = run(SetFieldsNode(), mapOf("assignments" to listOf(mapOf("name" to "t", "type" to "any", "value" to "{{ \$env.PATH }}"))), listOf(item("a" to 1)), flow = flow)
         assertNull(env.primary.single().json["t"])
     }
 

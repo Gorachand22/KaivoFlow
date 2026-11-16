@@ -20,7 +20,7 @@ import kotlinx.collections.immutable.persistentListOf
 /** Turn one item into many: split an array field, split text, or chunk the whole list. */
 class SplitNode : StepExecutor {
     override val spec = NodeSpec(
-        id = "transform.split",
+        id = "data.split_out",
         title = "Split items",
         category = StepCategory.Transform,
         subtitle = "Turn a list or a line of text into separate items",

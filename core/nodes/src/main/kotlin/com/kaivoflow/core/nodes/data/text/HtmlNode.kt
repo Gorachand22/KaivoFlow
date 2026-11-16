@@ -18,7 +18,7 @@ import kotlinx.collections.immutable.persistentListOf
 /** Extract readable text, links or attributes from HTML without a browser. */
 class HtmlNode : StepExecutor {
     override val spec = NodeSpec(
-        id = "transform.html",
+        id = "data.html",
         title = "HTML tools",
         category = StepCategory.Transform,
         subtitle = "Pull text, links and images out of a web page",

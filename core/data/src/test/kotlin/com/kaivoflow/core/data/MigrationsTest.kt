@@ -10,7 +10,7 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class MigrationsTest {
-    private val current = 4
+    private val current = 5
 
     @Test fun migrationsFormAContiguousChainFromOneToCurrent() {
         val sorted = ALL_MIGRATIONS.sortedBy { it.startVersion }
@@ -25,11 +25,24 @@ class MigrationsTest {
         assertTrue(ALL_MIGRATIONS.isNotEmpty())
     }
 
-    @Test fun threeToFourIsRegisteredAndIsTheLastStep() {
+    @Test fun threeToFourIsRegistered() {
         assertEquals(3, MIGRATION_3_4.startVersion)
         assertEquals(4, MIGRATION_3_4.endVersion)
         assertTrue(ALL_MIGRATIONS.contains(MIGRATION_3_4))
-        assertEquals(MIGRATION_3_4, ALL_MIGRATIONS.last())
+    }
+
+    @Test fun fourToFiveIsRegisteredAndIsTheLastStep() {
+        assertEquals(4, MIGRATION_4_5.startVersion)
+        assertEquals(5, MIGRATION_4_5.endVersion)
+        assertTrue(ALL_MIGRATIONS.contains(MIGRATION_4_5))
+        assertEquals(MIGRATION_4_5, ALL_MIGRATIONS.last())
+    }
+
+    @Test fun stepDataEntitiesHaveNoSqlDefaultsSoTheMigrationDeclaresNone() {
+        // Room compares defaults when validating: the entities declare none, and MIGRATION_4_5 adds none.
+        val e = StepExecutionEntity("r", "s", 0, "f", "Succeeded", 1, null, 1, null, pinned = false, manual = true, dataDropped = false)
+        assertEquals("r", e.runId)
+        assertFalse(e.pinned)
     }
 
     @Test fun entityDefaultsMatchTheSqlDefaultsAddedByTheMigration() {

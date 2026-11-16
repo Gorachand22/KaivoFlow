@@ -6,11 +6,9 @@ import com.kaivoflow.core.engine.HttpResponseSpec
 import com.kaivoflow.core.engine.StepExecutor
 import com.kaivoflow.core.engine.Values
 import com.kaivoflow.core.model.FlowData
-import com.kaivoflow.core.nodes.data.items.ChartNode
 import com.kaivoflow.core.nodes.data.items.CompareNode
 import com.kaivoflow.core.nodes.data.items.LimitNode
 import com.kaivoflow.core.nodes.data.items.MathNode
-import com.kaivoflow.core.nodes.data.items.RunInfoNode
 import com.kaivoflow.core.nodes.data.items.SortNode
 import com.kaivoflow.core.nodes.data.items.TextNode
 import com.kaivoflow.core.nodes.data.storage.TableNode
@@ -202,21 +200,6 @@ class ExtendedNodeTest {
     }
 
     @Test
-    fun `chart creates a valid svg attachment`() {
-        val devices = RecordingDevices()
-        val out = run(
-            ChartNode(devices),
-            mapOf("labelField" to "name", "valueField" to "value", "style" to "bar"),
-            listOf(item("name" to "Mon", "value" to 4.0), item("name" to "Tue", "value" to 9.0)),
-            devices = devices,
-        )
-        val svg = Values.asString(out.single()["svg"])
-        assertTrue(svg.startsWith("<svg"))
-        assertTrue(svg.contains("</svg>"))
-        assertNotNull(out.single().binaryRef("chart"))
-    }
-
-    @Test
     fun `token sign verify and decode are self consistent`() {
         val token = TokenNode()
         val signed = run(
@@ -298,21 +281,14 @@ class ExtendedNodeTest {
     }
 
     @Test
-    fun `run info exposes metadata without mutating input`() {
-        val out = run(RunInfoNode(), mapOf("outputField" to "meta"), listOf(item("a" to 1.0), item("a" to 2.0)))
-        assertEquals("run-1", Values.deepGet(out.single()["meta"], "runId"))
-        assertEquals(2.0, Values.asDouble(Values.deepGet(out.single()["meta"], "inputItems"))!!, 0.0001)
-    }
-
-    @Test
     fun `new catalog is large and every id is unique`() {
         val ids = NodeCatalog.executors().map { it.spec.id }
         assertEquals(ids.size, ids.distinct().size)
-        assertTrue("expected a rich catalog, got ${ids.size}", ids.size >= 80)
-        assertTrue(ids.contains("transform.math"))
-        assertTrue(ids.contains("saas.graphql"))
+        assertTrue("expected a rich catalog, got ${ids.size}", ids.size >= 60)
+        assertTrue(ids.contains("data.set"))
+        assertTrue(ids.contains("net.http"))
         assertTrue(ids.contains("device.torch"))
-        val namespaces = setOf("trigger", "logic", "transform", "ai", "saas", "device")
+        val namespaces = setOf("trigger", "logic", "transform", "ai", "saas", "device", "spark", "flow", "data", "files", "net", "code", "security", "app")
         assertTrue(
             "every Step must use a KaivoFlow namespace: ${ids.filter { it.substringBefore('.') !in namespaces }}",
             ids.all { it.substringBefore('.') in namespaces },

@@ -13,7 +13,7 @@ import kotlinx.coroutines.delay
 
 class WaitNode : StepExecutor {
     override val spec = NodeSpec(
-        id = "logic.wait",
+        id = "flow.wait",
         title = "Wait",
         category = StepCategory.Logic,
         subtitle = "Pause before continuing (respects rate limits)",

@@ -33,6 +33,8 @@ object DatabaseModule {
     @Provides fun sparkInboxDao(db: KaivoDatabase): SparkInboxDao = db.sparkInboxDao()
     @Provides fun scheduleDao(db: KaivoDatabase): ScheduleDao = db.scheduleDao()
     @Provides fun engineTelemetryDao(db: KaivoDatabase): EngineTelemetryDao = db.engineTelemetryDao()
+    @Provides fun stepDataDao(db: KaivoDatabase): StepDataDao = db.stepDataDao()
+    @Provides fun stepPinDao(db: KaivoDatabase): StepPinDao = db.stepPinDao()
 
     @Provides
     @Singleton
@@ -49,7 +51,17 @@ object RepositoryModule {
         RoomFlowRepository(dao, storageDir = context.filesDir)
 
     @Provides @Singleton
-    fun runRepository(dao: RunDao): RunRepository = RoomRunRepository(dao)
+    fun runRepository(dao: RunDao, stepData: StepDataDao): RunRepository = RoomRunRepository(dao, stepData)
+
+    @Provides @Singleton
+    fun stepDataStore(dao: StepDataDao): com.kaivoflow.core.engine.stepdata.StepDataStore = StepDataStoreImpl(RoomStepDataAccess(dao))
+
+    @Provides @Singleton
+    fun pinStore(
+        dao: StepPinDao,
+        store: com.kaivoflow.core.engine.stepdata.StepDataStore,
+    ): com.kaivoflow.core.engine.stepdata.PinStore =
+        com.kaivoflow.core.engine.stepdata.PinService(RoomPinPersistence(dao), store)
 
     @Provides @Singleton
     fun workflowGroupRepository(dao: WorkflowGroupDao): WorkflowGroupRepository = RoomWorkflowGroupRepository(dao)

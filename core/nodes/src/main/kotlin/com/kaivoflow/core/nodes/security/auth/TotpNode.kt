@@ -23,7 +23,7 @@ import javax.crypto.spec.SecretKeySpec
 /** Time-based one-time passwords from a base32 secret (RFC 6238 shape, HMAC only). */
 class TotpNode : StepExecutor {
     override val spec = NodeSpec(
-        id = "transform.totp",
+        id = "security.totp",
         title = "One-time code",
         category = StepCategory.Transform,
         subtitle = "Generate a time-based six-digit code",

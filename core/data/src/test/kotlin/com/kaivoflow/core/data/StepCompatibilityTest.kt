@@ -23,7 +23,7 @@ class StepCompatibilityTest {
         id = "f",
         name = "Compat",
         steps = persistentListOf(
-            StepNode("a", "trigger.manual", "Start"),
+            StepNode("a", "spark.manual", "Start"),
             StepNode("b", "future.shiny_thing", "From the future", params = persistentMapOf("k" to "v", "n" to 3.0), x = 5f, y = 6f),
             StepNode("c", "saas.tcp", "Old socket", params = persistentMapOf("host" to "h")),
         ),
@@ -45,7 +45,7 @@ class StepCompatibilityTest {
     fun `placeholders are reported for unknown ids but the Flow is not mutated`() {
         val loaded = JsonCodec.decodeFlow(JsonCodec.encodeFlow(flow()))!!
         val unavailable = CatalogAliases.normalizer.unavailable(loaded) { registry.spec(it) != null }
-        assertEquals(listOf("future.shiny_thing"), unavailable.map { it.step.type })
+        assertEquals(listOf("future.shiny_thing", "saas.tcp"), unavailable.map { it.step.type })
     }
 
     @Test
@@ -59,7 +59,7 @@ class StepCompatibilityTest {
         assertEquals(converted.legacyParams, back.legacyParams)
         assertEquals(converted.convertedFrom, back.convertedFrom)
 
-        val plain = JsonCodec.encodeFlow(Flow("f", "F", steps = persistentListOf(StepNode("p", "trigger.manual", "P"))))
+        val plain = JsonCodec.encodeFlow(Flow("f", "F", steps = persistentListOf(StepNode("p", "spark.manual", "P"))))
         assertFalse(plain.contains("legacyParams"))
         assertFalse(plain.contains("convertedFrom"))
     }

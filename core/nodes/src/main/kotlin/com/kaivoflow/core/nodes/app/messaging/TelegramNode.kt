@@ -22,7 +22,7 @@ import kotlinx.collections.immutable.persistentListOf
 
 class TelegramNode : StepExecutor {
     override val spec = NodeSpec(
-        id = "saas.telegram",
+        id = "app.telegram",
         title = "Send to Telegram",
         category = StepCategory.Saas,
         subtitle = "Post a message to a chat or channel",

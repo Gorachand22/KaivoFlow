@@ -74,6 +74,12 @@ class ScopeBuilder(
     private val stepNames: Map<String, String> = emptyMap(),
     private val stepPorts: Map<String, Map<Int, List<FlowData>>> = emptyMap(),
     private val inputRefs: List<ItemRef> = emptyList(),
+    /** Extra `$run` facts (all optional so existing callers keep working). */
+    private val flowId: String = "",
+    private val flowName: String = "",
+    private val stepId: String = "",
+    private val mode: String = "",
+    private val attempt: Int = 1,
 ) {
     private val fullByName: Map<String, List<Map<String, Any?>>> by lazy {
         stepOutputs.entries.associate { (key, items) ->
@@ -143,6 +149,12 @@ class ScopeBuilder(
                 "timestamp" to nowMillis,
                 "timezone" to timezone,
                 "step" to stepName,
+                "stepId" to stepId,
+                "flowId" to flowId,
+                "flowName" to flowName,
+                "mode" to mode,
+                "attempt" to attempt,
+                "inputItems" to input.size,
             ),
             "step" to step,
             "stepAll" to fullByName,

@@ -1,5 +1,7 @@
 package com.kaivoflow.core.data
 
+import com.kaivoflow.core.engine.stepdata.PinnedData
+import com.kaivoflow.core.engine.stepdata.StepDataPolicy
 import com.kaivoflow.core.model.Flow
 import kotlinx.collections.immutable.toImmutableList
 import kotlinx.collections.immutable.toImmutableMap
@@ -32,6 +34,9 @@ object NativeFlowBundle {
     const val FORMAT = "kaivoflow.flow"
     const val VERSION = 1
     const val MAX_BYTES = 4 * 1024 * 1024
+
+    /** A backup that carries pins may be larger: the pin cap of a Flow is 8 MB at most. */
+    const val MAX_BYTES_WITH_PINS = 16 * 1024 * 1024
     const val MAX_STEPS = 500
     const val MAX_STREAMS = 2000
     private const val MAX_DEPTH = 48
@@ -46,13 +51,25 @@ object NativeFlowBundle {
         /** Human-readable "Step → field" hints for credentials the user must re-enter. */
         val rebind: List<String>,
         val redactedCount: Int,
+        /**
+         * Pinned data of the backup, keyed by the NEW Step ids, already checked against the pin caps and the
+         * Flow's Steps. Empty for backups written before pins existed. The caller stores them with `PinStore.restore`.
+         */
+        val pins: Map<String, PinnedData> = emptyMap(),
+        /** Pins in the file that were left out (unknown Step, unreadable or over a cap). */
+        val droppedPins: Int = 0,
     )
 
     /**
      * @param secretKeysForType optional catalog lookup; when supplied, the exact `ParamType.Secret`
      * keys of a Step type are redacted in addition to the generic key hints.
      */
-    fun export(flow: Flow, secretKeysForType: (String) -> Set<String> = { emptySet() }): ByteArray {
+    fun export(
+        flow: Flow,
+        /** Pinned data by Step id; written as the optional `pins` field. Old readers ignore it. */
+        pins: Map<String, PinnedData> = emptyMap(),
+        secretKeysForType: (String) -> Set<String> = { emptySet() },
+    ): ByteArray {
         validateGraph(flow)
         val rebind = mutableListOf<Map<String, String>>()
         var redactedCount = 0
@@ -98,9 +115,14 @@ object NativeFlowBundle {
                 }
             })
             put("flow", Json.parseToJsonElement(JsonCodec.encodeFlow(safe)))
+            val stepIds = flow.steps.map { it.id }.toSet()
+            val exportable = pins.filterKeys { it in stepIds }
+            if (exportable.isNotEmpty()) {
+                put("pins", JsonObject(exportable.mapValues { (_, d) -> PinCodec.toBundleJson(redactPin(d) { redactedCount++ }) }))
+            }
         }.toString().toByteArray(StandardCharsets.UTF_8)
 
-        if (encoded.size > MAX_BYTES) throw InvalidBundle("This Flow is too large to back up.")
+        if (encoded.size > (if (pins.isEmpty()) MAX_BYTES else MAX_BYTES_WITH_PINS)) throw InvalidBundle("This Flow is too large to back up.")
         return encoded
     }
 
@@ -113,7 +135,7 @@ object NativeFlowBundle {
 
     /** Parse and prepare a fresh copy for review. Does not write anything. */
     fun preview(bytes: ByteArray, knownTypes: Set<String>): Preview {
-        if (bytes.isEmpty() || bytes.size > MAX_BYTES) throw InvalidBundle("The file is empty or exceeds the size limit.")
+        if (bytes.isEmpty() || bytes.size > MAX_BYTES_WITH_PINS) throw InvalidBundle("The file is empty or exceeds the size limit.")
         val text = decodeUtf8(bytes)
         checkDepth(text)
         val root = try {
@@ -127,6 +149,7 @@ object NativeFlowBundle {
         if ((root["version"] as? JsonPrimitive)?.content != VERSION.toString()) {
             throw InvalidBundle("This backup version is not supported.")
         }
+        if (bytes.size > MAX_BYTES && root["pins"] == null) throw InvalidBundle("The file is empty or exceeds the size limit.")
         val document = root["flow"] as? JsonObject ?: throw InvalidBundle("The Flow is missing.")
         val rawSteps = document["steps"] as? JsonArray ?: throw InvalidBundle("The Steps list is missing.")
         val rawStreams = document["streams"] as? JsonArray ?: throw InvalidBundle("The Streams list is missing.")
@@ -167,12 +190,16 @@ object NativeFlowBundle {
         val rawSecretKeys = refEntries.map { it.second }.toSet()
 
         val redactedCount = (root["redacted"] as? JsonPrimitive)?.content?.toIntOrNull() ?: refs.size
-        val copy = freshIds(decoded, rawSecretKeys)
+        val idMap = HashMap<String, String>()
+        val copy = freshIds(decoded, rawSecretKeys, idMap)
+        val (pins, droppedPins) = readPins(root["pins"], idMap)
         return Preview(
             flow = copy,
             unsupportedTypes = copy.steps.map { it.type }.filterNot { it in knownTypes }.distinct().sorted(),
             rebind = refs,
             redactedCount = redactedCount,
+            pins = pins,
+            droppedPins = droppedPins,
         )
     }
 
@@ -187,8 +214,40 @@ object NativeFlowBundle {
         throw InvalidBundle("The file is not valid UTF-8.")
     }
 
-    private fun freshIds(flow: Flow, secretKeys: Set<String>): Flow {
+    /** Secret-looking keys inside pinned items are blanked on export, like Step params. Binary never travels. */
+    private fun redactPin(d: PinnedData, onRedact: () -> Unit): PinnedData = d.copy(
+        ports = d.ports.map { port ->
+            port.map { item ->
+                @Suppress("UNCHECKED_CAST")
+                val json = redactNested(item.json) { onRedact() } as Map<String, Any?>
+                item.withoutBinary().copy(json = json)
+            }
+        },
+    )
+
+    /** Reads the optional `pins` field; anything unknown, unreadable or over the pin caps is dropped and counted. */
+    private fun readPins(element: kotlinx.serialization.json.JsonElement?, idMap: Map<String, String>): Pair<Map<String, PinnedData>, Int> {
+        val obj = element as? JsonObject ?: return emptyMap<String, PinnedData>() to 0
+        val policy = StepDataPolicy()
+        val out = LinkedHashMap<String, PinnedData>()
+        var dropped = 0
+        var total = 0L
+        for ((oldId, value) in obj) {
+            val newId = idMap[oldId]
+            val data = (value as? JsonObject)?.let { PinCodec.fromBundleJson(it) }
+            if (newId == null || data == null) { dropped++; continue }
+            val clean = data.copy(ports = data.ports.map { p -> p.map { it.withoutBinary() } })
+            val bytes = clean.ports.sumOf { p -> p.sumOf { policy.sizeOf(it) } }
+            if (policy.pinVerdict(bytes, total) != com.kaivoflow.core.engine.stepdata.PinVerdict.Ok) { dropped++; continue }
+            total += bytes
+            out[newId] = clean.copy(bytes = bytes)
+        }
+        return out to dropped
+    }
+
+    private fun freshIds(flow: Flow, secretKeys: Set<String>, idMap: MutableMap<String, String> = HashMap()): Flow {
         val stepIds = flow.steps.associate { it.id to UUID.randomUUID().toString() }
+        idMap.putAll(stepIds)
         val steps = flow.steps.map { step ->
             val params = LinkedHashMap<String, Any?>()
             step.params.forEach { (key, value) ->

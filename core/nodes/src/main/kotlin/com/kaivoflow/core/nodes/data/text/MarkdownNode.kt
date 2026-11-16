@@ -18,7 +18,7 @@ import kotlinx.collections.immutable.persistentListOf
 /** Markdown to HTML (and back to plain text) for messages, notes and notifications. */
 class MarkdownNode : StepExecutor {
     override val spec = NodeSpec(
-        id = "transform.markdown",
+        id = "data.markdown",
         title = "Markdown",
         category = StepCategory.Transform,
         subtitle = "Turn Markdown notes into HTML or plain text",
