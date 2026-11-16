@@ -1,6 +1,7 @@
 package com.kaivoflow.core.data
 
 import com.kaivoflow.core.engine.CredentialProvider
+import com.kaivoflow.core.engine.LifecycleSnapshot
 import com.kaivoflow.core.engine.OAuth2TokenManager
 import com.kaivoflow.core.engine.OAuth2TokenStore
 import com.kaivoflow.core.model.CredentialItem
@@ -100,7 +101,12 @@ class RoomFlowRepository(
                 lastRunStatus = existing?.lastRunStatus,
                 lastRunAt = existing?.lastRunAt,
                 groupId = stamped.groupId,
-            )
+            ).let { base ->
+                // The upsert replaces the whole row, so the lifecycle columns must be carried over, kept
+                // consistent with the Phase 1 isActive flag until the publish UI uses the state machine.
+                val current = existing?.lifecycleSnapshot() ?: LifecycleSnapshot()
+                base.withLifecycle(LifecycleLogic.syncWithLegacyActive(current, stamped.isActive, System.currentTimeMillis()))
+            }
         )
         // Sovereign file mirror in app internal storage
         runCatching {

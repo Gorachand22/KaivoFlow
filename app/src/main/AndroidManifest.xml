@@ -29,13 +29,12 @@
     <uses-permission android:name="android.permission.WAKE_LOCK" />
     <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
 
-    <!-- Scheduled Sparks. Declared up front, but only requested the moment a Schedule Spark needs it. -->
-    <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM" />
-    <uses-permission android:name="android.permission.USE_EXACT_ALARM" />
+    <!-- Exact-alarm permissions are declared per distribution flavour (src/sideload, src/play):
+         sideload holds USE_EXACT_ALARM and SCHEDULE_EXACT_ALARM, play holds only SCHEDULE_EXACT_ALARM.
+         See docs/specs/P2-always-on-engine.md section 3.12. -->
 
     <!-- Sensitive, optional Sparks. Both are runtime permissions: nothing is requested at first launch. -->
     <uses-permission android:name="android.permission.RECEIVE_SMS" />
-    <uses-permission android:name="android.permission.READ_SMS" />
     <uses-permission android:name="android.permission.SEND_SMS" />
 
     <!-- Reading notifications is a Settings grant, not a runtime one; the service below is the only user. -->
@@ -61,7 +60,7 @@
         android:supportsRtl="true"
         android:theme="@style/Theme.KaivoFlow"
         android:enableOnBackInvokedCallback="true"
-        tools:targetApi="36">
+        tools:targetApi="34">
 
         <activity
             android:name=".MainActivity"
@@ -103,11 +102,6 @@
                 <action android:name="android.provider.Telephony.SMS_RECEIVED" />
             </intent-filter>
         </receiver>
-
-        <service
-            android:name="com.kaivoflow.feature.permissions.SmsTriggerService"
-            android:exported="false"
-            android:foregroundServiceType="dataSync" />
 
         <receiver
             android:name="com.kaivoflow.core.work.BootReceiver"

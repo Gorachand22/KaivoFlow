@@ -28,6 +28,11 @@ object DatabaseModule {
     @Provides fun workflowGroupDao(db: KaivoDatabase): WorkflowGroupDao = db.workflowGroupDao()
     @Provides fun workflowVariableDao(db: KaivoDatabase): WorkflowVariableDao = db.workflowVariableDao()
     @Provides fun dataTableDao(db: KaivoDatabase): DataTableDao = db.dataTableDao()
+    @Provides fun flowLifecycleDao(db: KaivoDatabase): FlowLifecycleDao = db.flowLifecycleDao()
+    @Provides fun triggerRegistrationDao(db: KaivoDatabase): TriggerRegistrationDao = db.triggerRegistrationDao()
+    @Provides fun sparkInboxDao(db: KaivoDatabase): SparkInboxDao = db.sparkInboxDao()
+    @Provides fun scheduleDao(db: KaivoDatabase): ScheduleDao = db.scheduleDao()
+    @Provides fun engineTelemetryDao(db: KaivoDatabase): EngineTelemetryDao = db.engineTelemetryDao()
 
     @Provides
     @Singleton
@@ -54,6 +59,22 @@ object RepositoryModule {
 
     @Provides @Singleton
     fun dataTableRepository(dao: DataTableDao): DataTableRepository = RoomDataTableRepository(dao)
+
+    @Provides @Singleton
+    fun flowLifecycleRepository(dao: FlowLifecycleDao): FlowLifecycleRepository = RoomFlowLifecycleRepository(dao)
+
+    @Provides @Singleton
+    fun triggerRegistrationRepository(dao: TriggerRegistrationDao): TriggerRegistrationRepository =
+        RoomTriggerRegistrationRepository(dao)
+
+    @Provides @Singleton
+    fun sparkInboxRepository(dao: SparkInboxDao): SparkInboxRepository = RoomSparkInboxRepository(dao)
+
+    @Provides @Singleton
+    fun scheduleRepository(dao: ScheduleDao): ScheduleRepository = RoomScheduleRepository(dao)
+
+    @Provides @Singleton
+    fun engineTelemetryRepository(dao: EngineTelemetryDao): EngineTelemetryRepository = RoomEngineTelemetryRepository(dao)
 
     @Provides @Singleton
     fun oauth2TokenManager(http: HttpGateway, dao: CredentialDao, cryptoBox: CryptoBox): OAuth2TokenManager =

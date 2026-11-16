@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <!-- Play flavour: only SCHEDULE_EXACT_ALARM, which the user grants in Settings. USE_EXACT_ALARM
+         is reserved for alarm-clock and calendar apps (spec section 9). -->
+    <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM" />
+</manifest>

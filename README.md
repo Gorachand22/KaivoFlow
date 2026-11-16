@@ -64,13 +64,13 @@ The design principle is strict: decisions about *what happens* live in Android-f
 echo "sdk.dir=/path/to/android-sdk" > local.properties
 
 # 2. Compile debug APK
-gradle :app:assembleDebug
+gradle :app:assembleSideloadDebug   # or :app:assemblePlayDebug
 
 # 3. Run unit test suites
 gradle :core:nodes:test :core:engine:test :core:data:test
 
 # 4. Install onto connected Android device via ADB
-adb install -r app/build/outputs/apk/debug/app-debug.apk
+adb install -r app/build/outputs/apk/sideload/debug/app-sideload-debug.apk
 ```
 
 > **Verification status:** This cloud-authoring session ran static Kotlin/XML/diff checks only. Gradle compilation, JVM tests, APK assembly and physical-device verification are intentionally left to a local engineer with the Android SDK — see [docs/ROADMAP.md](docs/ROADMAP.md) for the gates and [docs/PROGRESS.md](docs/PROGRESS.md) for status.

@@ -1,5 +1,6 @@
 package com.kaivoflow.core.data
 
+import androidx.room.ColumnInfo
 import androidx.room.Dao
 import androidx.room.Database
 import androidx.room.Entity
@@ -16,7 +17,10 @@ import kotlinx.coroutines.flow.Flow as FlowStream
  * sorting. Steps and Streams are part of that document — they are only ever read as a whole Flow,
  * and a relational split would cost 3 joins for zero benefit on a phone.
  */
-@Entity(tableName = "flows", indices = [Index("updatedAt"), Index("isFavorite"), Index("groupId")])
+@Entity(
+    tableName = "flows",
+    indices = [Index("updatedAt"), Index("isFavorite"), Index("groupId"), Index("lifecycle")],
+)
 data class FlowEntity(
     @PrimaryKey val id: String,
     val name: String,
@@ -28,6 +32,20 @@ data class FlowEntity(
     val lastRunStatus: String? = null,
     val lastRunAt: Long? = null,
     val groupId: String? = null,
+    // Publish lifecycle (schema 4, spec section 4.5). Values are the stable `db` spellings of the
+    // enums in core:engine (LifecycleState, LifecycleReason). The defaults must equal the SQL defaults
+    // that MIGRATION_3_4 adds, or Room's schema check fails.
+    @ColumnInfo(defaultValue = "'DRAFT'") val lifecycle: String = "DRAFT",
+    val publishedRevision: Int? = null,
+    @ColumnInfo(defaultValue = "'NONE'") val lifecycleReason: String = "NONE",
+    @ColumnInfo(defaultValue = "0") val lifecycleSince: Long = 0L,
+    val pausedUntil: Long? = null,
+    val errorCode: String? = null,
+    val errorSince: Long? = null,
+    @ColumnInfo(defaultValue = "0") val retryCount: Int = 0,
+    val nextRetryAt: Long? = null,
+    /** Start of the current healthy stretch after an Error; drives the stable-period counter reset. */
+    val healthySince: Long? = null,
 )
 
 @Entity(tableName = "workflow_groups", indices = [Index("name")])
@@ -254,6 +272,11 @@ abstract class KaivoDatabase : RoomDatabase() {
     abstract fun workflowGroupDao(): WorkflowGroupDao
     abstract fun workflowVariableDao(): WorkflowVariableDao
     abstract fun dataTableDao(): DataTableDao
+    abstract fun flowLifecycleDao(): FlowLifecycleDao
+    abstract fun triggerRegistrationDao(): TriggerRegistrationDao
+    abstract fun sparkInboxDao(): SparkInboxDao
+    abstract fun scheduleDao(): ScheduleDao
+    abstract fun engineTelemetryDao(): EngineTelemetryDao
 
     companion object {
         const val NAME = "kaivoflow.db"

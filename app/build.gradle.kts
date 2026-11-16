@@ -20,6 +20,15 @@ android {
         vectorDrawables.useSupportLibrary = true
     }
 
+    // Distribution flavours (docs/specs/P2-always-on-engine.md 3.12 and 9). Build-time switch, not a runtime toggle.
+    // sideload: owner's APK, declares USE_EXACT_ALARM and SCHEDULE_EXACT_ALARM.
+    // play: store-bound build, declares only SCHEDULE_EXACT_ALARM (the user grants it).
+    flavorDimensions += "distribution"
+    productFlavors {
+        create("sideload") { dimension = "distribution" }
+        create("play") { dimension = "distribution" }
+    }
+
     buildTypes {
         release {
             isMinifyEnabled = true

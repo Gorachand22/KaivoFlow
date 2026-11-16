@@ -56,6 +56,125 @@ private fun SupportSQLiteDatabase.createDataTables() {
     execSQL("CREATE INDEX IF NOT EXISTS `index_data_table_rows_tableId` ON `data_table_rows` (`tableId`)")
 }
 
+/**
+ * Schema 4 (Always-On Engine, spec section 4.5). Every statement is idempotent. The CREATE statements
+ * must stay character-compatible with what Room generates for the entities in EngineEntities.kt,
+ * otherwise the post-migration schema validation throws on first open.
+ */
+private fun SupportSQLiteDatabase.createEngineTables() {
+    execSQL(
+        "CREATE TABLE IF NOT EXISTS `flow_versions` (`flowId` TEXT NOT NULL, `revision` INTEGER NOT NULL, " +
+            "`savedAt` INTEGER NOT NULL, `label` TEXT NOT NULL, `flowJson` TEXT NOT NULL, PRIMARY KEY(`flowId`, `revision`))",
+    )
+    execSQL(
+        "CREATE TABLE IF NOT EXISTS `trigger_registration` (`flowId` TEXT NOT NULL, `sparkId` TEXT NOT NULL, " +
+            "`kind` TEXT NOT NULL, `state` TEXT NOT NULL, `detail` TEXT, `since` INTEGER NOT NULL, " +
+            "`retryCount` INTEGER NOT NULL, `nextRetryAt` INTEGER, PRIMARY KEY(`flowId`, `sparkId`))",
+    )
+    execSQL("CREATE INDEX IF NOT EXISTS `index_trigger_registration_state` ON `trigger_registration` (`state`)")
+    execSQL(
+        "CREATE TABLE IF NOT EXISTS `flow_lifecycle_log` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, " +
+            "`flowId` TEXT NOT NULL, `at` INTEGER NOT NULL, `fromState` TEXT NOT NULL, `toState` TEXT NOT NULL, " +
+            "`reason` TEXT NOT NULL, `actor` TEXT NOT NULL)",
+    )
+    execSQL("CREATE INDEX IF NOT EXISTS `index_flow_lifecycle_log_flowId_at` ON `flow_lifecycle_log` (`flowId`, `at`)")
+    execSQL(
+        "CREATE TABLE IF NOT EXISTS `spark_inbox` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, " +
+            "`flowId` TEXT NOT NULL, `sparkId` TEXT NOT NULL, `kind` TEXT NOT NULL, `payload` TEXT, `fileRef` TEXT, " +
+            "`receivedAt` INTEGER NOT NULL, `state` TEXT NOT NULL, `dedupeKey` TEXT NOT NULL, `runId` TEXT, " +
+            "`leaseUntil` INTEGER, `dropReason` TEXT)",
+    )
+    execSQL("CREATE UNIQUE INDEX IF NOT EXISTS `index_spark_inbox_dedupeKey` ON `spark_inbox` (`dedupeKey`)")
+    execSQL("CREATE INDEX IF NOT EXISTS `index_spark_inbox_state_receivedAt` ON `spark_inbox` (`state`, `receivedAt`)")
+    execSQL("CREATE INDEX IF NOT EXISTS `index_spark_inbox_flowId` ON `spark_inbox` (`flowId`)")
+    execSQL(
+        "CREATE TABLE IF NOT EXISTS `schedule_state` (`flowId` TEXT NOT NULL, `sparkId` TEXT NOT NULL, " +
+            "`configHash` TEXT NOT NULL, `precision` TEXT NOT NULL, `nextDueAt` INTEGER, `lastFiredAt` INTEGER, " +
+            "`lastSlotKey` TEXT, `armedAt` INTEGER, `armedMode` TEXT, `missedPolicy` TEXT NOT NULL, `lastStatus` TEXT, " +
+            "PRIMARY KEY(`flowId`, `sparkId`))",
+    )
+    execSQL("CREATE INDEX IF NOT EXISTS `index_schedule_state_nextDueAt` ON `schedule_state` (`nextDueAt`)")
+    execSQL(
+        "CREATE TABLE IF NOT EXISTS `expected_run` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, " +
+            "`flowId` TEXT NOT NULL, `sparkId` TEXT NOT NULL, `slotKey` TEXT NOT NULL, `dueAt` INTEGER NOT NULL, " +
+            "`armedAt` INTEGER NOT NULL, `state` TEXT NOT NULL, `firedAt` INTEGER, `runId` TEXT, `latenessMs` INTEGER, " +
+            "`reason` TEXT)",
+    )
+    execSQL("CREATE UNIQUE INDEX IF NOT EXISTS `index_expected_run_flowId_sparkId_slotKey` ON `expected_run` (`flowId`, `sparkId`, `slotKey`)")
+    execSQL("CREATE INDEX IF NOT EXISTS `index_expected_run_state_dueAt` ON `expected_run` (`state`, `dueAt`)")
+    execSQL("CREATE INDEX IF NOT EXISTS `index_expected_run_dueAt` ON `expected_run` (`dueAt`)")
+    execSQL(
+        "CREATE TABLE IF NOT EXISTS `engine_session` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, " +
+            "`startedAt` INTEGER NOT NULL, `startReason` TEXT NOT NULL, `bootCount` INTEGER NOT NULL, " +
+            "`cleanStopAt` INTEGER, `endReason` TEXT)",
+    )
+    execSQL("CREATE INDEX IF NOT EXISTS `index_engine_session_startedAt` ON `engine_session` (`startedAt`)")
+    execSQL(
+        "CREATE TABLE IF NOT EXISTS `engine_heartbeat` (`id` INTEGER NOT NULL, `sessionId` INTEGER NOT NULL, " +
+            "`lastBeatWall` INTEGER NOT NULL, `lastBeatElapsed` INTEGER NOT NULL, `bootCount` INTEGER NOT NULL, " +
+            "`processStart` INTEGER NOT NULL, `engineState` TEXT NOT NULL, `pendingInbox` INTEGER NOT NULL, " +
+            "`armedAlarms` INTEGER NOT NULL, `listenerLastConnected` INTEGER, `listenerLastDisconnected` INTEGER, " +
+            "`lastAlarmFiredAt` INTEGER, `wakeLockMillisToday` INTEGER NOT NULL, `memoryClass` INTEGER NOT NULL, " +
+            "`appVersion` TEXT NOT NULL, PRIMARY KEY(`id`))",
+    )
+    execSQL(
+        "CREATE TABLE IF NOT EXISTS `reliability_event` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, " +
+            "`at` INTEGER NOT NULL, `kind` TEXT NOT NULL, `severity` TEXT NOT NULL, `flowId` TEXT, `detail` TEXT, " +
+            "`sessionId` INTEGER)",
+    )
+    execSQL("CREATE INDEX IF NOT EXISTS `index_reliability_event_at` ON `reliability_event` (`at`)")
+    execSQL("CREATE INDEX IF NOT EXISTS `index_reliability_event_kind_at` ON `reliability_event` (`kind`, `at`)")
+}
+
+/** Adds the lifecycle columns to `flows`. Returns true when the lifecycle column was newly added. */
+private fun SupportSQLiteDatabase.addFlowLifecycleColumns(): Boolean {
+    val fresh = !hasColumn("flows", "lifecycle")
+    if (fresh) execSQL("ALTER TABLE `flows` ADD COLUMN `lifecycle` TEXT NOT NULL DEFAULT 'DRAFT'")
+    if (!hasColumn("flows", "publishedRevision")) execSQL("ALTER TABLE `flows` ADD COLUMN `publishedRevision` INTEGER")
+    if (!hasColumn("flows", "lifecycleReason")) execSQL("ALTER TABLE `flows` ADD COLUMN `lifecycleReason` TEXT NOT NULL DEFAULT 'NONE'")
+    if (!hasColumn("flows", "lifecycleSince")) execSQL("ALTER TABLE `flows` ADD COLUMN `lifecycleSince` INTEGER NOT NULL DEFAULT 0")
+    if (!hasColumn("flows", "pausedUntil")) execSQL("ALTER TABLE `flows` ADD COLUMN `pausedUntil` INTEGER")
+    if (!hasColumn("flows", "errorCode")) execSQL("ALTER TABLE `flows` ADD COLUMN `errorCode` TEXT")
+    if (!hasColumn("flows", "errorSince")) execSQL("ALTER TABLE `flows` ADD COLUMN `errorSince` INTEGER")
+    if (!hasColumn("flows", "retryCount")) execSQL("ALTER TABLE `flows` ADD COLUMN `retryCount` INTEGER NOT NULL DEFAULT 0")
+    if (!hasColumn("flows", "nextRetryAt")) execSQL("ALTER TABLE `flows` ADD COLUMN `nextRetryAt` INTEGER")
+    if (!hasColumn("flows", "healthySince")) execSQL("ALTER TABLE `flows` ADD COLUMN `healthySince` INTEGER")
+    execSQL("CREATE INDEX IF NOT EXISTS `index_flows_lifecycle` ON `flows` (`lifecycle`)")
+    return fresh
+}
+
+/**
+ * Previously active Flows (the flag lives inside the JSON document) become Published with their
+ * current document saved as revision 1; everything else keeps the column default, Draft. Rows are
+ * read fully before any write so no cursor is open during the updates.
+ */
+private fun SupportSQLiteDatabase.mapLegacyActiveFlows() {
+    class Row(val id: String, val json: String, val updatedAt: Long)
+    val active = mutableListOf<Row>()
+    query("SELECT `id`, `flowJson`, `updatedAt` FROM `flows`").use { c ->
+        while (c.moveToNext()) {
+            val json = c.getString(1)
+            if (LifecycleLogic.isActiveInJson(json)) active += Row(c.getString(0), json, c.getLong(2))
+        }
+    }
+    for (row in active) {
+        execSQL(
+            "UPDATE `flows` SET `lifecycle` = 'PUBLISHED', `publishedRevision` = 1, `lifecycleReason` = 'MIGRATED_ACTIVE', " +
+                "`lifecycleSince` = ? WHERE `id` = ?",
+            arrayOf<Any>(row.updatedAt, row.id),
+        )
+        execSQL(
+            "INSERT OR IGNORE INTO `flow_versions` (`flowId`, `revision`, `savedAt`, `label`, `flowJson`) VALUES (?, 1, ?, ?, ?)",
+            arrayOf<Any>(row.id, row.updatedAt, "Migrated from schema 3", row.json),
+        )
+        execSQL(
+            "INSERT INTO `flow_lifecycle_log` (`flowId`, `at`, `fromState`, `toState`, `reason`, `actor`) " +
+                "VALUES (?, ?, 'DRAFT', 'PUBLISHED', 'MIGRATED_ACTIVE', 'engine')",
+            arrayOf<Any>(row.id, row.updatedAt),
+        )
+    }
+}
+
 /** v1 -> v2: flow groups, workflow variables, flows.groupId (inferred, see file note). */
 val MIGRATION_1_2: Migration = object : Migration(1, 2) {
     override fun migrate(db: SupportSQLiteDatabase) {
@@ -73,5 +192,18 @@ val MIGRATION_2_3: Migration = object : Migration(2, 3) {
     }
 }
 
+/**
+ * v3 -> v4: publish lifecycle columns on `flows` and the Always-On Engine tables. Additive only.
+ * Order matters: tables first (the data pass writes `flow_versions` and `flow_lifecycle_log`), then
+ * columns, then the data pass, and the data pass runs only when the lifecycle column was new.
+ */
+val MIGRATION_3_4: Migration = object : Migration(3, 4) {
+    override fun migrate(db: SupportSQLiteDatabase) {
+        db.createEngineTables()
+        val fresh = db.addFlowLifecycleColumns()
+        if (fresh) db.mapLegacyActiveFlows()
+    }
+}
+
 /** Ordered, contiguous list from the oldest known schema to [KaivoDatabase] current version. */
-val ALL_MIGRATIONS: Array<Migration> = arrayOf(MIGRATION_1_2, MIGRATION_2_3)
+val ALL_MIGRATIONS: Array<Migration> = arrayOf(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4)

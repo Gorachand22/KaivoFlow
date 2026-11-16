@@ -81,35 +81,3 @@ class SmsSparkReceiver : android.content.BroadcastReceiver() {
         }
     }
 }
-
-@AndroidEntryPoint
-class SmsTriggerService : android.app.Service() {
-
-    @Inject lateinit var scheduler: FlowScheduler
-
-    override fun onBind(intent: Intent?) = null
-
-    override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        val sender = intent?.getStringExtra("sender").orEmpty()
-        val body = intent?.getStringExtra("body").orEmpty()
-        // Minimal foreground notification: an SMS Spark is a user-visible event, so showing it is honest.
-        val notification = android.app.Notification.Builder(this, "kaivo.running")
-            .setContentTitle("KaivoFlow")
-            .setContentText("Checking your SMS Flows…")
-            .setSmallIcon(android.R.drawable.stat_notify_sync)
-            .build()
-        startForeground(4_102, notification)
-
-        val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
-        scope.launch {
-            runCatching {
-                scheduler.dispatchTrigger(
-                    TriggerSpecs.SMS,
-                    mapOf("from" to sender, "body" to body, "receivedAt" to System.currentTimeMillis()),
-                )
-            }
-            stopSelf(startId)
-        }
-        return START_NOT_STICKY
-    }
-}
