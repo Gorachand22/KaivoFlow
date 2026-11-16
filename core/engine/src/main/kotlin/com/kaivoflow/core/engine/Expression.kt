@@ -2,8 +2,6 @@ package com.kaivoflow.core.engine
 
 import com.kaivoflow.core.model.FlowData
 import com.kaivoflow.core.model.ItemRef
-import com.kaivoflow.core.model.NodeSpec
-import com.kaivoflow.core.model.StepNode
 
 /**
  * Expression support.
@@ -51,35 +49,6 @@ interface ExpressionEvaluator {
     companion object {
         private val SINGLE_EXPRESSION = Regex("""^\{{2,3}([\s\S]*?)\}{2,3}$""")
         private val MULTI_EXPRESSION = Regex("""\{{2,3}([\s\S]*?)\}{2,3}""")
-    }
-}
-
-/**
- * Resolves Step parameters into concrete values, applying expressions where needed and
- * stripping the "expression" wrapping for single-value fields.
- */
-class ParamResolver(private val evaluator: ExpressionEvaluator) {
-
-    fun resolveValue(value: Any?, scope: Map<String, Any?>, supportsExpression: Boolean = true): Any? {
-        if (!supportsExpression) return value
-        return when (value) {
-            is String -> if (value.contains("{{")) evaluator.interpolate(value, scope) else value
-            is Map<*, *> -> value.entries.associate { it.key.toString() to resolveValue(it.value, scope) }
-            is List<*> -> value.map { resolveValue(it, scope) }
-            else -> value
-        }
-    }
-
-    fun resolveParams(step: StepNode, scope: Map<String, Any?>, spec: NodeSpec? = null): Map<String, Any?> {
-        val literal = spec?.params?.filter { !it.supportsExpression }?.map { it.key }?.toSet().orEmpty()
-        return step.params.entries.associate { (key, raw) ->
-            key to resolveValue(raw, scope, supportsExpression = key !in literal)
-        }
-    }
-
-    fun resolveString(value: Any?, scope: Map<String, Any?>, field: String): String {
-        val resolved = resolveValue(value, scope) ?: return ""
-        return Values.asString(resolved)
     }
 }
 

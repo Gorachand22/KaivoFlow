@@ -5,7 +5,9 @@ import com.kaivoflow.core.model.FlowData
 import com.kaivoflow.core.model.ItemRef
 import com.kaivoflow.core.model.LogLevel
 import com.kaivoflow.core.model.NodeSpec
+import com.kaivoflow.core.model.ParamSchema
 import com.kaivoflow.core.model.StepNode
+import com.kaivoflow.core.model.toSchema
 import kotlinx.coroutines.CancellationException
 
 /** Where a Run is coming from. Behaviour changes subtly (Freeze Output, item limits, logging). */
@@ -90,22 +92,43 @@ data class StepContext(
      * Step-level params, resolved against item 0. Use only for values that must not depend on an
      * item (operation, credential, mode). Executors that process items one by one use [paramsFor].
      */
-    fun params(): Map<String, Any?> = paramsFor(0)
+    @Deprecated("Read typed values with resolved(); this map has no defaults and no show rules.", ReplaceWith("resolved().toMap()"))
+    fun params(): Map<String, Any?> = legacyParamsFor(0)
 
     /** Params resolved against the item at [index]; fields with supportsExpression=false are passed through verbatim. */
-    fun paramsFor(index: Int): Map<String, Any?> =
+    @Deprecated("Read typed values with resolvedFor(index); this map has no defaults and no show rules.", ReplaceWith("resolvedFor(index).toMap()"))
+    fun paramsFor(index: Int): Map<String, Any?> = legacyParamsFor(index)
+
+    private fun legacyParamsFor(index: Int): Map<String, Any?> =
         ParamResolver(evaluator).resolveParams(step, scope(index), spec)
+
+    private val schema: ParamSchema? by lazy { spec?.toSchema() }
+
+    /**
+     * Typed params for the item at [index]: defaults applied for visible params, hidden params
+     * omitted, expressions resolved against that item, Secret and Code never expanded.
+     * Falls back to the plain stored values when the Step has no spec (plain unit tests).
+     */
+    fun resolvedFor(index: Int): ResolvedParams {
+        val s = schema ?: return ResolvedParams(legacyParamsFor(index))
+        return ParamResolver(evaluator).resolveStored(s, step.params, scope(index))
+    }
+
+    /** Typed params against item 0; use for values that must not depend on an item. */
+    fun resolved(): ResolvedParams = resolvedFor(0)
 
     fun scope(index: Int = 0): Map<String, Any?> = scopeBuilder.build(input, index, step.name)
 
+    @Suppress("DEPRECATION")
     fun stringParam(key: String, params: Map<String, Any?> = params()): String = Values.asString(params[key])
 
+    @Suppress("DEPRECATION")
     fun requireParam(key: String, params: Map<String, Any?> = params()): Any =
         params[key] ?: throw StepExecutionException(step.id, step.name, "missing \"$key\"")
 
     /** Credential lookup by the id stored on the Step, e.g. `credentials.openai`. */
     suspend fun credential(key: String = "credential"): Map<String, String> {
-        val params = params()
+        val params = legacyParamsFor(0)
         val ref = Values.asString(params[key])
         if (ref.isBlank()) throw StepExecutionException(step.id, step.name, "no credential selected")
         return credentials.resolve(ref)
