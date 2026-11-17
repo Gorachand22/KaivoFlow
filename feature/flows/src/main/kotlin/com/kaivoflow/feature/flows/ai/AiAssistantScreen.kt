@@ -79,6 +79,7 @@ fun AiAssistantScreen(
     var inputText by remember { mutableStateOf("") }
 
     val isChatEmpty = state.messages.isEmpty() && state.currentFlow == null
+    val targetFlow = state.activeProposedFlow ?: state.currentFlow
 
     LaunchedEffect(state.messages.size) {
         if (state.messages.isNotEmpty()) {
@@ -101,11 +102,34 @@ fun AiAssistantScreen(
                 providerConfig = state.providerConfig,
                 onBack = onBack,
                 onOpenSettings = { viewModel.toggleSettingsSheet(true) },
+                onOpenHistory = { viewModel.toggleHistorySheet(true) },
                 onClearChat = { viewModel.clearChat() },
                 onDetachFlow = { viewModel.detachFlow() },
             )
 
-            if (isChatEmpty) {
+            // Split View / Mode Switcher (Visible when workflow is attached or proposed)
+            if (targetFlow != null && !isChatEmpty) {
+                ViewModeSwitcher(
+                    selectedMode = state.viewMode,
+                    stepCount = targetFlow.steps.size,
+                    onSelectMode = viewModel::setViewMode,
+                )
+            }
+
+            if (state.viewMode == AssistantViewMode.CanvasPreview && targetFlow != null) {
+                // ---------------- Live Interactive Visual Canvas ----------------
+                CanvasPreviewView(
+                    flow = targetFlow,
+                    baseFlow = state.currentFlow,
+                    onApply = {
+                        viewModel.applyProposedFlow(targetFlow, onOpenCanvas)
+                    },
+                    onBackToChat = {
+                        viewModel.setViewMode(AssistantViewMode.Chat)
+                    },
+                    modifier = Modifier.weight(1f),
+                )
+            } else if (isChatEmpty) {
                 // ---------------- Clean Floating Hero State (Screenshot 2) ----------------
                 Box(
                     modifier = Modifier
@@ -135,20 +159,14 @@ fun AiAssistantScreen(
                     contentPadding = PaddingValues(horizontal = 16.dp, vertical = 12.dp),
                     verticalArrangement = Arrangement.spacedBy(16.dp),
                 ) {
-                    // If flow context attached and no user messages sent yet
-                    if (state.currentFlow != null && state.messages.size <= 1) {
-                        item {
-                            FlowContextHeroBanner(
-                                flow = state.currentFlow!!,
-                                onSuggestionClick = { prompt -> viewModel.sendMessage(prompt) },
-                            )
-                        }
-                    }
-
                     items(state.messages, key = { it.id }) { msg ->
                         ChatMessageRow(
                             message = msg,
                             onApplyFlow = { flow -> viewModel.applyProposedFlow(flow, onOpenCanvas) },
+                            onViewOnCanvas = { flow ->
+                                viewModel.setViewMode(AssistantViewMode.CanvasPreview)
+                            },
+                            onSuggestionClick = { prompt -> viewModel.sendMessage(prompt) },
                         )
                     }
 
@@ -188,6 +206,100 @@ fun AiAssistantScreen(
                 onSave = { newConfig -> viewModel.saveProviderConfig(newConfig) },
             )
         }
+
+        // ---------------- Chat History Sheet ----------------
+        if (state.showHistorySheet) {
+            ChatHistorySheet(
+                sessions = state.savedSessions,
+                activeSessionId = state.activeSessionId,
+                onSelectSession = { session -> viewModel.loadSession(session) },
+                onNewChat = { viewModel.newSession() },
+                onDeleteSession = { sessionId -> viewModel.deleteSession(sessionId) },
+                onDismiss = { viewModel.toggleHistorySheet(false) },
+            )
+        }
+    }
+}
+
+@Composable
+private fun ViewModeSwitcher(
+    selectedMode: AssistantViewMode,
+    stepCount: Int,
+    onSelectMode: (AssistantViewMode) -> Unit,
+) {
+    val colors = KaivoTheme.colors
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 16.dp, vertical = 4.dp),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Box(
+            modifier = Modifier
+                .weight(1f)
+                .clip(KaivoShapes.pill)
+                .background(if (selectedMode == AssistantViewMode.Chat) Color(0xFF24242E) else Color(0xFF141418))
+                .border(
+                    width = 1.dp,
+                    color = if (selectedMode == AssistantViewMode.Chat) colors.royalGold else Color(0xFF282832),
+                    shape = KaivoShapes.pill,
+                )
+                .clickable { onSelectMode(AssistantViewMode.Chat) }
+                .padding(vertical = 8.dp),
+            contentAlignment = Alignment.Center,
+        ) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+            ) {
+                Icon(
+                    imageVector = KaivoIcons.icon("sparkles"),
+                    contentDescription = null,
+                    tint = if (selectedMode == AssistantViewMode.Chat) colors.royalGold else colors.inkSecondary,
+                    modifier = Modifier.size(15.dp),
+                )
+                Text(
+                    text = "Chat Assistant",
+                    style = androidx.compose.material3.MaterialTheme.typography.labelMedium,
+                    fontWeight = if (selectedMode == AssistantViewMode.Chat) FontWeight.Bold else FontWeight.Medium,
+                    color = if (selectedMode == AssistantViewMode.Chat) colors.inkPrimary else colors.inkSecondary,
+                )
+            }
+        }
+
+        Box(
+            modifier = Modifier
+                .weight(1f)
+                .clip(KaivoShapes.pill)
+                .background(if (selectedMode == AssistantViewMode.CanvasPreview) Color(0xFF24242E) else Color(0xFF141418))
+                .border(
+                    width = 1.dp,
+                    color = if (selectedMode == AssistantViewMode.CanvasPreview) colors.royalGold else Color(0xFF282832),
+                    shape = KaivoShapes.pill,
+                )
+                .clickable { onSelectMode(AssistantViewMode.CanvasPreview) }
+                .padding(vertical = 8.dp),
+            contentAlignment = Alignment.Center,
+        ) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+            ) {
+                Icon(
+                    imageVector = KaivoIcons.icon("flow"),
+                    contentDescription = null,
+                    tint = if (selectedMode == AssistantViewMode.CanvasPreview) colors.royalGold else colors.inkSecondary,
+                    modifier = Modifier.size(15.dp),
+                )
+                Text(
+                    text = "Live Canvas ($stepCount)",
+                    style = androidx.compose.material3.MaterialTheme.typography.labelMedium,
+                    fontWeight = if (selectedMode == AssistantViewMode.CanvasPreview) FontWeight.Bold else FontWeight.Medium,
+                    color = if (selectedMode == AssistantViewMode.CanvasPreview) colors.inkPrimary else colors.inkSecondary,
+                )
+            }
+        }
     }
 }
 
@@ -197,6 +309,7 @@ private fun TopBar(
     providerConfig: AiProviderConfig,
     onBack: () -> Unit,
     onOpenSettings: () -> Unit,
+    onOpenHistory: () -> Unit,
     onClearChat: () -> Unit,
     onDetachFlow: () -> Unit,
 ) {
@@ -206,7 +319,7 @@ private fun TopBar(
             .fillMaxWidth()
             .padding(horizontal = 12.dp, vertical = 8.dp),
         verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        horizontalArrangement = Arrangement.spacedBy(6.dp),
     ) {
         IconButton(onClick = onBack) {
             Icon(KaivoIcons.icon("back"), contentDescription = "Back", tint = colors.inkPrimary)
@@ -234,8 +347,14 @@ private fun TopBar(
                     text = "${providerConfig.provider.displayName} · ${providerConfig.model}",
                     style = androidx.compose.material3.MaterialTheme.typography.labelSmall,
                     color = colors.inkSecondary,
+                    maxLines = 1,
                 )
             }
+        }
+
+        // History button
+        IconButton(onClick = onOpenHistory) {
+            Icon(KaivoIcons.icon("history"), contentDescription = "Chat history", tint = colors.inkSecondary)
         }
 
         // Provider configuration button
@@ -245,7 +364,7 @@ private fun TopBar(
                 .background(colors.surfaceCard)
                 .border(1.dp, colors.hairline, KaivoShapes.chip)
                 .clickable { onOpenSettings() }
-                .padding(horizontal = 10.dp, vertical = 6.dp),
+                .padding(horizontal = 8.dp, vertical = 6.dp),
         ) {
             Row(
                 verticalAlignment = Alignment.CenterVertically,
@@ -255,7 +374,7 @@ private fun TopBar(
                     KaivoIcons.icon("settings"),
                     contentDescription = "Settings",
                     tint = colors.inkSecondary,
-                    modifier = Modifier.size(16.dp),
+                    modifier = Modifier.size(15.dp),
                 )
                 Text(
                     text = "Provider",
@@ -440,87 +559,11 @@ private fun EmptyStateCenteredPrompt(
 }
 
 @Composable
-private fun FlowContextHeroBanner(
-    flow: Flow,
-    onSuggestionClick: (String) -> Unit,
-) {
-    val colors = KaivoTheme.colors
-    Column(
-        Modifier
-            .fillMaxWidth()
-            .padding(vertical = 8.dp),
-        verticalArrangement = Arrangement.spacedBy(10.dp),
-    ) {
-        // Attached flow context banner (Screenshot 3 style)
-        Box(
-            Modifier
-                .fillMaxWidth()
-                .clip(KaivoShapes.medallion)
-                .background(Color(0xFF1E1E24))
-                .border(1.dp, colors.royalGold.copy(alpha = 0.35f), KaivoShapes.medallion)
-                .padding(16.dp),
-        ) {
-            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(6.dp),
-                ) {
-                    Icon(KaivoIcons.icon("flow"), contentDescription = null, tint = colors.royalGold, modifier = Modifier.size(18.dp))
-                    Text(
-                        text = flow.name,
-                        style = androidx.compose.material3.MaterialTheme.typography.titleMedium,
-                        fontWeight = FontWeight.Bold,
-                        color = colors.royalGold,
-                    )
-                    Spacer(Modifier.weight(1f))
-                    Text(
-                        text = "${flow.steps.size} Steps",
-                        style = androidx.compose.material3.MaterialTheme.typography.labelSmall,
-                        color = colors.inkSecondary,
-                    )
-                }
-                Text(
-                    text = "I see you're working on the \"${flow.name}\" workflow. What would you like to do with it — make changes, debug an issue, configure steps, or something else?",
-                    style = androidx.compose.material3.MaterialTheme.typography.bodyMedium,
-                    color = colors.inkPrimary,
-                )
-            }
-        }
-
-        LazyRow(
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-            modifier = Modifier.fillMaxWidth(),
-        ) {
-            val flowSuggestions = listOf(
-                "🔍 Diagnose & fix issues",
-                "⚡ Add error notification",
-                "📝 Explain how flow runs",
-                "➕ Add JS transformation",
-            )
-            items(flowSuggestions) { suggestion ->
-                Box(
-                    modifier = Modifier
-                        .clip(RoundedCornerShape(10.dp))
-                        .background(Color(0xFF1E1E24))
-                        .border(1.dp, Color(0xFF2E2E36), RoundedCornerShape(10.dp))
-                        .clickable { onSuggestionClick(suggestion) }
-                        .padding(horizontal = 12.dp, vertical = 8.dp),
-                ) {
-                    Text(
-                        text = suggestion,
-                        style = androidx.compose.material3.MaterialTheme.typography.labelMedium,
-                        color = colors.inkPrimary,
-                    )
-                }
-            }
-        }
-    }
-}
-
-@Composable
 private fun ChatMessageRow(
     message: AiChatMessage,
     onApplyFlow: (Flow) -> Unit,
+    onViewOnCanvas: (Flow) -> Unit,
+    onSuggestionClick: (String) -> Unit,
 ) {
     val colors = KaivoTheme.colors
     val isUser = message.sender == MessageSender.User
@@ -580,13 +623,131 @@ private fun ChatMessageRow(
             )
         }
 
+        // Inline Quick Action chips for Workflow Assistant
+        if (!isUser && message.diagnosisReport != null) {
+            Spacer(Modifier.height(8.dp))
+            LazyRow(
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                val flowSuggestions = listOf(
+                    "🔍 Diagnose & fix issues",
+                    "⚡ Add error notification",
+                    "📝 Explain how flow runs",
+                    "➕ Add JS transformation",
+                )
+                items(flowSuggestions) { suggestion ->
+                    Box(
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(10.dp))
+                            .background(Color(0xFF1E1E24))
+                            .border(1.dp, Color(0xFF2E2E36), RoundedCornerShape(10.dp))
+                            .clickable { onSuggestionClick(suggestion) }
+                            .padding(horizontal = 12.dp, vertical = 8.dp),
+                    ) {
+                        Text(
+                            text = suggestion,
+                            style = androidx.compose.material3.MaterialTheme.typography.labelMedium,
+                            color = colors.inkPrimary,
+                        )
+                    }
+                }
+            }
+        }
+
+        // Tool Execution Traces (Modeled after n8n's agent tools)
+        if (message.toolCalls.isNotEmpty()) {
+            Spacer(Modifier.height(8.dp))
+            ToolCallsTraceCard(toolCalls = message.toolCalls)
+        }
+
         // If message has a proposed flow, render the interactive Workflow Preview Card!
         if (message.flowProposal != null) {
             Spacer(Modifier.height(10.dp))
             WorkflowPreviewCard(
                 flow = message.flowProposal,
                 onApply = { onApplyFlow(message.flowProposal) },
+                onViewOnCanvas = { onViewOnCanvas(message.flowProposal) },
             )
+        }
+    }
+}
+
+@Composable
+private fun ToolCallsTraceCard(
+    toolCalls: List<ToolExecution>,
+) {
+    val colors = KaivoTheme.colors
+    var expanded by remember { mutableStateOf(false) }
+
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(10.dp))
+            .background(Color(0xFF16161C))
+            .border(1.dp, Color(0xFF262630), RoundedCornerShape(10.dp))
+            .clickable { expanded = !expanded }
+            .padding(10.dp),
+    ) {
+        Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+            ) {
+                Icon(
+                    imageVector = KaivoIcons.icon("settings"),
+                    contentDescription = null,
+                    tint = colors.royalGold,
+                    modifier = Modifier.size(14.dp),
+                )
+                Text(
+                    text = "🛠️ ${toolCalls.size} Workflow Tool Operations Executed",
+                    style = androidx.compose.material3.MaterialTheme.typography.labelSmall,
+                    fontWeight = FontWeight.SemiBold,
+                    color = colors.royalGold,
+                )
+                Spacer(Modifier.weight(1f))
+                Text(
+                    text = if (expanded) "Hide ▴" else "View Details ▾",
+                    style = androidx.compose.material3.MaterialTheme.typography.labelSmall,
+                    color = colors.inkSecondary,
+                )
+            }
+
+            if (expanded) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(top = 4.dp),
+                    verticalArrangement = Arrangement.spacedBy(4.dp),
+                ) {
+                    toolCalls.forEach { tc ->
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        ) {
+                            Text(
+                                text = if (tc.isSuccess) "✓" else "✕",
+                                color = if (tc.isSuccess) Color(0xFF10B981) else Color(0xFFEF4444),
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.Bold,
+                            )
+                            Text(
+                                text = tc.toolName,
+                                style = androidx.compose.material3.MaterialTheme.typography.labelSmall,
+                                fontWeight = FontWeight.Bold,
+                                color = colors.inkPrimary,
+                            )
+                            Text(
+                                text = "· ${tc.description}",
+                                style = androidx.compose.material3.MaterialTheme.typography.bodySmall,
+                                color = colors.inkSecondary,
+                                maxLines = 1,
+                            )
+                        }
+                    }
+                }
+            }
         }
     }
 }
@@ -595,6 +756,7 @@ private fun ChatMessageRow(
 private fun WorkflowPreviewCard(
     flow: Flow,
     onApply: () -> Unit,
+    onViewOnCanvas: () -> Unit,
 ) {
     val colors = KaivoTheme.colors
     Card(
@@ -690,23 +852,38 @@ private fun WorkflowPreviewCard(
                 }
             }
 
-            // Apply Button
-            Button(
-                onClick = onApply,
-                colors = ButtonDefaults.buttonColors(containerColor = colors.royalGold, contentColor = Color.Black),
-                shape = KaivoShapes.chip,
+            // Action Buttons: View on Live Canvas + Apply to Canvas
+            Row(
                 modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically,
             ) {
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                Button(
+                    onClick = onViewOnCanvas,
+                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF282834), contentColor = colors.inkPrimary),
+                    shape = KaivoShapes.chip,
+                    modifier = Modifier.weight(1f),
                 ) {
-                    Icon(KaivoIcons.icon("check"), contentDescription = null, modifier = Modifier.size(18.dp))
-                    Text(
-                        text = "Apply to Canvas",
-                        style = androidx.compose.material3.MaterialTheme.typography.labelLarge,
-                        fontWeight = FontWeight.Bold,
-                    )
+                    Text("Live Canvas ⚡", fontSize = 12.sp)
+                }
+
+                Button(
+                    onClick = onApply,
+                    colors = ButtonDefaults.buttonColors(containerColor = colors.royalGold, contentColor = Color.Black),
+                    shape = KaivoShapes.chip,
+                    modifier = Modifier.weight(1.3f),
+                ) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(4.dp),
+                    ) {
+                        Icon(KaivoIcons.icon("check"), contentDescription = null, modifier = Modifier.size(16.dp))
+                        Text(
+                            text = "Apply",
+                            style = androidx.compose.material3.MaterialTheme.typography.labelLarge,
+                            fontWeight = FontWeight.Bold,
+                        )
+                    }
                 }
             }
         }

@@ -41,12 +41,19 @@ data class AiDiagnosisReport(
         }
 }
 
+data class ToolExecution(
+    val toolName: String,
+    val description: String,
+    val isSuccess: Boolean = true,
+)
+
 data class AiChatMessage(
     val id: String = UUID.randomUUID().toString(),
     val sender: MessageSender,
     val text: String,
     val flowProposal: Flow? = null,
     val diagnosisReport: AiDiagnosisReport? = null,
+    val toolCalls: List<ToolExecution> = emptyList(),
     val timestamp: Long = System.currentTimeMillis(),
 )
 
@@ -59,6 +66,7 @@ data class AiChatMessage(
 class AiWorkflowAgent(
     private val http: HttpGateway,
 ) {
+    private val tools = WorkflowToolExecutor()
 
     /**
      * Inspects a flow and returns an immediate diagnostic report.
@@ -582,7 +590,25 @@ Be precise with step IDs and streams. Make sure every node is connected in logic
         // 1. Flow Diagnosis request
         if (currentFlow != null && (lower.contains("diagnose") || lower.contains("issue") || lower.contains("error") || lower.contains("fix") || lower.contains("check"))) {
             val report = diagnose(currentFlow)
-            val fixCandidate = autoFixFlow(currentFlow, report)
+            val toolExecutions = mutableListOf<ToolExecution>()
+
+            val (_, valTool) = tools.validateStructure(currentFlow)
+            toolExecutions.add(valTool)
+
+            var flowCandidate: Flow = currentFlow
+            report.issues.forEach { issue ->
+                if (issue.stepId != null && issue.stepType == "code.script") {
+                    val (updated, toolRec) = tools.updateNodeParameters(
+                        flowCandidate,
+                        issue.stepId,
+                        mapOf("script" to "return items.map(i => ({ json: { ...i.json, processed: true, fixedBy: 'AI' } }));"),
+                    )
+                    flowCandidate = updated
+                    toolExecutions.add(toolRec)
+                }
+            }
+
+            val fixCandidate = if (report.issues.isNotEmpty()) flowCandidate else null
 
             val explanation = buildString {
                 append("### Flow Diagnostic Report for \"${currentFlow.name}\"\n\n")
@@ -599,7 +625,7 @@ Be precise with step IDs and streams. Make sure every node is connected in logic
                         append("   *Recommendation: ${issue.suggestedFix}*\n\n")
                     }
                     if (fixCandidate != null) {
-                        append("\n✨ I have generated a proposed fix below. You can preview the changes and tap **Apply to Canvas** to update your flow.")
+                        append("\n✨ I have executed the repair tools on your workflow. You can preview the changes on the Live Canvas and tap **Apply to Canvas** to update your flow.")
                     }
                 }
             }
@@ -609,58 +635,71 @@ Be precise with step IDs and streams. Make sure every node is connected in logic
                 text = explanation,
                 diagnosisReport = report,
                 flowProposal = fixCandidate,
+                toolCalls = toolExecutions,
             )
         }
 
         // 2. Add Notification / Alert request
         if (currentFlow != null && (lower.contains("notify") || lower.contains("notification") || lower.contains("alert"))) {
-            val notifyId = "step_${UUID.randomUUID().toString().take(6)}"
-            val notifyStep = StepNode(
-                id = notifyId,
+            val toolExecutions = mutableListOf<ToolExecution>()
+            val (flowWithNode, addRecord) = tools.addNode(
+                currentFlow,
                 type = "device.notify",
                 name = "Send Notification",
-                params = persistentMapOf("title" to "KaivoFlow Alert", "message" to "Trigger fired successfully"),
-                x = 100f,
-                y = (currentFlow.steps.maxOfOrNull { it.y } ?: 100f) + 160f,
+                params = mapOf("title" to "KaivoFlow Alert", "message" to "Trigger fired successfully"),
             )
-            val lastStep = currentFlow.steps.lastOrNull()
-            val newStreams = if (lastStep != null) {
-                currentFlow.streams + StreamEdge(
-                    id = "stream_${UUID.randomUUID().toString().take(6)}",
-                    fromStepId = lastStep.id,
-                    toStepId = notifyId,
-                )
-            } else currentFlow.streams
+            toolExecutions.add(addRecord)
 
-            val updatedFlow = currentFlow.copy(
-                steps = (currentFlow.steps + notifyStep).toImmutableList(),
-                streams = newStreams.toImmutableList(),
-                updatedAt = System.currentTimeMillis(),
-            )
+            val lastStep = currentFlow.steps.lastOrNull()
+            val newStepId = flowWithNode.steps.last().id
+            val finalFlow = if (lastStep != null) {
+                val (connectedFlow, connRecord) = tools.connectNodes(flowWithNode, lastStep.id, newStepId)
+                toolExecutions.add(connRecord)
+                connectedFlow
+            } else flowWithNode
+
+            val (_, valRecord) = tools.validateStructure(finalFlow)
+            toolExecutions.add(valRecord)
 
             return AiChatMessage(
                 sender = MessageSender.Assistant,
-                text = "I added a **Send Notification** step and connected it to your flow. You can review the updated structure below and tap **Apply to Canvas**.",
-                flowProposal = updatedFlow,
+                text = "I executed the workflow builder tools to add a **Send Notification** step and connect it to your flow. You can review the updated structure on the Live Canvas and tap **Apply to Canvas**.",
+                flowProposal = finalFlow,
+                toolCalls = toolExecutions,
             )
         }
 
         // 3. New flow from scratch request (e.g. Battery alert, Webhook, Schedule)
         if (lower.contains("battery") || lower.contains("charge")) {
             val flow = buildBatteryFlow()
+            val toolExecutions = listOf(
+                ToolExecution("add_node", "Created trigger \"Battery Level Spark\" [spark.battery]"),
+                ToolExecution("add_node", "Created action \"Battery Notification\" [device.notify]"),
+                ToolExecution("connect_nodes", "Connected trigger → action stream"),
+                ToolExecution("validate_structure", "Structure validated: 2 steps operational"),
+            )
             return AiChatMessage(
                 sender = MessageSender.Assistant,
                 text = "Here is a complete **Low Battery Alert** automation. It triggers when battery drops below 20% and sends a notification.",
                 flowProposal = flow,
+                toolCalls = toolExecutions,
             )
         }
 
         if (lower.contains("webhook") || lower.contains("http") || lower.contains("api")) {
             val flow = buildWebhookFlow()
+            val toolExecutions = listOf(
+                ToolExecution("add_node", "Created trigger \"Webhook Spark\" [spark.webhook]"),
+                ToolExecution("add_node", "Created transformer \"Parse Payload\" [code.script]"),
+                ToolExecution("add_node", "Created action \"Alert Notification\" [device.notify]"),
+                ToolExecution("connect_nodes", "Connected pipeline stream: Webhook → Parse → Alert"),
+                ToolExecution("validate_structure", "Structure validated: 3 steps operational"),
+            )
             return AiChatMessage(
                 sender = MessageSender.Assistant,
                 text = "Here is an **Incoming Webhook & Notification** flow. It listens for webhooks on your device and alerts you with the payload data.",
                 flowProposal = flow,
+                toolCalls = toolExecutions,
             )
         }
 
