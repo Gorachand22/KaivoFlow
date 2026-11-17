@@ -1,6 +1,8 @@
 package com.kaivoflow.feature.flows
 
 import com.kaivoflow.core.engine.LifecycleState
+import com.kaivoflow.feature.flows.ai.agent.AgentRepository
+import com.kaivoflow.feature.flows.ai.agent.CustomAgent
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -50,8 +52,10 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.AnnotatedString
@@ -98,7 +102,7 @@ import java.util.UUID
 import javax.inject.Inject
 
 enum class DashboardTab {
-    Flows, Credentials, Variables, DataTables
+    Flows, Agents, Credentials, Variables, DataTables
 }
 
 /**
@@ -114,9 +118,21 @@ class FlowListViewModel @Inject constructor(
     private val variableRepository: WorkflowVariableRepository,
     private val credentialRepository: CredentialRepository,
     private val dataTableRepository: DataTableRepository,
+    private val agentRepository: AgentRepository,
     private val scheduler: FlowScheduler,
     private val activation: com.kaivoflow.core.work.alwayson.ActivationManager,
 ) : ViewModel() {
+
+    val agents: StateFlow<List<CustomAgent>> = agentRepository.observeAgents()
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+
+    fun deleteAgent(id: String) {
+        viewModelScope.launch { agentRepository.deleteAgent(id) }
+    }
+
+    fun duplicateAgent(id: String) {
+        viewModelScope.launch { agentRepository.duplicateAgent(id) }
+    }
 
     private val _isCreating = MutableStateFlow(false)
     val isCreating: StateFlow<Boolean> = _isCreating.asStateFlow()
@@ -412,6 +428,7 @@ fun FlowListScreen(
     onOpenSettings: () -> Unit,
     onOpenPrompt: (String) -> Unit = {},
     onOpenAiAssistant: (String?) -> Unit = {},
+    onOpenAgentBuilder: (String?) -> Unit = {},
     viewModel: FlowListViewModel = hiltViewModel(),
 ) {
     var publishFlowId by remember { mutableStateOf<String?>(null) }
@@ -421,6 +438,7 @@ fun FlowListScreen(
     val selectedGroupId by viewModel.selectedGroupId.collectAsStateWithLifecycle()
     val groupVariables by viewModel.groupVariables.collectAsStateWithLifecycle()
     val allVariables by viewModel.allVariables.collectAsStateWithLifecycle()
+    val agents by viewModel.agents.collectAsStateWithLifecycle()
     val credentials by viewModel.credentials.collectAsStateWithLifecycle()
     val credentialSearchQuery by viewModel.credentialSearchQuery.collectAsStateWithLifecycle()
     val showCreateCredential by viewModel.showCreateCredentialDialog.collectAsStateWithLifecycle()
@@ -505,6 +523,13 @@ fun FlowListScreen(
                             label = "Workflows (${state.flows.size})",
                             isSelected = currentTab == DashboardTab.Flows,
                             onClick = { viewModel.setTab(DashboardTab.Flows) },
+                        )
+                    }
+                    item {
+                        DashboardTabPill(
+                            label = "Build Agents (${agents.size})",
+                            isSelected = currentTab == DashboardTab.Agents,
+                            onClick = { viewModel.setTab(DashboardTab.Agents) },
                         )
                     }
                     item {
@@ -600,6 +625,16 @@ fun FlowListScreen(
                                 )
                             }
                         }
+                    }
+
+                    DashboardTab.Agents -> {
+                        AgentsDashboardView(
+                            agents = agents,
+                            onOpenAgentBuilder = onOpenAgentBuilder,
+                            onDeleteAgent = viewModel::deleteAgent,
+                            onDuplicateAgent = viewModel::duplicateAgent,
+                            modifier = Modifier.weight(1f),
+                        )
                     }
 
                     DashboardTab.Credentials -> {
@@ -1819,6 +1854,234 @@ private fun LifecycleChip(flow: FlowSummary) {
                 }
             }
             LifecycleState.Draft -> Unit
+        }
+    }
+}
+
+@Composable
+private fun AgentsDashboardView(
+    agents: List<CustomAgent>,
+    onOpenAgentBuilder: (String?) -> Unit,
+    onDeleteAgent: (String) -> Unit,
+    onDuplicateAgent: (String) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val colors = KaivoTheme.colors
+    LazyColumn(
+        modifier = modifier
+            .fillMaxWidth()
+            .padding(horizontal = 16.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp),
+        contentPadding = PaddingValues(top = 8.dp, bottom = 24.dp),
+    ) {
+        item {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween,
+            ) {
+                Column {
+                    Text(
+                        text = "AI Agents",
+                        style = androidx.compose.material3.MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.Bold,
+                        color = colors.inkPrimary,
+                    )
+                    Text(
+                        text = "Dedicated autonomous agents with triggers & tools",
+                        style = androidx.compose.material3.MaterialTheme.typography.bodySmall,
+                        color = colors.inkSecondary,
+                    )
+                }
+
+                Button(
+                    onClick = { onOpenAgentBuilder(null) },
+                    shape = KaivoShapes.chip,
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = colors.royalGold,
+                        contentColor = Color.Black,
+                    ),
+                    contentPadding = PaddingValues(horizontal = 14.dp, vertical = 6.dp),
+                ) {
+                    Icon(
+                        KaivoIcons.icon("add"),
+                        contentDescription = null,
+                        modifier = Modifier.size(16.dp),
+                    )
+                    Spacer(Modifier.width(6.dp))
+                    Text(
+                        text = "Build Agent",
+                        style = androidx.compose.material3.MaterialTheme.typography.labelMedium,
+                        fontWeight = FontWeight.Bold,
+                    )
+                }
+            }
+        }
+
+        if (agents.isEmpty()) {
+            item {
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(vertical = 40.dp),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Column(
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        Text(
+                            text = "🤖",
+                            fontSize = 40.sp,
+                        )
+                        Text(
+                            text = "No custom agents yet",
+                            style = androidx.compose.material3.MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.Bold,
+                            color = colors.inkPrimary,
+                        )
+                        Text(
+                            text = "Build dedicated autonomous agents that run schedules, search web, and use custom tools.",
+                            style = androidx.compose.material3.MaterialTheme.typography.bodySmall,
+                            color = colors.inkSecondary,
+                            textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+                        )
+                        Spacer(Modifier.height(8.dp))
+                        Button(
+                            onClick = { onOpenAgentBuilder(null) },
+                            shape = KaivoShapes.chip,
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = colors.royalGold,
+                                contentColor = Color.Black,
+                            ),
+                        ) {
+                            Text("Build First Agent", fontWeight = FontWeight.Bold)
+                        }
+                    }
+                }
+            }
+        } else {
+            items(agents, key = { it.id }) { agent ->
+                AgentCard(
+                    agent = agent,
+                    onClick = { onOpenAgentBuilder(agent.id) },
+                    onDelete = { onDeleteAgent(agent.id) },
+                    onDuplicate = { onDuplicateAgent(agent.id) },
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun AgentCard(
+    agent: CustomAgent,
+    onClick: () -> Unit,
+    onDelete: () -> Unit,
+    onDuplicate: () -> Unit,
+) {
+    val colors = KaivoTheme.colors
+    var showMenu by remember { mutableStateOf(false) }
+
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(KaivoShapes.medallion)
+            .background(colors.surfaceCard)
+            .border(1.dp, colors.hairline, KaivoShapes.medallion)
+            .clickable { onClick() }
+            .padding(14.dp),
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            // Icon Badge
+            Box(
+                modifier = Modifier
+                    .size(46.dp)
+                    .clip(androidx.compose.foundation.shape.RoundedCornerShape(12.dp))
+                    .background(Color(agent.iconColorHex)),
+                contentAlignment = Alignment.Center,
+            ) {
+                Text(agent.iconEmoji, fontSize = 24.sp)
+            }
+
+            // Details
+            Column(
+                modifier = Modifier.weight(1f),
+                verticalArrangement = Arrangement.spacedBy(4.dp),
+            ) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    Text(
+                        text = agent.name,
+                        style = androidx.compose.material3.MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.Bold,
+                        color = colors.inkPrimary,
+                    )
+                    Box(
+                        modifier = Modifier
+                            .clip(KaivoShapes.chip)
+                            .background(if (agent.isPublished) colors.statusSuccess.copy(alpha = 0.2f) else colors.royalGold.copy(alpha = 0.2f))
+                            .padding(horizontal = 6.dp, vertical = 2.dp),
+                    ) {
+                        Text(
+                            text = if (agent.isPublished) "Live" else "Draft",
+                            style = androidx.compose.material3.MaterialTheme.typography.labelSmall,
+                            color = if (agent.isPublished) colors.statusSuccess else colors.royalGold,
+                            fontWeight = FontWeight.Bold,
+                        )
+                    }
+                }
+
+                Text(
+                    text = "${agent.model} • ${agent.triggers.size} Trigger(s) • ${agent.tools.size} Tool(s)",
+                    style = androidx.compose.material3.MaterialTheme.typography.bodySmall,
+                    color = colors.inkSecondary,
+                )
+            }
+
+            // Overflow Menu
+            Box {
+                IconButton(onClick = { showMenu = true }) {
+                    Icon(
+                        KaivoIcons.icon("moreVert"),
+                        contentDescription = "Options",
+                        tint = colors.inkSecondary,
+                    )
+                }
+                DropdownMenu(
+                    expanded = showMenu,
+                    onDismissRequest = { showMenu = false },
+                    modifier = Modifier.background(colors.surfaceCard),
+                ) {
+                    DropdownMenuItem(
+                        text = { Text("Edit Agent", color = colors.inkPrimary) },
+                        onClick = {
+                            showMenu = false
+                            onClick()
+                        },
+                    )
+                    DropdownMenuItem(
+                        text = { Text("Duplicate", color = colors.inkPrimary) },
+                        onClick = {
+                            showMenu = false
+                            onDuplicate()
+                        },
+                    )
+                    DropdownMenuItem(
+                        text = { Text("Delete", color = colors.statusError) },
+                        onClick = {
+                            showMenu = false
+                            onDelete()
+                        },
+                    )
+                }
+            }
         }
     }
 }

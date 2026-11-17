@@ -22,6 +22,9 @@ data class AiAssistantUiState(
     val providerConfig: AiProviderConfig = AiProviderConfig(),
     val showSettingsSheet: Boolean = false,
     val activeProposedFlow: Flow? = null,
+    val isDiscoveringModels: Boolean = false,
+    val modelDiscoveryMessage: String? = null,
+    val modelDiscoveryIsError: Boolean = false,
 )
 
 @HiltViewModel
@@ -33,6 +36,7 @@ class AiAssistantViewModel @Inject constructor(
 ) : ViewModel() {
 
     private val agent = AiWorkflowAgent(http)
+    private val modelDiscovery = ModelDiscoveryService(http)
     private val flowId: String? = savedStateHandle["flowId"]
 
     private val _uiState = MutableStateFlow(AiAssistantUiState())
@@ -51,6 +55,51 @@ class AiAssistantViewModel @Inject constructor(
         }
     }
 
+    fun discoverModels(provider: AiProvider, baseUrl: String, apiKey: String) {
+        viewModelScope.launch {
+            _uiState.update {
+                it.copy(
+                    isDiscoveringModels = true,
+                    modelDiscoveryMessage = null,
+                    modelDiscoveryIsError = false,
+                )
+            }
+            val result = modelDiscovery.discoverModels(provider, baseUrl, apiKey)
+            result.fold(
+                onSuccess = { discovered ->
+                    _uiState.update { state ->
+                        val updatedConfig = state.providerConfig.copy(
+                            provider = provider,
+                            baseUrl = baseUrl,
+                            apiKey = apiKey,
+                            discoveredModels = discovered,
+                            model = if (discovered.contains(state.providerConfig.model)) {
+                                state.providerConfig.model
+                            } else {
+                                discovered.firstOrNull() ?: state.providerConfig.model
+                            },
+                        )
+                        state.copy(
+                            isDiscoveringModels = false,
+                            providerConfig = updatedConfig,
+                            modelDiscoveryMessage = "Discovered ${discovered.size} model(s) successfully!",
+                            modelDiscoveryIsError = false,
+                        )
+                    }
+                },
+                onFailure = { err ->
+                    _uiState.update {
+                        it.copy(
+                            isDiscoveringModels = false,
+                            modelDiscoveryMessage = err.message ?: "Failed to connect to provider",
+                            modelDiscoveryIsError = true,
+                        )
+                    }
+                }
+            )
+        }
+    }
+
     fun saveProviderConfig(config: AiProviderConfig) {
         viewModelScope.launch {
             credentialRepository.save(
@@ -59,74 +108,92 @@ class AiAssistantViewModel @Inject constructor(
                 label = "AI Assistant Config",
                 fields = config.toMap(),
             )
-            _uiState.update { it.copy(providerConfig = config, showSettingsSheet = false) }
+            _uiState.update {
+                it.copy(
+                    providerConfig = config,
+                    showSettingsSheet = false,
+                    modelDiscoveryMessage = null,
+                )
+            }
         }
     }
 
     fun toggleSettingsSheet(show: Boolean) {
-        _uiState.update { it.copy(showSettingsSheet = show) }
+        _uiState.update {
+            it.copy(
+                showSettingsSheet = show,
+                modelDiscoveryMessage = if (!show) null else it.modelDiscoveryMessage,
+            )
+        }
     }
 
     fun detachFlow() {
-        _uiState.update {
-            it.copy(
-                currentFlow = null,
-                activeProposedFlow = null,
-            )
-        }
-        val msg = AiChatMessage(
-            sender = MessageSender.Assistant,
-            text = "Detached from workflow context. You are now in general automation mode. What would you like to build or discuss?",
-        )
-        _uiState.update { it.copy(messages = it.messages + msg) }
+        _uiState.update { it.copy(currentFlow = null, activeProposedFlow = null) }
+    }
+
+    fun clearChat() {
+        initSession(flowId)
     }
 
     private fun initSession(targetFlowId: String?) {
         viewModelScope.launch {
-            val flow = if (!targetFlowId.isNullOrBlank()) flowRepository.flow(targetFlowId) else null
-            val greeting = if (flow != null) {
-                AiChatMessage(
-                    sender = MessageSender.Assistant,
-                    text = "I see you're working on the **\"${flow.name}\"** workflow. What would you like to do with it — make changes, debug an issue, set up steps, or something else?",
-                )
+            if (targetFlowId.isNullOrBlank()) {
+                _uiState.update {
+                    it.copy(
+                        messages = listOf(
+                            AiChatMessage(
+                                sender = MessageSender.Assistant,
+                                text = "Hello! I am your sovereign workflow assistant.\n\n" +
+                                    "Describe any automated workflow you want to build (e.g. \"Fetch weather API every morning and send SMS\" or \"Webhook that writes JSON to Data Table\").",
+                            )
+                        )
+                    )
+                }
             } else {
-                AiChatMessage(
-                    sender = MessageSender.Assistant,
-                    text = "What do you want to automate? Tell me what to build or ask a question.",
-                )
-            }
-            _uiState.update {
-                it.copy(
-                    currentFlow = flow,
-                    messages = listOf(greeting),
-                )
+                val flow = flowRepository.flow(targetFlowId)
+                if (flow != null) {
+                    val report = agent.diagnose(flow)
+                    val introText = "I see you're working on the \"${flow.name}\" workflow.\n\n" +
+                        "I've analyzed its structure (${flow.steps.size} steps). What would you like to do with it — make changes, fix issues, or add new steps?"
+                    _uiState.update {
+                        it.copy(
+                            currentFlow = flow,
+                            messages = listOf(
+                                AiChatMessage(
+                                    sender = MessageSender.Assistant,
+                                    text = introText,
+                                    diagnosisReport = report,
+                                )
+                            )
+                        )
+                    }
+                }
             }
         }
     }
 
-    fun sendMessage(prompt: String) {
-        val trimmed = prompt.trim()
+    fun sendMessage(userText: String) {
+        val trimmed = userText.trim()
         if (trimmed.isBlank() || _uiState.value.isGenerating) return
 
-        val userMsg = AiChatMessage(
+        val userMessage = AiChatMessage(
             sender = MessageSender.User,
             text = trimmed,
         )
 
         _uiState.update {
             it.copy(
-                messages = it.messages + userMsg,
+                messages = it.messages + userMessage,
                 isGenerating = true,
             )
         }
 
         viewModelScope.launch {
-            val state = _uiState.value
             val response = agent.executeTurn(
                 prompt = trimmed,
-                currentFlow = state.currentFlow,
-                config = state.providerConfig,
-                chatHistory = state.messages,
+                currentFlow = _uiState.value.currentFlow,
+                config = _uiState.value.providerConfig,
+                chatHistory = _uiState.value.messages,
             )
 
             _uiState.update {
@@ -139,7 +206,7 @@ class AiAssistantViewModel @Inject constructor(
         }
     }
 
-    fun applyProposedFlow(flow: Flow, onApplied: (flowId: String) -> Unit) {
+    fun applyProposedFlow(flow: Flow, onApplied: (String) -> Unit) {
         viewModelScope.launch {
             flowRepository.save(flow)
             _uiState.update {
@@ -148,15 +215,11 @@ class AiAssistantViewModel @Inject constructor(
                     activeProposedFlow = null,
                     messages = it.messages + AiChatMessage(
                         sender = MessageSender.Assistant,
-                        text = "✅ Successfully applied changes to **\"${flow.name}\"**! Opening canvas...",
-                    ),
+                        text = "Applied \"${flow.name}\" to your local workflows! You can inspect and run it directly on the canvas.",
+                    )
                 )
             }
             onApplied(flow.id)
         }
-    }
-
-    fun clearChat() {
-        initSession(_uiState.value.currentFlow?.id)
     }
 }

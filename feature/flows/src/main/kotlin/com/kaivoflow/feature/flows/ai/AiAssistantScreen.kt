@@ -35,6 +35,7 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.ModalBottomSheet
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Text
@@ -150,6 +151,12 @@ fun AiAssistantScreen(
         if (state.showSettingsSheet) {
             AiProviderSettingsSheet(
                 currentConfig = state.providerConfig,
+                isDiscovering = state.isDiscoveringModels,
+                discoveryMessage = state.modelDiscoveryMessage,
+                isDiscoveryError = state.modelDiscoveryIsError,
+                onDiscoverModels = { provider, baseUrl, apiKey ->
+                    viewModel.discoverModels(provider, baseUrl, apiKey)
+                },
                 onDismiss = { viewModel.toggleSettingsSheet(false) },
                 onSave = { newConfig -> viewModel.saveProviderConfig(newConfig) },
             )
@@ -567,26 +574,11 @@ private fun WorkflowPreviewCard(
 
 @Composable
 private fun GeneratingIndicator() {
-    val colors = KaivoTheme.colors
-    Row(
-        Modifier
-            .clip(KaivoShapes.chip)
-            .background(colors.surfaceCard)
-            .border(1.dp, colors.hairline, KaivoShapes.chip)
-            .padding(horizontal = 14.dp, vertical = 8.dp),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(10.dp),
+    Box(
+        modifier = Modifier.padding(vertical = 4.dp),
+        contentAlignment = Alignment.CenterStart,
     ) {
-        CircularProgressIndicator(
-            modifier = Modifier.size(16.dp),
-            color = colors.royalGold,
-            strokeWidth = 2.dp,
-        )
-        Text(
-            text = "AI is thinking & designing...",
-            style = androidx.compose.material3.MaterialTheme.typography.bodySmall,
-            color = colors.inkSecondary,
-        )
+        TinkeringPill(text = "Tinkering...")
     }
 }
 
@@ -691,15 +683,21 @@ private fun BottomInputBar(
 @Composable
 private fun AiProviderSettingsSheet(
     currentConfig: AiProviderConfig,
+    isDiscovering: Boolean,
+    discoveryMessage: String?,
+    isDiscoveryError: Boolean,
+    onDiscoverModels: (AiProvider, String, String) -> Unit,
     onDismiss: () -> Unit,
     onSave: (AiProviderConfig) -> Unit,
 ) {
     val colors = KaivoTheme.colors
     var selectedProvider by remember { mutableStateOf(currentConfig.provider) }
-    var selectedModel by remember { mutableStateOf(currentConfig.model) }
+    var selectedModel by remember(currentConfig.model) { mutableStateOf(currentConfig.model) }
     var apiKey by remember { mutableStateOf(currentConfig.apiKey) }
     var baseUrl by remember { mutableStateOf(currentConfig.baseUrl) }
     var showPassword by remember { mutableStateOf(false) }
+
+    val effectiveModels = currentConfig.effectiveModels.ifEmpty { selectedProvider.availableModels }
 
     ModalBottomSheet(
         onDismissRequest = onDismiss,
@@ -720,7 +718,7 @@ private fun AiProviderSettingsSheet(
                 horizontalArrangement = Arrangement.SpaceBetween,
             ) {
                 Text(
-                    text = "AI Provider Settings",
+                    text = "AI Provider & Model Settings",
                     style = androidx.compose.material3.MaterialTheme.typography.titleLarge,
                     fontWeight = FontWeight.Bold,
                     color = colors.inkPrimary,
@@ -740,6 +738,7 @@ private fun AiProviderSettingsSheet(
             Text(
                 text = "Provider",
                 style = androidx.compose.material3.MaterialTheme.typography.labelMedium,
+                fontWeight = FontWeight.SemiBold,
                 color = colors.inkPrimary,
             )
 
@@ -753,8 +752,8 @@ private fun AiProviderSettingsSheet(
                             .border(1.dp, if (isSelected) colors.royalGold else colors.hairline, KaivoShapes.chip)
                             .clickable {
                                 selectedProvider = provider
-                                selectedModel = provider.defaultModel
                                 baseUrl = provider.defaultBaseUrl
+                                selectedModel = provider.defaultModel
                             }
                             .padding(horizontal = 14.dp, vertical = 8.dp),
                     ) {
@@ -768,65 +767,12 @@ private fun AiProviderSettingsSheet(
                 }
             }
 
-            // Model selection chips
-            Text(
-                text = "Model",
-                style = androidx.compose.material3.MaterialTheme.typography.labelMedium,
-                color = colors.inkPrimary,
-            )
-
-            LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                items(selectedProvider.availableModels) { model ->
-                    val isSelected = model == selectedModel
-                    Box(
-                        Modifier
-                            .clip(KaivoShapes.chip)
-                            .background(if (isSelected) colors.royalGold else colors.surfaceCard)
-                            .border(1.dp, if (isSelected) colors.royalGold else colors.hairline, KaivoShapes.chip)
-                            .clickable { selectedModel = model }
-                            .padding(horizontal = 12.dp, vertical = 6.dp),
-                    ) {
-                        Text(
-                            text = model,
-                            style = androidx.compose.material3.MaterialTheme.typography.labelSmall,
-                            color = if (isSelected) Color.Black else colors.inkPrimary,
-                        )
-                    }
-                }
-            }
-
-            // API Key field (if provider requires key)
-            if (selectedProvider.requiresApiKey) {
-                OutlinedTextField(
-                    value = apiKey,
-                    onValueChange = { apiKey = it },
-                    label = { Text("API Key") },
-                    placeholder = { Text("Enter your ${selectedProvider.displayName} API Key") },
-                    visualTransformation = if (showPassword) VisualTransformation.None else PasswordVisualTransformation(),
-                    trailingIcon = {
-                        IconButton(onClick = { showPassword = !showPassword }) {
-                            Icon(
-                                KaivoIcons.icon(if (showPassword) "visibilityOff" else "visibility"),
-                                contentDescription = "Toggle visibility",
-                                tint = colors.inkSecondary,
-                            )
-                        }
-                    },
-                    colors = OutlinedTextFieldDefaults.colors(
-                        focusedBorderColor = colors.royalGold,
-                        unfocusedBorderColor = colors.hairline,
-                        focusedTextColor = colors.inkPrimary,
-                        unfocusedTextColor = colors.inkPrimary,
-                    ),
-                    modifier = Modifier.fillMaxWidth(),
-                )
-            }
-
-            // Base URL field
+            // Base URL field (supports custom OpenAI-compatible endpoints like NVIDIA NIM, local vLLM, etc.)
             OutlinedTextField(
                 value = baseUrl,
                 onValueChange = { baseUrl = it },
                 label = { Text("Base URL / Endpoint") },
+                placeholder = { Text("e.g. https://integrate.api.nvidia.com/v1") },
                 colors = OutlinedTextFieldDefaults.colors(
                     focusedBorderColor = colors.royalGold,
                     unfocusedBorderColor = colors.hairline,
@@ -836,6 +782,137 @@ private fun AiProviderSettingsSheet(
                 modifier = Modifier.fillMaxWidth(),
             )
 
+            // API Key field (optional for local/proxy endpoints)
+            OutlinedTextField(
+                value = apiKey,
+                onValueChange = { apiKey = it },
+                label = {
+                    Text(
+                        if (selectedProvider.requiresApiKey) "API Key *"
+                        else "API Key (Optional for local / proxies)"
+                    )
+                },
+                placeholder = { Text("Enter your API key") },
+                visualTransformation = if (showPassword) VisualTransformation.None else PasswordVisualTransformation(),
+                trailingIcon = {
+                    IconButton(onClick = { showPassword = !showPassword }) {
+                        Icon(
+                            KaivoIcons.icon(if (showPassword) "visibilityOff" else "visibility"),
+                            contentDescription = "Toggle visibility",
+                            tint = colors.inkSecondary,
+                        )
+                    }
+                },
+                colors = OutlinedTextFieldDefaults.colors(
+                    focusedBorderColor = colors.royalGold,
+                    unfocusedBorderColor = colors.hairline,
+                    focusedTextColor = colors.inkPrimary,
+                    unfocusedTextColor = colors.inkPrimary,
+                ),
+                modifier = Modifier.fillMaxWidth(),
+            )
+
+            // Dynamic Discovery Button & Tinkering Pill
+            if (isDiscovering) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(vertical = 4.dp),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    TinkeringPill(text = "Tinkering & Discovering Models...")
+                }
+            } else {
+                OutlinedButton(
+                    onClick = { onDiscoverModels(selectedProvider, baseUrl, apiKey) },
+                    shape = KaivoShapes.chip,
+                    border = androidx.compose.foundation.BorderStroke(1.dp, colors.royalGold.copy(alpha = 0.5f)),
+                    colors = ButtonDefaults.outlinedButtonColors(contentColor = colors.royalGold),
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Icon(
+                        KaivoIcons.icon("refresh"),
+                        contentDescription = null,
+                        modifier = Modifier.size(16.dp),
+                    )
+                    Spacer(Modifier.width(8.dp))
+                    Text(
+                        text = "Connect & Discover Models",
+                        fontWeight = FontWeight.SemiBold,
+                    )
+                }
+            }
+
+            // Discovery status message
+            if (discoveryMessage != null) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(KaivoShapes.chip)
+                        .background(if (isDiscoveryError) colors.statusError.copy(alpha = 0.15f) else colors.statusSuccess.copy(alpha = 0.15f))
+                        .padding(horizontal = 12.dp, vertical = 8.dp),
+                ) {
+                    Text(
+                        text = discoveryMessage,
+                        style = androidx.compose.material3.MaterialTheme.typography.bodySmall,
+                        color = if (isDiscoveryError) colors.statusError else colors.statusSuccess,
+                    )
+                }
+            }
+
+            // Model Selector
+            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                Text(
+                    text = "Active Model",
+                    style = androidx.compose.material3.MaterialTheme.typography.labelMedium,
+                    fontWeight = FontWeight.SemiBold,
+                    color = colors.inkPrimary,
+                )
+
+                OutlinedTextField(
+                    value = selectedModel,
+                    onValueChange = { selectedModel = it },
+                    label = { Text("Model ID") },
+                    placeholder = { Text("e.g. meta/llama-3.3-70b-instruct or gpt-4o") },
+                    colors = OutlinedTextFieldDefaults.colors(
+                        focusedBorderColor = colors.royalGold,
+                        unfocusedBorderColor = colors.hairline,
+                        focusedTextColor = colors.inkPrimary,
+                        unfocusedTextColor = colors.inkPrimary,
+                    ),
+                    modifier = Modifier.fillMaxWidth(),
+                )
+
+                if (effectiveModels.isNotEmpty()) {
+                    Text(
+                        text = "Available / Discovered Models:",
+                        style = androidx.compose.material3.MaterialTheme.typography.labelSmall,
+                        color = colors.inkSecondary,
+                        modifier = Modifier.padding(top = 4.dp),
+                    )
+
+                    LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        items(effectiveModels) { model ->
+                            val isSelected = model == selectedModel
+                            Box(
+                                Modifier
+                                    .clip(KaivoShapes.chip)
+                                    .background(if (isSelected) colors.royalGold else colors.surfaceCard)
+                                    .border(1.dp, if (isSelected) colors.royalGold else colors.hairline, KaivoShapes.chip)
+                                    .clickable { selectedModel = model }
+                                    .padding(horizontal = 10.dp, vertical = 6.dp),
+                            ) {
+                                Text(
+                                    text = model,
+                                    style = androidx.compose.material3.MaterialTheme.typography.labelSmall,
+                                    color = if (isSelected) Color.Black else colors.inkPrimary,
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+
             Spacer(Modifier.height(8.dp))
 
             Button(
@@ -843,9 +920,10 @@ private fun AiProviderSettingsSheet(
                     onSave(
                         AiProviderConfig(
                             provider = selectedProvider,
-                            model = selectedModel,
+                            model = selectedModel.trim().ifBlank { selectedProvider.defaultModel },
                             apiKey = apiKey.trim(),
                             baseUrl = baseUrl.trim(),
+                            discoveredModels = currentConfig.discoveredModels,
                         )
                     )
                 },
@@ -854,7 +932,7 @@ private fun AiProviderSettingsSheet(
                 modifier = Modifier.fillMaxWidth(),
             ) {
                 Text(
-                    text = "Save & Connect",
+                    text = "Save & Apply Settings",
                     style = androidx.compose.material3.MaterialTheme.typography.labelLarge,
                     fontWeight = FontWeight.Bold,
                 )

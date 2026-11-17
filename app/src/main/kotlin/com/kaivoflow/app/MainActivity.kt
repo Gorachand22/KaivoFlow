@@ -19,6 +19,7 @@ import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
+import androidx.hilt.navigation.compose.hiltViewModel
 import com.kaivoflow.core.design.KaivoTheme
 import com.kaivoflow.feature.canvas.CanvasScreen
 import com.kaivoflow.feature.flows.FlowListScreen
@@ -97,9 +98,11 @@ private object Routes {
     const val Permissions = "permissions"
     const val Credentials = "credentials"
     const val Assistant = "assistant?flowId={flowId}"
+    const val AgentBuilder = "agent_builder?agentId={agentId}"
 
     fun canvas(flowId: String) = "canvas/$flowId"
     fun assistant(flowId: String? = null) = if (flowId != null) "assistant?flowId=$flowId" else "assistant"
+    fun agentBuilder(agentId: String? = null) = if (agentId != null) "agent_builder?agentId=$agentId" else "agent_builder"
 }
 
 @Composable
@@ -125,6 +128,7 @@ private fun KaivoNavHost(
                 onOpenSettings = { navController.navigate(Routes.Settings) },
                 onOpenPrompt = { flowId -> navController.navigate(Routes.canvas(flowId)) },
                 onOpenAiAssistant = { flowId -> navController.navigate(Routes.assistant(flowId)) },
+                onOpenAgentBuilder = { agentId -> navController.navigate(Routes.agentBuilder(agentId)) },
             )
         }
         composable(Routes.History) {
@@ -159,6 +163,22 @@ private fun KaivoNavHost(
                         popUpTo(Routes.Flows)
                     }
                 },
+            )
+        }
+        composable(
+            route = Routes.AgentBuilder,
+            arguments = listOf(
+                navArgument("agentId") {
+                    type = NavType.StringType
+                    nullable = true
+                    defaultValue = null
+                }
+            ),
+        ) {
+            val builderViewModel: com.kaivoflow.feature.flows.ai.agent.AgentBuilderViewModel = hiltViewModel()
+            com.kaivoflow.feature.flows.ai.agent.AgentBuilderScreen(
+                viewModel = builderViewModel,
+                onNavigateBack = { navController.popBackStack() },
             )
         }
         composable(Routes.Settings) {
