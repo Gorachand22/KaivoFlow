@@ -138,23 +138,12 @@ class AiAssistantViewModel @Inject constructor(
     private fun initSession(targetFlowId: String?) {
         viewModelScope.launch {
             if (targetFlowId.isNullOrBlank()) {
-                _uiState.update {
-                    it.copy(
-                        messages = listOf(
-                            AiChatMessage(
-                                sender = MessageSender.Assistant,
-                                text = "Hello! I am your sovereign workflow assistant.\n\n" +
-                                    "Describe any automated workflow you want to build (e.g. \"Fetch weather API every morning and send SMS\" or \"Webhook that writes JSON to Data Table\").",
-                            )
-                        )
-                    )
-                }
+                _uiState.update { it.copy(messages = emptyList()) }
             } else {
                 val flow = flowRepository.flow(targetFlowId)
                 if (flow != null) {
                     val report = agent.diagnose(flow)
-                    val introText = "I see you're working on the \"${flow.name}\" workflow.\n\n" +
-                        "I've analyzed its structure (${flow.steps.size} steps). What would you like to do with it — make changes, fix issues, or add new steps?"
+                    val introText = "I see you're working on the \"${flow.name}\" workflow. What would you like to do with it — make changes, debug an issue, or add new steps?"
                     _uiState.update {
                         it.copy(
                             currentFlow = flow,

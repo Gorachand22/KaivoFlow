@@ -4,6 +4,8 @@ import com.kaivoflow.core.engine.LifecycleState
 import com.kaivoflow.feature.flows.ai.agent.AgentRepository
 import com.kaivoflow.feature.flows.ai.agent.CustomAgent
 
+import androidx.compose.foundation.layout.defaultMinSize
+import androidx.compose.ui.semantics.Role
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -102,7 +104,7 @@ import java.util.UUID
 import javax.inject.Inject
 
 enum class DashboardTab {
-    Flows, Agents, Credentials, Variables, DataTables
+    Flows, Credentials, Variables, DataTables
 }
 
 /**
@@ -527,13 +529,6 @@ fun FlowListScreen(
                     }
                     item {
                         DashboardTabPill(
-                            label = "Build Agents (${agents.size})",
-                            isSelected = currentTab == DashboardTab.Agents,
-                            onClick = { viewModel.setTab(DashboardTab.Agents) },
-                        )
-                    }
-                    item {
-                        DashboardTabPill(
                             label = "Credentials (${credentials.size})",
                             isSelected = currentTab == DashboardTab.Credentials,
                             onClick = { viewModel.setTab(DashboardTab.Credentials) },
@@ -566,17 +561,23 @@ fun FlowListScreen(
                                 .padding(horizontal = KaivoTheme.spacing.md, vertical = 4.dp),
                             horizontalArrangement = Arrangement.spacedBy(8.dp),
                         ) {
-                            GhostButton(
-                                text = stringResource(R.string.transfer_import_button),
+                            HomeActionButton(
+                                text = "Import",
                                 icon = "download",
                                 onClick = onImport,
                                 modifier = Modifier.weight(1f),
                             )
-                            GhostButton(
+                            HomeActionButton(
                                 text = "Ask AI",
                                 icon = "sparkles",
                                 onClick = { onOpenAiAssistant(null) },
-                                modifier = Modifier.weight(1f),
+                                modifier = Modifier.weight(1.05f),
+                            )
+                            HomeActionButton(
+                                text = "Build Agents",
+                                icon = "flash",
+                                onClick = { onOpenAgentBuilder(null) },
+                                modifier = Modifier.weight(1.2f),
                             )
                         }
 
@@ -625,16 +626,6 @@ fun FlowListScreen(
                                 )
                             }
                         }
-                    }
-
-                    DashboardTab.Agents -> {
-                        AgentsDashboardView(
-                            agents = agents,
-                            onOpenAgentBuilder = onOpenAgentBuilder,
-                            onDeleteAgent = viewModel::deleteAgent,
-                            onDuplicateAgent = viewModel::duplicateAgent,
-                            modifier = Modifier.weight(1f),
-                        )
                     }
 
                     DashboardTab.Credentials -> {
@@ -2083,5 +2074,44 @@ private fun AgentCard(
                 }
             }
         }
+    }
+}
+
+@Composable
+private fun HomeActionButton(
+    text: String,
+    icon: String,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val colors = KaivoTheme.colors
+    Row(
+        modifier = modifier
+            .defaultMinSize(minHeight = 42.dp)
+            .clip(KaivoShapes.pill)
+            .background(colors.surfaceElevated.copy(alpha = 0.55f))
+            .border(1.dp, colors.hairline, KaivoShapes.pill)
+            .clickable(role = Role.Button, onClick = onClick)
+            .padding(horizontal = 8.dp, vertical = 8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.Center,
+    ) {
+        Icon(
+            imageVector = KaivoIcons.icon(icon),
+            contentDescription = null,
+            tint = colors.inkPrimary,
+            modifier = Modifier.size(15.dp),
+        )
+        Spacer(Modifier.width(4.dp))
+        Text(
+            text = text,
+            style = androidx.compose.material3.MaterialTheme.typography.labelSmall.copy(
+                fontWeight = FontWeight.SemiBold,
+                fontSize = 11.5.sp,
+            ),
+            color = colors.inkPrimary,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
     }
 }

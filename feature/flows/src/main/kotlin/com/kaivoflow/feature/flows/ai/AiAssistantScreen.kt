@@ -1,5 +1,6 @@
 package com.kaivoflow.feature.flows.ai
 
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -25,6 +26,7 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -50,6 +52,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
@@ -74,6 +77,8 @@ fun AiAssistantScreen(
     val listState = rememberLazyListState()
 
     var inputText by remember { mutableStateOf("") }
+
+    val isChatEmpty = state.messages.isEmpty() && state.currentFlow == null
 
     LaunchedEffect(state.messages.size) {
         if (state.messages.isNotEmpty()) {
@@ -100,51 +105,73 @@ fun AiAssistantScreen(
                 onDetachFlow = { viewModel.detachFlow() },
             )
 
-            // ---------------- Chat Content ----------------
-            LazyColumn(
-                state = listState,
-                modifier = Modifier
-                    .weight(1f)
-                    .fillMaxWidth(),
-                contentPadding = PaddingValues(horizontal = 16.dp, vertical = 12.dp),
-                verticalArrangement = Arrangement.spacedBy(16.dp),
-            ) {
-                // If only 1 greeting message exists, show quick action suggestion chips
-                if (state.messages.size <= 1) {
-                    item {
-                        EmptyStateGreeting(
-                            flow = state.currentFlow,
-                            onSuggestionClick = { prompt -> viewModel.sendMessage(prompt) },
-                        )
-                    }
-                }
-
-                items(state.messages, key = { it.id }) { msg ->
-                    ChatMessageRow(
-                        message = msg,
-                        onApplyFlow = { flow -> viewModel.applyProposedFlow(flow, onOpenCanvas) },
+            if (isChatEmpty) {
+                // ---------------- Clean Floating Hero State (Screenshot 2) ----------------
+                Box(
+                    modifier = Modifier
+                        .weight(1f)
+                        .fillMaxWidth(),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    EmptyStateCenteredPrompt(
+                        text = inputText,
+                        onTextChange = { inputText = it },
+                        onSend = {
+                            viewModel.sendMessage(inputText)
+                            inputText = ""
+                        },
+                        onSuggestionClick = { prompt ->
+                            viewModel.sendMessage(prompt)
+                        },
                     )
                 }
+            } else {
+                // ---------------- Active Chat View (Screenshot 3) ----------------
+                LazyColumn(
+                    state = listState,
+                    modifier = Modifier
+                        .weight(1f)
+                        .fillMaxWidth(),
+                    contentPadding = PaddingValues(horizontal = 16.dp, vertical = 12.dp),
+                    verticalArrangement = Arrangement.spacedBy(16.dp),
+                ) {
+                    // If flow context attached and no user messages sent yet
+                    if (state.currentFlow != null && state.messages.size <= 1) {
+                        item {
+                            FlowContextHeroBanner(
+                                flow = state.currentFlow!!,
+                                onSuggestionClick = { prompt -> viewModel.sendMessage(prompt) },
+                            )
+                        }
+                    }
 
-                if (state.isGenerating) {
-                    item {
-                        GeneratingIndicator()
+                    items(state.messages, key = { it.id }) { msg ->
+                        ChatMessageRow(
+                            message = msg,
+                            onApplyFlow = { flow -> viewModel.applyProposedFlow(flow, onOpenCanvas) },
+                        )
+                    }
+
+                    if (state.isGenerating) {
+                        item {
+                            GeneratingIndicator()
+                        }
                     }
                 }
-            }
 
-            // ---------------- Input Bar ----------------
-            BottomInputBar(
-                text = inputText,
-                onTextChange = { inputText = it },
-                onSend = {
-                    viewModel.sendMessage(inputText)
-                    inputText = ""
-                },
-                flowContext = state.currentFlow,
-                onDetachFlow = { viewModel.detachFlow() },
-                enabled = !state.isGenerating,
-            )
+                // ---------------- Docked Bottom Input Bar ----------------
+                DockedBottomInputBar(
+                    text = inputText,
+                    onTextChange = { inputText = it },
+                    onSend = {
+                        viewModel.sendMessage(inputText)
+                        inputText = ""
+                    },
+                    flowContext = state.currentFlow,
+                    onDetachFlow = { viewModel.detachFlow() },
+                    enabled = !state.isGenerating,
+                )
+            }
         }
 
         // ---------------- Provider Settings Sheet ----------------
@@ -245,134 +272,248 @@ private fun TopBar(
 }
 
 @Composable
-private fun EmptyStateGreeting(
-    flow: Flow?,
+private fun EmptyStateCenteredPrompt(
+    text: String,
+    onTextChange: (String) -> Unit,
+    onSend: () -> Unit,
     onSuggestionClick: (String) -> Unit,
 ) {
     val colors = KaivoTheme.colors
     Column(
-        Modifier
+        modifier = Modifier
             .fillMaxWidth()
-            .padding(vertical = 16.dp),
+            .padding(horizontal = 20.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.spacedBy(16.dp),
+        verticalArrangement = Arrangement.Center,
     ) {
-        if (flow != null) {
-            // Attached flow context banner (Screenshot 3 style)
-            Box(
-                Modifier
-                    .fillMaxWidth()
-                    .clip(KaivoShapes.medallion)
-                    .background(colors.surfaceCard)
-                    .border(1.dp, colors.royalGold.copy(alpha = 0.35f), KaivoShapes.medallion)
-                    .padding(16.dp),
+        // Centered Header (Screenshot 2: ✨ What do you want to automate?)
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            Icon(
+                KaivoIcons.icon("sparkles"),
+                contentDescription = null,
+                tint = colors.royalGold,
+                modifier = Modifier.size(24.dp),
+            )
+            Text(
+                text = "What do you want to automate?",
+                style = androidx.compose.material3.MaterialTheme.typography.titleLarge,
+                fontWeight = FontWeight.Bold,
+                color = colors.inkPrimary,
+            )
+        }
+
+        Spacer(Modifier.height(20.dp))
+
+        // Floating Prompt Card matching n8n Screenshot 2
+        Card(
+            shape = RoundedCornerShape(16.dp),
+            colors = CardDefaults.cardColors(containerColor = Color(0xFF1E1E24)),
+            border = BorderStroke(1.dp, Color(0xFF2E2E36)),
+            modifier = Modifier.fillMaxWidth(),
+        ) {
+            Column(
+                modifier = Modifier.padding(16.dp),
             ) {
-                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                BasicTextField(
+                    value = text,
+                    onValueChange = onTextChange,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(84.dp),
+                    textStyle = androidx.compose.material3.MaterialTheme.typography.bodyLarge.copy(
+                        color = colors.inkPrimary,
+                    ),
+                    cursorBrush = SolidColor(colors.royalGold),
+                    decorationBox = { innerTextField ->
+                        if (text.isEmpty()) {
+                            Text(
+                                text = "Tell me what to build or ask a question",
+                                style = androidx.compose.material3.MaterialTheme.typography.bodyLarge,
+                                color = colors.inkSecondary,
+                            )
+                        }
+                        innerTextField()
+                    },
+                )
+
+                Spacer(Modifier.height(8.dp))
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    IconButton(
+                        onClick = { /* attachments or tools */ },
+                        modifier = Modifier.size(32.dp),
+                    ) {
+                        Icon(
+                            KaivoIcons.icon("add"),
+                            contentDescription = "Add context",
+                            tint = colors.inkSecondary,
+                            modifier = Modifier.size(20.dp),
+                        )
+                    }
+
+                    Spacer(Modifier.weight(1f))
+
+                    IconButton(
+                        onClick = { /* mic input */ },
+                        modifier = Modifier.size(32.dp),
+                    ) {
+                        Icon(
+                            KaivoIcons.icon("mic"),
+                            contentDescription = "Voice input",
+                            tint = colors.inkSecondary,
+                            modifier = Modifier.size(18.dp),
+                        )
+                    }
+
+                    Spacer(Modifier.width(8.dp))
+
+                    val canSend = text.isNotBlank()
+                    Box(
+                        modifier = Modifier
+                            .size(36.dp)
+                            .clip(CircleShape)
+                            .background(if (canSend) colors.royalGold else Color(0xFF2C2C34))
+                            .clickable(enabled = canSend) { onSend() },
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Icon(
+                            KaivoIcons.icon("forward"),
+                            contentDescription = "Send",
+                            tint = if (canSend) Color.Black else colors.inkSecondary,
+                            modifier = Modifier.size(18.dp),
+                        )
+                    }
+                }
+            }
+        }
+
+        Spacer(Modifier.height(16.dp))
+
+        // Horizontal suggestion chips matching Screenshot 2
+        LazyRow(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            val suggestions = listOf(
+                "Score my leads" to "settings",
+                "Process invoices" to "flow",
+                "Schedule social posts" to "history",
+                "Telegram support agent" to "sparkles",
+                "Battery monitor alert" to "flash",
+            )
+            items(suggestions) { (title, iconName) ->
+                Box(
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(10.dp))
+                        .background(Color(0xFF1E1E24))
+                        .border(1.dp, Color(0xFF2E2E36), RoundedCornerShape(10.dp))
+                        .clickable { onSuggestionClick(title) }
+                        .padding(horizontal = 12.dp, vertical = 8.dp),
+                ) {
                     Row(
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.spacedBy(6.dp),
                     ) {
-                        Icon(KaivoIcons.icon("flow"), contentDescription = null, tint = colors.royalGold, modifier = Modifier.size(18.dp))
-                        Text(
-                            text = flow.name,
-                            style = androidx.compose.material3.MaterialTheme.typography.titleMedium,
-                            fontWeight = FontWeight.Bold,
-                            color = colors.royalGold,
+                        Icon(
+                            KaivoIcons.icon(iconName),
+                            contentDescription = null,
+                            tint = colors.inkSecondary,
+                            modifier = Modifier.size(14.dp),
                         )
-                        Spacer(Modifier.weight(1f))
                         Text(
-                            text = "${flow.steps.size} Steps",
-                            style = androidx.compose.material3.MaterialTheme.typography.labelSmall,
-                            color = colors.inkSecondary,
+                            text = title,
+                            style = androidx.compose.material3.MaterialTheme.typography.labelMedium,
+                            color = colors.inkPrimary,
                         )
                     }
-                    Text(
-                        text = "I see you're working on the \"${flow.name}\" workflow. What would you like to do with it — make changes, debug an issue, configure steps, or something else?",
-                        style = androidx.compose.material3.MaterialTheme.typography.bodyMedium,
-                        color = colors.inkPrimary,
-                    )
                 }
-            }
-
-            Text(
-                text = "Quick actions for this workflow:",
-                style = androidx.compose.material3.MaterialTheme.typography.labelMedium,
-                color = colors.inkSecondary,
-                modifier = Modifier.align(Alignment.Start),
-            )
-
-            val flowSuggestions = listOf(
-                "🔍 Diagnose & fix validation issues",
-                "⚡ Add error notification handler",
-                "📝 Explain how this flow executes",
-                "➕ Add a JavaScript code transformation",
-            )
-
-            flowSuggestions.forEach { suggestion ->
-                SuggestionPill(text = suggestion, onClick = { onSuggestionClick(suggestion) })
-            }
-        } else {
-            // General builder mode (Screenshot 2 style)
-            Column(
-                horizontalAlignment = Alignment.CenterHorizontally,
-                verticalArrangement = Arrangement.spacedBy(6.dp),
-                modifier = Modifier.padding(top = 16.dp),
-            ) {
-                Icon(
-                    KaivoIcons.icon("sparkles"),
-                    contentDescription = null,
-                    tint = colors.royalGold,
-                    modifier = Modifier.size(36.dp),
-                )
-                Text(
-                    text = "What do you want to automate?",
-                    style = androidx.compose.material3.MaterialTheme.typography.headlineSmall,
-                    fontWeight = FontWeight.Bold,
-                    color = colors.inkPrimary,
-                )
-                Text(
-                    text = "Tell me what to build or ask a question",
-                    style = androidx.compose.material3.MaterialTheme.typography.bodyMedium,
-                    color = colors.inkSecondary,
-                )
-            }
-
-            Spacer(Modifier.height(12.dp))
-
-            val generalSuggestions = listOf(
-                "🔔 Notify me when phone battery drops below 20%",
-                "🌐 Incoming webhook that triggers a notification",
-                "⏱️ Run a schedule every morning at 9 AM",
-                "💬 Auto-respond to incoming SMS messages",
-            )
-
-            generalSuggestions.forEach { suggestion ->
-                SuggestionPill(text = suggestion, onClick = { onSuggestionClick(suggestion) })
             }
         }
     }
 }
 
 @Composable
-private fun SuggestionPill(
-    text: String,
-    onClick: () -> Unit,
+private fun FlowContextHeroBanner(
+    flow: Flow,
+    onSuggestionClick: (String) -> Unit,
 ) {
     val colors = KaivoTheme.colors
-    Box(
+    Column(
         Modifier
             .fillMaxWidth()
-            .clip(KaivoShapes.medallion)
-            .background(colors.surfaceCard)
-            .border(1.dp, colors.hairline, KaivoShapes.medallion)
-            .clickable { onClick() }
-            .padding(horizontal = 16.dp, vertical = 12.dp),
+            .padding(vertical = 8.dp),
+        verticalArrangement = Arrangement.spacedBy(10.dp),
     ) {
-        Text(
-            text = text,
-            style = androidx.compose.material3.MaterialTheme.typography.bodyMedium,
-            color = colors.inkPrimary,
-        )
+        // Attached flow context banner (Screenshot 3 style)
+        Box(
+            Modifier
+                .fillMaxWidth()
+                .clip(KaivoShapes.medallion)
+                .background(Color(0xFF1E1E24))
+                .border(1.dp, colors.royalGold.copy(alpha = 0.35f), KaivoShapes.medallion)
+                .padding(16.dp),
+        ) {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                ) {
+                    Icon(KaivoIcons.icon("flow"), contentDescription = null, tint = colors.royalGold, modifier = Modifier.size(18.dp))
+                    Text(
+                        text = flow.name,
+                        style = androidx.compose.material3.MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.Bold,
+                        color = colors.royalGold,
+                    )
+                    Spacer(Modifier.weight(1f))
+                    Text(
+                        text = "${flow.steps.size} Steps",
+                        style = androidx.compose.material3.MaterialTheme.typography.labelSmall,
+                        color = colors.inkSecondary,
+                    )
+                }
+                Text(
+                    text = "I see you're working on the \"${flow.name}\" workflow. What would you like to do with it — make changes, debug an issue, configure steps, or something else?",
+                    style = androidx.compose.material3.MaterialTheme.typography.bodyMedium,
+                    color = colors.inkPrimary,
+                )
+            }
+        }
+
+        LazyRow(
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            modifier = Modifier.fillMaxWidth(),
+        ) {
+            val flowSuggestions = listOf(
+                "🔍 Diagnose & fix issues",
+                "⚡ Add error notification",
+                "📝 Explain how flow runs",
+                "➕ Add JS transformation",
+            )
+            items(flowSuggestions) { suggestion ->
+                Box(
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(10.dp))
+                        .background(Color(0xFF1E1E24))
+                        .border(1.dp, Color(0xFF2E2E36), RoundedCornerShape(10.dp))
+                        .clickable { onSuggestionClick(suggestion) }
+                        .padding(horizontal = 12.dp, vertical = 8.dp),
+                ) {
+                    Text(
+                        text = suggestion,
+                        style = androidx.compose.material3.MaterialTheme.typography.labelMedium,
+                        color = colors.inkPrimary,
+                    )
+                }
+            }
+        }
     }
 }
 
@@ -418,10 +559,10 @@ private fun ChatMessageRow(
                         bottomEnd = if (isUser) 4.dp else 16.dp,
                     )
                 )
-                .background(if (isUser) colors.surfaceCard else colors.surfaceCard)
+                .background(if (isUser) Color(0xFF24242C) else Color(0xFF1A1A20))
                 .border(
                     1.dp,
-                    if (isUser) colors.royalGold.copy(alpha = 0.4f) else colors.hairline,
+                    if (isUser) colors.royalGold.copy(alpha = 0.4f) else Color(0xFF2A2A32),
                     RoundedCornerShape(
                         topStart = 16.dp,
                         topEnd = 16.dp,
@@ -458,8 +599,8 @@ private fun WorkflowPreviewCard(
     val colors = KaivoTheme.colors
     Card(
         shape = KaivoShapes.medallion,
-        colors = CardDefaults.cardColors(containerColor = colors.surfaceCard),
-        border = CardDefaults.outlinedCardBorder().copy(brush = androidx.compose.ui.graphics.SolidColor(colors.royalGold)),
+        colors = CardDefaults.cardColors(containerColor = Color(0xFF1E1E24)),
+        border = CardDefaults.outlinedCardBorder().copy(brush = SolidColor(colors.royalGold)),
         modifier = Modifier.fillMaxWidth(),
     ) {
         Column(
@@ -513,7 +654,7 @@ private fun WorkflowPreviewCard(
                             Modifier
                                 .size(24.dp)
                                 .clip(CircleShape)
-                                .background(if (step.isTrigger) colors.royalGold.copy(alpha = 0.2f) else colors.surfaceCard),
+                                .background(if (step.isTrigger) colors.royalGold.copy(alpha = 0.2f) else Color(0xFF24242C)),
                             contentAlignment = Alignment.Center,
                         ) {
                             Text(
@@ -583,7 +724,7 @@ private fun GeneratingIndicator() {
 }
 
 @Composable
-private fun BottomInputBar(
+private fun DockedBottomInputBar(
     text: String,
     onTextChange: (String) -> Unit,
     onSend: () -> Unit,
@@ -592,88 +733,120 @@ private fun BottomInputBar(
     enabled: Boolean,
 ) {
     val colors = KaivoTheme.colors
-    Column(
-        Modifier
+    Card(
+        shape = RoundedCornerShape(16.dp),
+        colors = CardDefaults.cardColors(containerColor = Color(0xFF1E1E24)),
+        border = BorderStroke(1.dp, Color(0xFF2E2E36)),
+        modifier = Modifier
             .fillMaxWidth()
-            .background(colors.canvasVoid)
             .padding(horizontal = 12.dp, vertical = 8.dp),
-        verticalArrangement = Arrangement.spacedBy(6.dp),
     ) {
-        // Flow Context Badge (Screenshot 3 style)
-        if (flowContext != null) {
-            Row(
-                Modifier
-                    .clip(KaivoShapes.chip)
-                    .background(colors.surfaceCard)
-                    .border(1.dp, colors.royalGold.copy(alpha = 0.35f), KaivoShapes.chip)
-                    .padding(horizontal = 10.dp, vertical = 4.dp),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(6.dp),
-            ) {
-                Icon(
-                    KaivoIcons.icon("flow"),
-                    contentDescription = null,
-                    tint = colors.royalGold,
-                    modifier = Modifier.size(14.dp),
-                )
-                Text(
-                    text = flowContext.name,
-                    style = androidx.compose.material3.MaterialTheme.typography.labelSmall,
-                    color = colors.royalGold,
-                )
-                Icon(
-                    KaivoIcons.icon("close"),
-                    contentDescription = "Detach context",
-                    tint = colors.inkSecondary,
-                    modifier = Modifier
-                        .size(14.dp)
-                        .clickable { onDetachFlow() },
-                )
-            }
-        }
-
-        Row(
-            Modifier.fillMaxWidth(),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        Column(
+            Modifier.padding(12.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
-            OutlinedTextField(
+            // Attached Flow chip inside bottom card (Screenshot 3 style)
+            if (flowContext != null) {
+                Row(
+                    Modifier
+                        .clip(RoundedCornerShape(8.dp))
+                        .background(Color(0xFF2A2A34))
+                        .padding(horizontal = 8.dp, vertical = 4.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                ) {
+                    Icon(
+                        KaivoIcons.icon("flow"),
+                        contentDescription = null,
+                        tint = colors.royalGold,
+                        modifier = Modifier.size(13.dp),
+                    )
+                    Text(
+                        text = flowContext.name,
+                        style = androidx.compose.material3.MaterialTheme.typography.labelSmall,
+                        color = colors.inkPrimary,
+                    )
+                    Icon(
+                        KaivoIcons.icon("close"),
+                        contentDescription = "Detach flow",
+                        tint = colors.inkSecondary,
+                        modifier = Modifier
+                            .size(12.dp)
+                            .clickable { onDetachFlow() },
+                    )
+                }
+            }
+
+            BasicTextField(
                 value = text,
                 onValueChange = onTextChange,
-                placeholder = {
-                    Text(
-                        if (flowContext != null) "Ask anything about this workflow..."
-                        else "Tell me what to build or ask a question...",
-                        color = colors.inkSecondary,
-                        style = androidx.compose.material3.MaterialTheme.typography.bodyMedium,
-                    )
-                },
-                colors = OutlinedTextFieldDefaults.colors(
-                    focusedBorderColor = colors.royalGold,
-                    unfocusedBorderColor = colors.hairline,
-                    focusedTextColor = colors.inkPrimary,
-                    unfocusedTextColor = colors.inkPrimary,
-                    cursorColor = colors.royalGold,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(48.dp),
+                textStyle = androidx.compose.material3.MaterialTheme.typography.bodyMedium.copy(
+                    color = colors.inkPrimary,
                 ),
-                shape = KaivoShapes.medallion,
-                maxLines = 4,
-                modifier = Modifier.weight(1f),
+                cursorBrush = SolidColor(colors.royalGold),
+                decorationBox = { innerTextField ->
+                    if (text.isEmpty()) {
+                        Text(
+                            text = if (flowContext != null) "Ask anything about this workflow..." else "Ask anything...",
+                            style = androidx.compose.material3.MaterialTheme.typography.bodyMedium,
+                            color = colors.inkSecondary,
+                        )
+                    }
+                    innerTextField()
+                },
             )
 
-            Box(
-                Modifier
-                    .size(48.dp)
-                    .clip(CircleShape)
-                    .background(if (text.isNotBlank() && enabled) colors.royalGold else colors.surfaceCard)
-                    .clickable(enabled = text.isNotBlank() && enabled) { onSend() },
-                contentAlignment = Alignment.Center,
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
             ) {
-                Icon(
-                    KaivoIcons.icon("forward"),
-                    contentDescription = "Send",
-                    tint = if (text.isNotBlank() && enabled) Color.Black else colors.inkSecondary,
-                    modifier = Modifier.size(20.dp),
-                )
+                IconButton(
+                    onClick = { /* attachments / context */ },
+                    modifier = Modifier.size(28.dp),
+                ) {
+                    Icon(
+                        KaivoIcons.icon("add"),
+                        contentDescription = "Add context",
+                        tint = colors.inkSecondary,
+                        modifier = Modifier.size(18.dp),
+                    )
+                }
+
+                Spacer(Modifier.weight(1f))
+
+                IconButton(
+                    onClick = { /* mic input */ },
+                    modifier = Modifier.size(28.dp),
+                ) {
+                    Icon(
+                        KaivoIcons.icon("mic"),
+                        contentDescription = "Voice input",
+                        tint = colors.inkSecondary,
+                        modifier = Modifier.size(16.dp),
+                    )
+                }
+
+                Spacer(Modifier.width(8.dp))
+
+                val canSend = text.isNotBlank() && enabled
+                Box(
+                    modifier = Modifier
+                        .size(32.dp)
+                        .clip(CircleShape)
+                        .background(if (canSend) colors.royalGold else Color(0xFF2C2C34))
+                        .clickable(enabled = canSend) { onSend() },
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Icon(
+                        KaivoIcons.icon("forward"),
+                        contentDescription = "Send",
+                        tint = if (canSend) Color.Black else colors.inkSecondary,
+                        modifier = Modifier.size(16.dp),
+                    )
+                }
             }
         }
     }
