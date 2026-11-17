@@ -97,8 +97,8 @@ fun AgentBuilderScreen(
                 isSaving = state.isSaving,
                 onBack = onNavigateBack,
                 onTestClick = { viewModel.toggleTestSheet(true) },
-                onSaveClick = { viewModel.saveAgent() },
-                onPublishClick = { viewModel.publishAgent() },
+                onSaveClick = { viewModel.saveAgent(onNavigateBack) },
+                onPublishClick = { viewModel.publishAgent(onNavigateBack) },
             )
 
             // Agent Header (Icon & Title)

@@ -260,13 +260,14 @@ class AgentBuilderViewModel @Inject constructor(
 
     fun publishAgent(onSaved: () -> Unit = {}) {
         viewModelScope.launch {
+            val published = _uiState.value.agent.copy(isPublished = true)
             _uiState.update {
                 it.copy(
                     isSaving = true,
-                    agent = it.agent.copy(isPublished = true),
+                    agent = published,
                 )
             }
-            agentRepository.saveAgent(_uiState.value.agent)
+            agentRepository.saveAgent(published)
             _uiState.update { it.copy(isSaving = false, isSavedSuccess = true) }
             onSaved()
         }
