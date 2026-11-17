@@ -24,6 +24,7 @@ import com.kaivoflow.feature.canvas.CanvasScreen
 import com.kaivoflow.feature.flows.FlowListScreen
 import com.kaivoflow.feature.flows.PublishSheetEntry
 import com.kaivoflow.feature.flows.RunHistoryScreen
+import com.kaivoflow.feature.flows.ai.AiAssistantScreen
 import com.kaivoflow.feature.permissions.KaivoPermission
 import com.kaivoflow.feature.permissions.PermissionCentreScreen
 import com.kaivoflow.feature.settings.CredentialsScreen
@@ -95,8 +96,10 @@ private object Routes {
     const val Privacy = "privacy"
     const val Permissions = "permissions"
     const val Credentials = "credentials"
+    const val Assistant = "assistant?flowId={flowId}"
 
     fun canvas(flowId: String) = "canvas/$flowId"
+    fun assistant(flowId: String? = null) = if (flowId != null) "assistant?flowId=$flowId" else "assistant"
 }
 
 @Composable
@@ -121,6 +124,7 @@ private fun KaivoNavHost(
                 onOpenHistory = { navController.navigate(Routes.History) },
                 onOpenSettings = { navController.navigate(Routes.Settings) },
                 onOpenPrompt = { flowId -> navController.navigate(Routes.canvas(flowId)) },
+                onOpenAiAssistant = { flowId -> navController.navigate(Routes.assistant(flowId)) },
             )
         }
         composable(Routes.History) {
@@ -134,7 +138,27 @@ private fun KaivoNavHost(
                 onBack = { navController.popBackStack() },
                 onOpenRunHistory = { navController.navigate(Routes.History) },
                 onOpenCredentials = { navController.navigate(Routes.Credentials) },
+                onOpenAiAssistant = { flowId -> navController.navigate(Routes.assistant(flowId)) },
                 publishEntry = { flowId, onDismiss, onFix -> PublishSheetEntry(flowId, onDismiss, onFix) },
+            )
+        }
+        composable(
+            route = Routes.Assistant,
+            arguments = listOf(
+                navArgument("flowId") {
+                    type = NavType.StringType
+                    nullable = true
+                    defaultValue = null
+                }
+            ),
+        ) {
+            AiAssistantScreen(
+                onBack = { navController.popBackStack() },
+                onOpenCanvas = { flowId ->
+                    navController.navigate(Routes.canvas(flowId)) {
+                        popUpTo(Routes.Flows)
+                    }
+                },
             )
         }
         composable(Routes.Settings) {

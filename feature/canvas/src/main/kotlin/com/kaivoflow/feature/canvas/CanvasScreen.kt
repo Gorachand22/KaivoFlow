@@ -90,6 +90,7 @@ fun CanvasScreen(
     onBack: () -> Unit,
     onOpenRunHistory: () -> Unit,
     onOpenCredentials: () -> Unit = {},
+    onOpenAiAssistant: (String) -> Unit = {},
     /** Hosts the publish sheet; the app passes `PublishSheetEntry` (this module cannot depend on feature:flows). */
     publishEntry: @Composable (flowId: String?, onDismiss: () -> Unit, onFix: (com.kaivoflow.core.engine.ValidationIssue) -> Unit) -> Unit = { _, _, _ -> },
     viewModel: CanvasViewModel = hiltViewModel(),
@@ -622,13 +623,13 @@ fun CanvasScreen(
                     Modifier
                         .size(40.dp)
                         .clip(CircleShape)
-                        .clickable { viewModel.requestActivateToggle() },
+                        .clickable { onOpenAiAssistant(state.flowId) },
                     contentAlignment = Alignment.Center,
                 ) {
                     Icon(
-                        KaivoIcons.icon("bolt"),
-                        contentDescription = if (state.isActive) "Switch Flow off" else "Publish Flow",
-                        tint = if (state.isActive) colors.royalGold else colors.inkSecondary,
+                        KaivoIcons.icon("sparkles"),
+                        contentDescription = "Ask AI Assistant",
+                        tint = colors.royalGold,
                         modifier = Modifier.size(18.dp),
                     )
                 }

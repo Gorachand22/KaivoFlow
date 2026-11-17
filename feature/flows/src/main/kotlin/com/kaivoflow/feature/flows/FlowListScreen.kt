@@ -73,7 +73,6 @@ import com.kaivoflow.core.design.KaivoIcons
 import com.kaivoflow.core.design.KaivoShapes
 import com.kaivoflow.core.design.KaivoTheme
 import com.kaivoflow.core.design.StatusBadge
-import com.kaivoflow.core.model.FlowTemplates
 import com.kaivoflow.core.model.RunRecord
 import com.kaivoflow.core.model.WorkflowGroup
 import com.kaivoflow.core.model.WorkflowVariable
@@ -121,9 +120,6 @@ class FlowListViewModel @Inject constructor(
 
     private val _isCreating = MutableStateFlow(false)
     val isCreating: StateFlow<Boolean> = _isCreating.asStateFlow()
-
-    private val _showTemplates = MutableStateFlow(false)
-    val showTemplates: StateFlow<Boolean> = _showTemplates.asStateFlow()
 
     private val _selectedGroupId = MutableStateFlow<String?>(null)
     val selectedGroupId: StateFlow<String?> = _selectedGroupId.asStateFlow()
@@ -369,32 +365,6 @@ class FlowListViewModel @Inject constructor(
         }
     }
 
-    fun showTemplates() {
-        _showTemplates.value = true
-    }
-
-    fun hideTemplates() {
-        _showTemplates.value = false
-    }
-
-    fun createFromTemplate(templateId: String, onCreated: (String) -> Unit) {
-        val template = FlowTemplates.byId(templateId) ?: run {
-            hideTemplates()
-            return
-        }
-        viewModelScope.launch {
-            _isCreating.value = true
-            try {
-                val flow = template.build().copy(groupId = _selectedGroupId.value)
-                flowRepository.save(flow)
-                hideTemplates()
-                onCreated(flow.id)
-            } finally {
-                _isCreating.value = false
-            }
-        }
-    }
-
     fun duplicate(id: String, onCreated: (String) -> Unit) {
         viewModelScope.launch {
             flowRepository.duplicate(id)?.let { onCreated(it.id) }
@@ -441,6 +411,7 @@ fun FlowListScreen(
     onOpenHistory: () -> Unit,
     onOpenSettings: () -> Unit,
     onOpenPrompt: (String) -> Unit = {},
+    onOpenAiAssistant: (String?) -> Unit = {},
     viewModel: FlowListViewModel = hiltViewModel(),
 ) {
     var publishFlowId by remember { mutableStateOf<String?>(null) }
@@ -461,7 +432,6 @@ fun FlowListScreen(
     val currentTab by viewModel.currentTab.collectAsStateWithLifecycle()
     val variableSearchQuery by viewModel.variableSearchQuery.collectAsStateWithLifecycle()
     val creating by viewModel.isCreating.collectAsStateWithLifecycle()
-    val showTemplates by viewModel.showTemplates.collectAsStateWithLifecycle()
     val showCreateGroup by viewModel.showCreateGroupDialog.collectAsStateWithLifecycle()
     val showVariables by viewModel.showVariablesDialog.collectAsStateWithLifecycle()
     val showCreateVariable by viewModel.showCreateVariableDialog.collectAsStateWithLifecycle()
@@ -578,9 +548,9 @@ fun FlowListScreen(
                                 modifier = Modifier.weight(1f),
                             )
                             GhostButton(
-                                text = "Templates",
+                                text = "Ask AI",
                                 icon = "sparkles",
-                                onClick = { viewModel.showTemplates() },
+                                onClick = { onOpenAiAssistant(null) },
                                 modifier = Modifier.weight(1f),
                             )
                         }
@@ -669,13 +639,6 @@ fun FlowListScreen(
             }
 
             // Dialogs
-            if (showTemplates) {
-                TemplatePickerDialog(
-                    onDismiss = { viewModel.hideTemplates() },
-                    onPick = { templateId -> viewModel.createFromTemplate(templateId, onOpenFlow) },
-                )
-            }
-
             if (showCreateCredential) {
                 CreateCredentialDialog(
                     onDismiss = viewModel::closeCreateCredentialDialog,
@@ -1511,51 +1474,6 @@ private fun MoveFlowGroupDialog(
         confirmButton = {
             TextButton(onClick = onDismiss, colors = ButtonDefaults.textButtonColors(contentColor = colors.inkSecondary)) {
                 Text("Cancel")
-            }
-        },
-    )
-}
-
-@Composable
-private fun TemplatePickerDialog(
-    onDismiss: () -> Unit,
-    onPick: (String) -> Unit,
-) {
-    val colors = KaivoTheme.colors
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        containerColor = colors.canvasVoid,
-        title = {
-            Text("Start from a template", color = colors.inkPrimary,
-                style = androidx.compose.material3.MaterialTheme.typography.titleLarge)
-        },
-        text = {
-            Column(
-                Modifier.verticalScroll(rememberScrollState()),
-                verticalArrangement = Arrangement.spacedBy(8.dp),
-            ) {
-                FlowTemplates.all.forEach { template ->
-                    Column(
-                        Modifier
-                            .fillMaxWidth()
-                            .clip(KaivoShapes.medallion)
-                            .background(colors.surfaceCard)
-                            .border(1.dp, colors.hairline, KaivoShapes.medallion)
-                            .clickable { onPick(template.id) }
-                            .padding(12.dp),
-                    ) {
-                        Text(template.name, color = colors.inkPrimary,
-                            style = androidx.compose.material3.MaterialTheme.typography.titleMedium)
-                        Spacer(Modifier.height(4.dp))
-                        Text(template.description, color = colors.inkSecondary,
-                            style = androidx.compose.material3.MaterialTheme.typography.bodySmall)
-                    }
-                }
-            }
-        },
-        confirmButton = {
-            TextButton(onClick = onDismiss) {
-                Text("Close", color = colors.inkSecondary)
             }
         },
     )
