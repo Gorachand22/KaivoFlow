@@ -287,7 +287,7 @@ fun CredentialCardItem(
 
             Spacer(Modifier.width(8.dp))
 
-            // Dependencies link count pill (matching n8n)
+            // Dependencies link count pill
             Box(
                 Modifier
                     .clip(KaivoShapes.chip)
