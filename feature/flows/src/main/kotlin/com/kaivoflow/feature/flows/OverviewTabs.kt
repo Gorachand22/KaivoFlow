@@ -28,6 +28,7 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -104,6 +105,8 @@ fun CredentialsDashboardView(
     onSearchChange: (String) -> Unit,
     onCreateCredential: () -> Unit,
     onDeleteCredential: (String) -> Unit,
+    onOpenCredential: ((CredentialItem) -> Unit)? = null,
+    onRenameCredential: (String, String) -> Unit = { _, _ -> },
     modifier: Modifier = Modifier,
 ) {
     val colors = KaivoTheme.colors
@@ -178,7 +181,7 @@ fun CredentialsDashboardView(
                     )
                     Spacer(Modifier.height(6.dp))
                     Text(
-                        "Store OAuth tokens and API keys for Google Sheets, OpenAI, Telegram and external services securely in this phone's Keystore.",
+                        "Store API keys and OAuth tokens for OpenAI, Claude, Gemini, Ollama, Telegram and external services securely in this phone's Keystore.",
                         style = androidx.compose.material3.MaterialTheme.typography.bodySmall,
                         color = colors.inkMuted,
                         textAlign = androidx.compose.ui.text.style.TextAlign.Center,
@@ -200,7 +203,9 @@ fun CredentialsDashboardView(
                 items(filtered, key = { it.id }) { cred ->
                     CredentialCardItem(
                         credential = cred,
+                        onClick = { onOpenCredential?.invoke(cred) },
                         onDelete = { onDeleteCredential(cred.id) },
+                        onRename = { newName -> onRenameCredential(cred.id, newName) },
                     )
                 }
             }
@@ -211,12 +216,15 @@ fun CredentialsDashboardView(
 @Composable
 fun CredentialCardItem(
     credential: CredentialItem,
+    onClick: () -> Unit = {},
     onDelete: () -> Unit,
+    onRename: (String) -> Unit = {},
 ) {
     val colors = KaivoTheme.colors
     val context = LocalContext.current
     var showMenu by remember { mutableStateOf(false) }
     var showDeleteConfirm by remember { mutableStateOf(false) }
+    var showRenameDialog by remember { mutableStateOf(false) }
 
     val typeInfo = remember(credential.type) {
         CredentialTypeInfo.find(credential.type)
@@ -232,6 +240,7 @@ fun CredentialCardItem(
             .clip(KaivoShapes.stepCard)
             .background(colors.surfaceCard)
             .border(1.dp, colors.hairline, KaivoShapes.stepCard)
+            .clickable { onClick() }
             .padding(14.dp),
     ) {
         Row(
@@ -311,11 +320,19 @@ fun CredentialCardItem(
                     modifier = Modifier.background(colors.surfaceElevated),
                 ) {
                     DropdownMenuItem(
-                        text = { Text("Test Connection", color = colors.inkPrimary) },
-                        leadingIcon = { Icon(KaivoIcons.icon("check"), null, tint = Color(0xFF10B981)) },
+                        text = { Text("Edit & Test Connection", color = colors.inkPrimary) },
+                        leadingIcon = { Icon(KaivoIcons.icon("edit"), null, tint = colors.royalGold) },
                         onClick = {
                             showMenu = false
-                            Toast.makeText(context, "✓ Credential format is valid", Toast.LENGTH_SHORT).show()
+                            onClick()
+                        },
+                    )
+                    DropdownMenuItem(
+                        text = { Text("Rename", color = colors.inkPrimary) },
+                        leadingIcon = { Icon(KaivoIcons.icon("edit"), null, tint = colors.inkSecondary) },
+                        onClick = {
+                            showMenu = false
+                            showRenameDialog = true
                         },
                     )
                     DropdownMenuItem(
@@ -362,6 +379,81 @@ fun CredentialCardItem(
             },
         )
     }
+
+    if (showRenameDialog) {
+        RenameCredentialDialog(
+            initialName = credential.name,
+            onDismiss = { showRenameDialog = false },
+            onConfirm = { newName ->
+                showRenameDialog = false
+                onRename(newName)
+            },
+        )
+    }
+}
+
+@Composable
+fun RenameCredentialDialog(
+    initialName: String,
+    onDismiss: () -> Unit,
+    onConfirm: (String) -> Unit,
+) {
+    var name by remember { mutableStateOf(initialName) }
+    val colors = KaivoTheme.colors
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        containerColor = colors.surfaceAtelier,
+        shape = KaivoShapes.stepCard,
+        title = {
+            Text(
+                "Rename Credential",
+                color = colors.inkPrimary,
+                fontWeight = FontWeight.Bold,
+                style = androidx.compose.material3.MaterialTheme.typography.titleMedium,
+            )
+        },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text(
+                    "Enter a new name for this credential account:",
+                    color = colors.inkSecondary,
+                    style = androidx.compose.material3.MaterialTheme.typography.bodySmall,
+                )
+                OutlinedTextField(
+                    value = name,
+                    onValueChange = { name = it },
+                    singleLine = true,
+                    colors = OutlinedTextFieldDefaults.colors(
+                        focusedBorderColor = colors.royalGold,
+                        unfocusedBorderColor = colors.hairline,
+                        focusedTextColor = colors.inkPrimary,
+                        unfocusedTextColor = colors.inkPrimary,
+                    ),
+                    shape = KaivoShapes.chip,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+            }
+        },
+        confirmButton = {
+            Button(
+                onClick = {
+                    if (name.isNotBlank()) {
+                        onConfirm(name.trim())
+                    }
+                },
+                colors = ButtonDefaults.buttonColors(containerColor = colors.royalGold, contentColor = Color.Black),
+                shape = KaivoShapes.chip,
+                enabled = name.isNotBlank(),
+            ) {
+                Text("Rename", fontWeight = FontWeight.Bold)
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text("Cancel", color = colors.inkSecondary)
+            }
+        },
+    )
 }
 
 // ============================================================================
@@ -370,19 +462,38 @@ fun CredentialCardItem(
 
 @Composable
 fun CreateCredentialDialog(
+    existingCredentials: List<CredentialItem> = emptyList(),
     onDismiss: () -> Unit,
     onSave: (type: String, name: String, fields: Map<String, String>) -> Unit,
 ) {
     val colors = KaivoTheme.colors
-    var selectedType by remember { mutableStateOf(CredentialTypeInfo.GOOGLE_SHEETS) }
-    var name by remember { mutableStateOf(selectedType.displayName) }
+
+    fun nextReplicaName(typeInfo: CredentialTypeInfo): String {
+        val prefix = when (typeInfo.type) {
+            "openAiApi" -> "openai"
+            "geminiApi" -> "gemini"
+            "anthropicApi" -> "anthropic"
+            "ollamaApi" -> "ollama"
+            "telegramBot" -> "telegram"
+            else -> typeInfo.type.removeSuffix("Api").lowercase()
+        }
+        val existingNames = existingCredentials.map { it.name.lowercase() }
+        var count = 1
+        while (existingNames.contains("${prefix}_$count")) {
+            count++
+        }
+        return "${prefix}_$count"
+    }
+
+    var selectedType by remember { mutableStateOf(CredentialTypeInfo.OPENAI) }
+    var name by remember { mutableStateOf(nextReplicaName(CredentialTypeInfo.OPENAI)) }
     val fieldValues = remember { mutableStateMapOf<String, String>() }
     var nameError by remember { mutableStateOf<String?>(null) }
     val secretVisibility = remember { mutableStateMapOf<String, Boolean>() }
 
     fun selectType(typeInfo: CredentialTypeInfo) {
         selectedType = typeInfo
-        name = typeInfo.displayName
+        name = nextReplicaName(typeInfo)
         fieldValues.clear()
         secretVisibility.clear()
     }
@@ -498,7 +609,7 @@ fun CreateCredentialDialog(
                             {
                                 IconButton(onClick = { secretVisibility[field.key] = !isVisible }) {
                                     Icon(
-                                        KaivoIcons.icon(if (isVisible) "check" else "key"),
+                                        KaivoIcons.icon(if (isVisible) "eyeOff" else "eye"),
                                         contentDescription = "Toggle visibility",
                                         tint = colors.inkMuted,
                                         modifier = Modifier.size(16.dp),

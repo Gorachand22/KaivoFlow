@@ -70,6 +70,7 @@ import androidx.compose.material.icons.filled.TextFields
 import androidx.compose.material.icons.filled.Timer
 import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material.icons.filled.Visibility
+import androidx.compose.material.icons.filled.VisibilityOff
 import androidx.compose.material.icons.filled.Vibration
 import androidx.compose.material.icons.filled.VolumeUp
 import androidx.compose.material.icons.filled.Api
@@ -130,6 +131,9 @@ object KaivoIcons {
         "alarm" to Icons.Filled.Alarm,
         "webhook" to Icons.Filled.Webhook,
         "eye" to Icons.Filled.Visibility,
+        "eyeOff" to Icons.Filled.VisibilityOff,
+        "visibility" to Icons.Filled.Visibility,
+        "visibilityOff" to Icons.Filled.VisibilityOff,
         "sms" to Icons.Filled.Sms,
         "share" to Icons.Filled.Share,
         "battery" to Icons.Filled.BatteryAlert,
@@ -185,6 +189,7 @@ object KaivoIcons {
         "settings" to Icons.Filled.Settings,
         "history" to Icons.Filled.History,
         "back" to Icons.Filled.ArrowBack,
+        "arrowBack" to Icons.Filled.ArrowBack,
         "close" to Icons.Filled.Close,
         "more" to Icons.Filled.MoreVert,
         "delete" to Icons.Filled.Delete,

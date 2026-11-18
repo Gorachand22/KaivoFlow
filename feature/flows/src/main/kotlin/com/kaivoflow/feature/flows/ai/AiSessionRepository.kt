@@ -17,7 +17,7 @@ import javax.inject.Singleton
 
 /**
  * Represents a saved conversation thread with the AI Assistant.
- * Modeled after n8n's SessionManagerService & assistant thread persistence.
+ * Multi-turn sovereign session & assistant thread persistence.
  */
 data class AiSession(
     val id: String = UUID.randomUUID().toString(),

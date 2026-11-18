@@ -16,10 +16,12 @@ import com.kaivoflow.core.model.RunStatus
 import com.kaivoflow.core.model.WorkflowGroup
 import com.kaivoflow.core.model.WorkflowVariable
 import kotlinx.coroutines.CoroutineDispatcher
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow as FlowStream
 import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.util.UUID
 
@@ -261,16 +263,30 @@ class EncryptedCredentialRepository(
         return map.mapValues { it.value?.toString().orEmpty() }
     }
 
+    init {
+        CoroutineScope(io).launch {
+            runCatching {
+                val legacy = credentialDao.all().filter { it.type == "googleSheetsOAuth2" }
+                legacy.forEach { credentialDao.delete(it.id) }
+            }
+        }
+    }
+
     override suspend fun list(): List<CredentialRef> = withContext(io) {
-        credentialDao.all().map { CredentialRef(it.id, it.type, it.label) }
+        credentialDao.all()
+            .filter { it.type != "googleSheetsOAuth2" }
+            .map { CredentialRef(it.id, it.type, it.label) }
     }
 
     override fun observeRefs(): FlowStream<List<CredentialRef>> =
-        credentialDao.observeAll().map { list -> list.map { CredentialRef(it.id, it.type, it.label) } }
+        credentialDao.observeAll().map { list ->
+            list.filter { it.type != "googleSheetsOAuth2" }
+                .map { CredentialRef(it.id, it.type, it.label) }
+        }
 
     override fun observeCredentials(): FlowStream<List<CredentialItem>> =
         credentialDao.observeAll().map { list ->
-            list.map { entity ->
+            list.filter { it.type != "googleSheetsOAuth2" }.map { entity ->
                 CredentialItem(
                     id = entity.id,
                     type = entity.type,

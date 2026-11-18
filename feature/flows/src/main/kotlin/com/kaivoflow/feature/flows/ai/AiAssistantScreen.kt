@@ -1,5 +1,6 @@
 package com.kaivoflow.feature.flows.ai
 
+import com.kaivoflow.core.model.CredentialTypeInfo
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -63,6 +64,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.kaivoflow.core.design.KaivoIcons
 import com.kaivoflow.core.design.KaivoShapes
 import com.kaivoflow.core.design.KaivoTheme
+import com.kaivoflow.core.model.CredentialItem
 import com.kaivoflow.core.model.Flow
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -100,34 +102,52 @@ fun AiAssistantScreen(
             TopBar(
                 flow = state.currentFlow,
                 providerConfig = state.providerConfig,
+                savedCredentials = state.savedCredentials,
                 onBack = onBack,
-                onOpenSettings = { viewModel.toggleSettingsSheet(true) },
+                onOpenCredentials = { viewModel.toggleSettingsSheet(true) },
                 onOpenHistory = { viewModel.toggleHistorySheet(true) },
-                onClearChat = { viewModel.clearChat() },
                 onDetachFlow = { viewModel.detachFlow() },
             )
 
-            // Split View / Mode Switcher (Visible when workflow is attached or proposed)
-            if (targetFlow != null && !isChatEmpty) {
+            // ---------------- Canvas Flow Switcher (Active when opened with flow context) ----------------
+            if (state.currentFlow != null) {
                 ViewModeSwitcher(
                     selectedMode = state.viewMode,
-                    stepCount = targetFlow.steps.size,
-                    onSelectMode = viewModel::setViewMode,
+                    stepCount = targetFlow?.steps?.size ?: state.currentFlow?.steps?.size ?: 0,
+                    onSelectMode = { viewModel.setViewMode(it) },
                 )
             }
 
-            if (state.viewMode == AssistantViewMode.CanvasPreview && targetFlow != null) {
-                // ---------------- Live Interactive Visual Canvas ----------------
+            if (state.currentFlow != null && state.viewMode == AssistantViewMode.CanvasPreview) {
+                // ---------------- Side-by-Side Live Canvas View ----------------
                 CanvasPreviewView(
-                    flow = targetFlow,
+                    flow = targetFlow ?: state.currentFlow!!,
                     baseFlow = state.currentFlow,
                     onApply = {
-                        viewModel.applyProposedFlow(targetFlow, onOpenCanvas)
+                        val flowToApply = targetFlow ?: state.currentFlow
+                        if (flowToApply != null) {
+                            viewModel.applyProposedFlow(flowToApply) { appliedId ->
+                                onOpenCanvas(appliedId)
+                            }
+                        }
                     },
-                    onBackToChat = {
-                        viewModel.setViewMode(AssistantViewMode.Chat)
+                    onBackToChat = { viewModel.setViewMode(AssistantViewMode.Chat) },
+                    modifier = Modifier
+                        .weight(1f)
+                        .fillMaxWidth(),
+                )
+
+                // Docked Bottom Input Bar under Live Canvas
+                DockedBottomInputBar(
+                    text = inputText,
+                    onTextChange = { inputText = it },
+                    onSend = {
+                        viewModel.sendMessage(inputText)
+                        inputText = ""
                     },
-                    modifier = Modifier.weight(1f),
+                    flowContext = state.currentFlow,
+                    onDetachFlow = { viewModel.detachFlow() },
+                    enabled = !state.isGenerating,
                 )
             } else if (isChatEmpty) {
                 // ---------------- Clean Floating Hero State (Screenshot 2) ----------------
@@ -162,11 +182,7 @@ fun AiAssistantScreen(
                     items(state.messages, key = { it.id }) { msg ->
                         ChatMessageRow(
                             message = msg,
-                            onApplyFlow = { flow -> viewModel.applyProposedFlow(flow, onOpenCanvas) },
-                            onViewOnCanvas = { flow ->
-                                viewModel.setViewMode(AssistantViewMode.CanvasPreview)
-                            },
-                            onSuggestionClick = { prompt -> viewModel.sendMessage(prompt) },
+                            onOpenCanvas = { flowId -> onOpenCanvas(flowId) },
                         )
                     }
 
@@ -192,18 +208,15 @@ fun AiAssistantScreen(
             }
         }
 
-        // ---------------- Provider Settings Sheet ----------------
+        // ---------------- AI Credentials Sheet ----------------
         if (state.showSettingsSheet) {
-            AiProviderSettingsSheet(
+            AiCredentialPickerSheet(
                 currentConfig = state.providerConfig,
+                savedCredentials = state.savedCredentials,
                 isDiscovering = state.isDiscoveringModels,
-                discoveryMessage = state.modelDiscoveryMessage,
-                isDiscoveryError = state.modelDiscoveryIsError,
-                onDiscoverModels = { provider, baseUrl, apiKey ->
-                    viewModel.discoverModels(provider, baseUrl, apiKey)
-                },
+                onSelectCredential = { id -> viewModel.selectCredential(id) },
+                onSelectModel = { model -> viewModel.selectModel(model) },
                 onDismiss = { viewModel.toggleSettingsSheet(false) },
-                onSave = { newConfig -> viewModel.saveProviderConfig(newConfig) },
             )
         }
 
@@ -221,29 +234,32 @@ fun AiAssistantScreen(
     }
 }
 
+
+
 @Composable
 private fun ViewModeSwitcher(
     selectedMode: AssistantViewMode,
     stepCount: Int,
     onSelectMode: (AssistantViewMode) -> Unit,
+    modifier: Modifier = Modifier,
 ) {
     val colors = KaivoTheme.colors
     Row(
-        modifier = Modifier
+        modifier = modifier
             .fillMaxWidth()
-            .padding(horizontal = 16.dp, vertical = 4.dp),
-        horizontalArrangement = Arrangement.spacedBy(8.dp),
-        verticalAlignment = Alignment.CenterVertically,
+            .padding(horizontal = 16.dp, vertical = 6.dp),
+        horizontalArrangement = Arrangement.spacedBy(10.dp),
     ) {
+        // Chat Assistant Tab
         Box(
             modifier = Modifier
                 .weight(1f)
-                .clip(KaivoShapes.pill)
-                .background(if (selectedMode == AssistantViewMode.Chat) Color(0xFF24242E) else Color(0xFF141418))
+                .clip(KaivoShapes.chip)
+                .background(if (selectedMode == AssistantViewMode.Chat) colors.surfaceCard else colors.canvasVoid)
                 .border(
-                    width = 1.dp,
-                    color = if (selectedMode == AssistantViewMode.Chat) colors.royalGold else Color(0xFF282832),
-                    shape = KaivoShapes.pill,
+                    1.dp,
+                    if (selectedMode == AssistantViewMode.Chat) colors.royalGold else colors.hairline,
+                    KaivoShapes.chip,
                 )
                 .clickable { onSelectMode(AssistantViewMode.Chat) }
                 .padding(vertical = 8.dp),
@@ -254,29 +270,30 @@ private fun ViewModeSwitcher(
                 horizontalArrangement = Arrangement.spacedBy(6.dp),
             ) {
                 Icon(
-                    imageVector = KaivoIcons.icon("sparkles"),
+                    KaivoIcons.icon("sparkles"),
                     contentDescription = null,
                     tint = if (selectedMode == AssistantViewMode.Chat) colors.royalGold else colors.inkSecondary,
-                    modifier = Modifier.size(15.dp),
+                    modifier = Modifier.size(16.dp),
                 )
                 Text(
                     text = "Chat Assistant",
                     style = androidx.compose.material3.MaterialTheme.typography.labelMedium,
-                    fontWeight = if (selectedMode == AssistantViewMode.Chat) FontWeight.Bold else FontWeight.Medium,
+                    fontWeight = if (selectedMode == AssistantViewMode.Chat) FontWeight.Bold else FontWeight.Normal,
                     color = if (selectedMode == AssistantViewMode.Chat) colors.inkPrimary else colors.inkSecondary,
                 )
             }
         }
 
+        // Live Canvas Tab
         Box(
             modifier = Modifier
                 .weight(1f)
-                .clip(KaivoShapes.pill)
-                .background(if (selectedMode == AssistantViewMode.CanvasPreview) Color(0xFF24242E) else Color(0xFF141418))
+                .clip(KaivoShapes.chip)
+                .background(if (selectedMode == AssistantViewMode.CanvasPreview) colors.surfaceCard else colors.canvasVoid)
                 .border(
-                    width = 1.dp,
-                    color = if (selectedMode == AssistantViewMode.CanvasPreview) colors.royalGold else Color(0xFF282832),
-                    shape = KaivoShapes.pill,
+                    1.dp,
+                    if (selectedMode == AssistantViewMode.CanvasPreview) colors.royalGold else colors.hairline,
+                    KaivoShapes.chip,
                 )
                 .clickable { onSelectMode(AssistantViewMode.CanvasPreview) }
                 .padding(vertical = 8.dp),
@@ -287,15 +304,15 @@ private fun ViewModeSwitcher(
                 horizontalArrangement = Arrangement.spacedBy(6.dp),
             ) {
                 Icon(
-                    imageVector = KaivoIcons.icon("flow"),
+                    KaivoIcons.icon("flow"),
                     contentDescription = null,
                     tint = if (selectedMode == AssistantViewMode.CanvasPreview) colors.royalGold else colors.inkSecondary,
-                    modifier = Modifier.size(15.dp),
+                    modifier = Modifier.size(16.dp),
                 )
                 Text(
                     text = "Live Canvas ($stepCount)",
                     style = androidx.compose.material3.MaterialTheme.typography.labelMedium,
-                    fontWeight = if (selectedMode == AssistantViewMode.CanvasPreview) FontWeight.Bold else FontWeight.Medium,
+                    fontWeight = if (selectedMode == AssistantViewMode.CanvasPreview) FontWeight.Bold else FontWeight.Normal,
                     color = if (selectedMode == AssistantViewMode.CanvasPreview) colors.inkPrimary else colors.inkSecondary,
                 )
             }
@@ -307,13 +324,17 @@ private fun ViewModeSwitcher(
 private fun TopBar(
     flow: Flow?,
     providerConfig: AiProviderConfig,
+    savedCredentials: List<CredentialItem>,
     onBack: () -> Unit,
-    onOpenSettings: () -> Unit,
+    onOpenCredentials: () -> Unit,
     onOpenHistory: () -> Unit,
-    onClearChat: () -> Unit,
     onDetachFlow: () -> Unit,
 ) {
     val colors = KaivoTheme.colors
+    val activeCredName = providerConfig.credentialName
+        ?: savedCredentials.find { it.id == providerConfig.credentialId }?.name
+        ?: providerConfig.provider.displayName
+
     Row(
         Modifier
             .fillMaxWidth()
@@ -352,40 +373,49 @@ private fun TopBar(
             }
         }
 
-        // History button
-        IconButton(onClick = onOpenHistory) {
-            Icon(KaivoIcons.icon("history"), contentDescription = "Chat history", tint = colors.inkSecondary)
-        }
-
-        // Provider configuration button
+        // AI Credential Selector button
         Box(
             Modifier
                 .clip(KaivoShapes.chip)
                 .background(colors.surfaceCard)
                 .border(1.dp, colors.hairline, KaivoShapes.chip)
-                .clickable { onOpenSettings() }
-                .padding(horizontal = 8.dp, vertical = 6.dp),
+                .clickable { onOpenCredentials() }
+                .padding(horizontal = 10.dp, vertical = 6.dp),
         ) {
             Row(
                 verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(4.dp),
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
             ) {
                 Icon(
-                    KaivoIcons.icon("settings"),
-                    contentDescription = "Settings",
-                    tint = colors.inkSecondary,
+                    KaivoIcons.icon("key"),
+                    contentDescription = "AI Credential",
+                    tint = colors.royalGold,
                     modifier = Modifier.size(15.dp),
                 )
                 Text(
-                    text = "Provider",
+                    text = activeCredName,
                     style = androidx.compose.material3.MaterialTheme.typography.labelSmall,
-                    color = colors.inkSecondary,
+                    fontWeight = FontWeight.SemiBold,
+                    color = colors.inkPrimary,
+                    maxLines = 1,
+                )
+                Icon(
+                    KaivoIcons.icon("dropdown"),
+                    contentDescription = null,
+                    tint = colors.inkSecondary,
+                    modifier = Modifier.size(12.dp),
                 )
             }
         }
 
-        IconButton(onClick = onClearChat) {
-            Icon(KaivoIcons.icon("refresh"), contentDescription = "Clear Chat", tint = colors.inkSecondary)
+        // History button at the far right corner
+        IconButton(onClick = onOpenHistory) {
+            Icon(
+                KaivoIcons.icon("history"),
+                contentDescription = "Chat history",
+                tint = colors.inkSecondary,
+                modifier = Modifier.size(22.dp),
+            )
         }
     }
 }
@@ -426,7 +456,7 @@ private fun EmptyStateCenteredPrompt(
 
         Spacer(Modifier.height(20.dp))
 
-        // Floating Prompt Card matching n8n Screenshot 2
+        // Floating Prompt Card
         Card(
             shape = RoundedCornerShape(16.dp),
             colors = CardDefaults.cardColors(containerColor = Color(0xFF1E1E24)),
@@ -561,9 +591,7 @@ private fun EmptyStateCenteredPrompt(
 @Composable
 private fun ChatMessageRow(
     message: AiChatMessage,
-    onApplyFlow: (Flow) -> Unit,
-    onViewOnCanvas: (Flow) -> Unit,
-    onSuggestionClick: (String) -> Unit,
+    onOpenCanvas: (String) -> Unit,
 ) {
     val colors = KaivoTheme.colors
     val isUser = message.sender == MessageSender.User
@@ -615,47 +643,13 @@ private fun ChatMessageRow(
                 )
                 .padding(14.dp),
         ) {
-            Text(
+            MarkdownChatText(
                 text = message.text,
-                style = androidx.compose.material3.MaterialTheme.typography.bodyMedium,
-                color = colors.inkPrimary,
-                lineHeight = 20.sp,
+                isUser = isUser,
             )
         }
 
-        // Inline Quick Action chips for Workflow Assistant
-        if (!isUser && message.diagnosisReport != null) {
-            Spacer(Modifier.height(8.dp))
-            LazyRow(
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                modifier = Modifier.fillMaxWidth(),
-            ) {
-                val flowSuggestions = listOf(
-                    "🔍 Diagnose & fix issues",
-                    "⚡ Add error notification",
-                    "📝 Explain how flow runs",
-                    "➕ Add JS transformation",
-                )
-                items(flowSuggestions) { suggestion ->
-                    Box(
-                        modifier = Modifier
-                            .clip(RoundedCornerShape(10.dp))
-                            .background(Color(0xFF1E1E24))
-                            .border(1.dp, Color(0xFF2E2E36), RoundedCornerShape(10.dp))
-                            .clickable { onSuggestionClick(suggestion) }
-                            .padding(horizontal = 12.dp, vertical = 8.dp),
-                    ) {
-                        Text(
-                            text = suggestion,
-                            style = androidx.compose.material3.MaterialTheme.typography.labelMedium,
-                            color = colors.inkPrimary,
-                        )
-                    }
-                }
-            }
-        }
-
-        // Tool Execution Traces (Modeled after n8n's agent tools)
+        // Tool Execution Traces (Sovereign agent tools)
         if (message.toolCalls.isNotEmpty()) {
             Spacer(Modifier.height(8.dp))
             ToolCallsTraceCard(toolCalls = message.toolCalls)
@@ -666,8 +660,7 @@ private fun ChatMessageRow(
             Spacer(Modifier.height(10.dp))
             WorkflowPreviewCard(
                 flow = message.flowProposal,
-                onApply = { onApplyFlow(message.flowProposal) },
-                onViewOnCanvas = { onViewOnCanvas(message.flowProposal) },
+                onOpenCanvas = { onOpenCanvas(message.flowProposal.id) },
             )
         }
     }
@@ -755,8 +748,7 @@ private fun ToolCallsTraceCard(
 @Composable
 private fun WorkflowPreviewCard(
     flow: Flow,
-    onApply: () -> Unit,
-    onViewOnCanvas: () -> Unit,
+    onOpenCanvas: () -> Unit,
 ) {
     val colors = KaivoTheme.colors
     Card(
@@ -790,7 +782,7 @@ private fun WorkflowPreviewCard(
                         color = colors.inkPrimary,
                     )
                     Text(
-                        text = "Proposed Workflow · ${flow.steps.size} Steps, ${flow.streams.size} Connections",
+                        text = "Workflow Active · ${flow.steps.size} Steps, ${flow.streams.size} Connections",
                         style = androidx.compose.material3.MaterialTheme.typography.labelSmall,
                         color = colors.inkSecondary,
                     )
@@ -852,38 +844,36 @@ private fun WorkflowPreviewCard(
                 }
             }
 
-            // Action Buttons: View on Live Canvas + Apply to Canvas
+            // Live status & Quick Canvas Link
             Row(
                 modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                Button(
-                    onClick = onViewOnCanvas,
-                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF282834), contentColor = colors.inkPrimary),
-                    shape = KaivoShapes.chip,
-                    modifier = Modifier.weight(1f),
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
                 ) {
-                    Text("Live Canvas ⚡", fontSize = 12.sp)
+                    Icon(
+                        imageVector = KaivoIcons.icon("checkCircle"),
+                        contentDescription = null,
+                        tint = Color(0xFF10B981),
+                        modifier = Modifier.size(16.dp),
+                    )
+                    Text(
+                        text = "Updated Live on Canvas",
+                        style = androidx.compose.material3.MaterialTheme.typography.labelMedium,
+                        fontWeight = FontWeight.SemiBold,
+                        color = Color(0xFF10B981),
+                    )
                 }
 
                 Button(
-                    onClick = onApply,
-                    colors = ButtonDefaults.buttonColors(containerColor = colors.royalGold, contentColor = Color.Black),
+                    onClick = onOpenCanvas,
+                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF282834), contentColor = colors.inkPrimary),
                     shape = KaivoShapes.chip,
-                    modifier = Modifier.weight(1.3f),
                 ) {
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(4.dp),
-                    ) {
-                        Icon(KaivoIcons.icon("check"), contentDescription = null, modifier = Modifier.size(16.dp))
-                        Text(
-                            text = "Apply",
-                            style = androidx.compose.material3.MaterialTheme.typography.labelLarge,
-                            fontWeight = FontWeight.Bold,
-                        )
-                    }
+                    Text("Open Canvas ↗", fontSize = 12.sp)
                 }
             }
         }
@@ -896,7 +886,7 @@ private fun GeneratingIndicator() {
         modifier = Modifier.padding(vertical = 4.dp),
         contentAlignment = Alignment.CenterStart,
     ) {
-        TinkeringPill(text = "Tinkering...")
+        TinkeringPill()
     }
 }
 
@@ -1031,23 +1021,16 @@ private fun DockedBottomInputBar(
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun AiProviderSettingsSheet(
+private fun AiCredentialPickerSheet(
     currentConfig: AiProviderConfig,
+    savedCredentials: List<CredentialItem>,
     isDiscovering: Boolean,
-    discoveryMessage: String?,
-    isDiscoveryError: Boolean,
-    onDiscoverModels: (AiProvider, String, String) -> Unit,
+    onSelectCredential: (String) -> Unit,
+    onSelectModel: (String) -> Unit,
     onDismiss: () -> Unit,
-    onSave: (AiProviderConfig) -> Unit,
 ) {
     val colors = KaivoTheme.colors
-    var selectedProvider by remember { mutableStateOf(currentConfig.provider) }
-    var selectedModel by remember(currentConfig.model) { mutableStateOf(currentConfig.model) }
-    var apiKey by remember { mutableStateOf(currentConfig.apiKey) }
-    var baseUrl by remember { mutableStateOf(currentConfig.baseUrl) }
-    var showPassword by remember { mutableStateOf(false) }
-
-    val effectiveModels = currentConfig.effectiveModels.ifEmpty { selectedProvider.availableModels }
+    val effectiveModels = currentConfig.effectiveModels
 
     ModalBottomSheet(
         onDismissRequest = onDismiss,
@@ -1067,196 +1050,216 @@ private fun AiProviderSettingsSheet(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.SpaceBetween,
             ) {
-                Text(
-                    text = "AI Provider & Model Settings",
-                    style = androidx.compose.material3.MaterialTheme.typography.titleLarge,
-                    fontWeight = FontWeight.Bold,
-                    color = colors.inkPrimary,
-                )
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    Icon(
+                        KaivoIcons.icon("key"),
+                        contentDescription = null,
+                        tint = colors.royalGold,
+                        modifier = Modifier.size(22.dp),
+                    )
+                    Text(
+                        text = "AI Credentials",
+                        style = androidx.compose.material3.MaterialTheme.typography.titleLarge,
+                        fontWeight = FontWeight.Bold,
+                        color = colors.inkPrimary,
+                    )
+                }
                 IconButton(onClick = onDismiss) {
                     Icon(KaivoIcons.icon("close"), contentDescription = "Close", tint = colors.inkSecondary)
                 }
             }
 
             Text(
-                text = "Choose your AI intelligence provider. Your API key is encrypted on your device using Android Keystore and never proxied through any server.",
+                text = "Select which AI credential account powers Ask AI. Create or edit credentials anytime from the Sovereign Credentials workspace.",
                 style = androidx.compose.material3.MaterialTheme.typography.bodySmall,
                 color = colors.inkSecondary,
             )
 
-            // Provider selection chips
-            Text(
-                text = "Provider",
-                style = androidx.compose.material3.MaterialTheme.typography.labelMedium,
-                fontWeight = FontWeight.SemiBold,
-                color = colors.inkPrimary,
-            )
-
-            LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                items(AiProvider.entries) { provider ->
-                    val isSelected = provider == selectedProvider
-                    Box(
-                        Modifier
-                            .clip(KaivoShapes.chip)
-                            .background(if (isSelected) colors.royalGold else colors.surfaceCard)
-                            .border(1.dp, if (isSelected) colors.royalGold else colors.hairline, KaivoShapes.chip)
-                            .clickable {
-                                selectedProvider = provider
-                                baseUrl = provider.defaultBaseUrl
-                                selectedModel = provider.defaultModel
-                            }
-                            .padding(horizontal = 14.dp, vertical = 8.dp),
-                    ) {
-                        Text(
-                            text = provider.displayName,
-                            style = androidx.compose.material3.MaterialTheme.typography.labelMedium,
-                            fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
-                            color = if (isSelected) Color.Black else colors.inkPrimary,
-                        )
-                    }
-                }
-            }
-
-            // Base URL field (supports custom OpenAI-compatible endpoints like NVIDIA NIM, local vLLM, etc.)
-            OutlinedTextField(
-                value = baseUrl,
-                onValueChange = { baseUrl = it },
-                label = { Text("Base URL / Endpoint") },
-                placeholder = { Text("e.g. https://integrate.api.nvidia.com/v1") },
-                colors = OutlinedTextFieldDefaults.colors(
-                    focusedBorderColor = colors.royalGold,
-                    unfocusedBorderColor = colors.hairline,
-                    focusedTextColor = colors.inkPrimary,
-                    unfocusedTextColor = colors.inkPrimary,
-                ),
-                modifier = Modifier.fillMaxWidth(),
-            )
-
-            // API Key field (optional for local/proxy endpoints)
-            OutlinedTextField(
-                value = apiKey,
-                onValueChange = { apiKey = it },
-                label = {
-                    Text(
-                        if (selectedProvider.requiresApiKey) "API Key *"
-                        else "API Key (Optional for local / proxies)"
-                    )
-                },
-                placeholder = { Text("Enter your API key") },
-                visualTransformation = if (showPassword) VisualTransformation.None else PasswordVisualTransformation(),
-                trailingIcon = {
-                    IconButton(onClick = { showPassword = !showPassword }) {
-                        Icon(
-                            KaivoIcons.icon(if (showPassword) "visibilityOff" else "visibility"),
-                            contentDescription = "Toggle visibility",
-                            tint = colors.inkSecondary,
-                        )
-                    }
-                },
-                colors = OutlinedTextFieldDefaults.colors(
-                    focusedBorderColor = colors.royalGold,
-                    unfocusedBorderColor = colors.hairline,
-                    focusedTextColor = colors.inkPrimary,
-                    unfocusedTextColor = colors.inkPrimary,
-                ),
-                modifier = Modifier.fillMaxWidth(),
-            )
-
-            // Dynamic Discovery Button & Tinkering Pill
-            if (isDiscovering) {
+            if (savedCredentials.isEmpty()) {
                 Box(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(vertical = 4.dp),
+                        .clip(KaivoShapes.stepCard)
+                        .background(colors.surfaceCard)
+                        .border(1.dp, colors.hairline, KaivoShapes.stepCard)
+                        .padding(24.dp),
                     contentAlignment = Alignment.Center,
                 ) {
-                    TinkeringPill(text = "Tinkering & Discovering Models...")
+                    Column(
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        Text("🔑", fontSize = 28.sp)
+                        Text(
+                            text = "No AI Credentials Found",
+                            style = androidx.compose.material3.MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.Bold,
+                            color = colors.inkPrimary,
+                        )
+                        Text(
+                            text = "Add an OpenAI, Gemini, Claude, or Ollama credential from the Credentials tab in Overview to start using Ask AI.",
+                            style = androidx.compose.material3.MaterialTheme.typography.bodySmall,
+                            color = colors.inkSecondary,
+                            textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+                        )
+                    }
                 }
             } else {
-                OutlinedButton(
-                    onClick = { onDiscoverModels(selectedProvider, baseUrl, apiKey) },
-                    shape = KaivoShapes.chip,
-                    border = androidx.compose.foundation.BorderStroke(1.dp, colors.royalGold.copy(alpha = 0.5f)),
-                    colors = ButtonDefaults.outlinedButtonColors(contentColor = colors.royalGold),
-                    modifier = Modifier.fillMaxWidth(),
-                ) {
-                    Icon(
-                        KaivoIcons.icon("refresh"),
-                        contentDescription = null,
-                        modifier = Modifier.size(16.dp),
-                    )
-                    Spacer(Modifier.width(8.dp))
-                    Text(
-                        text = "Connect & Discover Models",
-                        fontWeight = FontWeight.SemiBold,
-                    )
-                }
-            }
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    savedCredentials.forEach { cred ->
+                        val isSelected = cred.id == currentConfig.credentialId
+                        val typeInfo = CredentialTypeInfo.find(cred.type)
+                        val accentColor = typeInfo?.accentColor?.let { Color(it) } ?: colors.royalGold
 
-            // Discovery status message
-            if (discoveryMessage != null) {
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clip(KaivoShapes.chip)
-                        .background(if (isDiscoveryError) colors.statusError.copy(alpha = 0.15f) else colors.statusSuccess.copy(alpha = 0.15f))
-                        .padding(horizontal = 12.dp, vertical = 8.dp),
-                ) {
-                    Text(
-                        text = discoveryMessage,
-                        style = androidx.compose.material3.MaterialTheme.typography.bodySmall,
-                        color = if (isDiscoveryError) colors.statusError else colors.statusSuccess,
-                    )
-                }
-            }
-
-            // Model Selector
-            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                Text(
-                    text = "Active Model",
-                    style = androidx.compose.material3.MaterialTheme.typography.labelMedium,
-                    fontWeight = FontWeight.SemiBold,
-                    color = colors.inkPrimary,
-                )
-
-                OutlinedTextField(
-                    value = selectedModel,
-                    onValueChange = { selectedModel = it },
-                    label = { Text("Model ID") },
-                    placeholder = { Text("e.g. meta/llama-3.3-70b-instruct or gpt-4o") },
-                    colors = OutlinedTextFieldDefaults.colors(
-                        focusedBorderColor = colors.royalGold,
-                        unfocusedBorderColor = colors.hairline,
-                        focusedTextColor = colors.inkPrimary,
-                        unfocusedTextColor = colors.inkPrimary,
-                    ),
-                    modifier = Modifier.fillMaxWidth(),
-                )
-
-                if (effectiveModels.isNotEmpty()) {
-                    Text(
-                        text = "Available / Discovered Models:",
-                        style = androidx.compose.material3.MaterialTheme.typography.labelSmall,
-                        color = colors.inkSecondary,
-                        modifier = Modifier.padding(top = 4.dp),
-                    )
-
-                    LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                        items(effectiveModels) { model ->
-                            val isSelected = model == selectedModel
-                            Box(
-                                Modifier
-                                    .clip(KaivoShapes.chip)
-                                    .background(if (isSelected) colors.royalGold else colors.surfaceCard)
-                                    .border(1.dp, if (isSelected) colors.royalGold else colors.hairline, KaivoShapes.chip)
-                                    .clickable { selectedModel = model }
-                                    .padding(horizontal = 10.dp, vertical = 6.dp),
-                            ) {
-                                Text(
-                                    text = model,
-                                    style = androidx.compose.material3.MaterialTheme.typography.labelSmall,
-                                    color = if (isSelected) Color.Black else colors.inkPrimary,
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(KaivoShapes.stepCard)
+                                .background(if (isSelected) colors.surfaceCard else colors.canvasVoid)
+                                .border(
+                                    1.dp,
+                                    if (isSelected) colors.royalGold else colors.hairline,
+                                    KaivoShapes.stepCard,
                                 )
+                                .clickable { onSelectCredential(cred.id) }
+                                .padding(14.dp),
+                        ) {
+                            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                ) {
+                                    Row(
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.spacedBy(10.dp),
+                                        modifier = Modifier.weight(1f),
+                                    ) {
+                                        Box(
+                                            modifier = Modifier
+                                                .size(36.dp)
+                                                .clip(KaivoShapes.chip)
+                                                .background(accentColor.copy(alpha = 0.15f))
+                                                .border(1.dp, accentColor.copy(alpha = 0.35f), KaivoShapes.chip),
+                                            contentAlignment = Alignment.Center,
+                                        ) {
+                                            Icon(
+                                                KaivoIcons.icon(typeInfo?.iconKey ?: "key"),
+                                                contentDescription = null,
+                                                tint = accentColor,
+                                                modifier = Modifier.size(18.dp),
+                                            )
+                                        }
+
+                                        Column {
+                                            Text(
+                                                text = cred.name,
+                                                style = androidx.compose.material3.MaterialTheme.typography.titleMedium,
+                                                fontWeight = FontWeight.Bold,
+                                                color = colors.inkPrimary,
+                                            )
+                                            Text(
+                                                text = typeInfo?.displayName ?: cred.type,
+                                                style = androidx.compose.material3.MaterialTheme.typography.bodySmall,
+                                                color = colors.inkSecondary,
+                                            )
+                                        }
+                                    }
+
+                                    // Selection Radio indicator
+                                    Box(
+                                        modifier = Modifier
+                                            .size(20.dp)
+                                            .clip(CircleShape)
+                                            .background(if (isSelected) colors.royalGold else Color.Transparent)
+                                            .border(
+                                                2.dp,
+                                                if (isSelected) colors.royalGold else colors.inkSecondary.copy(alpha = 0.5f),
+                                                CircleShape,
+                                            ),
+                                        contentAlignment = Alignment.Center,
+                                    ) {
+                                        if (isSelected) {
+                                            Box(
+                                                modifier = Modifier
+                                                    .size(8.dp)
+                                                    .clip(CircleShape)
+                                                    .background(Color.Black),
+                                            )
+                                        }
+                                    }
+                                }
+
+                                // If selected, show model selection
+                                if (isSelected) {
+                                    Column(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .clip(KaivoShapes.chip)
+                                            .background(colors.canvasVoid)
+                                            .padding(10.dp),
+                                        verticalArrangement = Arrangement.spacedBy(8.dp),
+                                    ) {
+                                        Row(
+                                            modifier = Modifier.fillMaxWidth(),
+                                            verticalAlignment = Alignment.CenterVertically,
+                                            horizontalArrangement = Arrangement.SpaceBetween,
+                                        ) {
+                                            Text(
+                                                text = "Active Model",
+                                                style = androidx.compose.material3.MaterialTheme.typography.labelSmall,
+                                                fontWeight = FontWeight.Bold,
+                                                color = colors.royalGold,
+                                            )
+                                            if (isDiscovering) {
+                                                Text(
+                                                    text = "Discovering models...",
+                                                    style = androidx.compose.material3.MaterialTheme.typography.labelSmall,
+                                                    color = colors.inkSecondary,
+                                                )
+                                            }
+                                        }
+
+                                        Text(
+                                            text = currentConfig.model,
+                                            style = androidx.compose.material3.MaterialTheme.typography.bodyMedium,
+                                            fontWeight = FontWeight.SemiBold,
+                                            color = colors.inkPrimary,
+                                        )
+
+                                        if (effectiveModels.isNotEmpty()) {
+                                            LazyRow(
+                                                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                                modifier = Modifier.padding(top = 2.dp),
+                                            ) {
+                                                items(effectiveModels) { model ->
+                                                    val isModelSelected = model == currentConfig.model
+                                                    Box(
+                                                        modifier = Modifier
+                                                            .clip(KaivoShapes.chip)
+                                                            .background(if (isModelSelected) colors.royalGold else colors.surfaceCard)
+                                                            .border(
+                                                                1.dp,
+                                                                if (isModelSelected) colors.royalGold else colors.hairline,
+                                                                KaivoShapes.chip,
+                                                            )
+                                                            .clickable { onSelectModel(model) }
+                                                            .padding(horizontal = 8.dp, vertical = 4.dp),
+                                                    ) {
+                                                        Text(
+                                                            text = model,
+                                                            style = androidx.compose.material3.MaterialTheme.typography.labelSmall,
+                                                            color = if (isModelSelected) Color.Black else colors.inkPrimary,
+                                                        )
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
                             }
                         }
                     }
@@ -1266,23 +1269,16 @@ private fun AiProviderSettingsSheet(
             Spacer(Modifier.height(8.dp))
 
             Button(
-                onClick = {
-                    onSave(
-                        AiProviderConfig(
-                            provider = selectedProvider,
-                            model = selectedModel.trim().ifBlank { selectedProvider.defaultModel },
-                            apiKey = apiKey.trim(),
-                            baseUrl = baseUrl.trim(),
-                            discoveredModels = currentConfig.discoveredModels,
-                        )
-                    )
-                },
-                colors = ButtonDefaults.buttonColors(containerColor = colors.royalGold, contentColor = Color.Black),
+                onClick = onDismiss,
                 shape = KaivoShapes.chip,
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = colors.royalGold,
+                    contentColor = Color.Black,
+                ),
                 modifier = Modifier.fillMaxWidth(),
             ) {
                 Text(
-                    text = "Save & Apply Settings",
+                    text = "Done",
                     style = androidx.compose.material3.MaterialTheme.typography.labelLarge,
                     fontWeight = FontWeight.Bold,
                 )

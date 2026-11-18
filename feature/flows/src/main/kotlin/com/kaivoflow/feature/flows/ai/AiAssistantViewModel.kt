@@ -6,6 +6,7 @@ import androidx.lifecycle.viewModelScope
 import com.kaivoflow.core.data.CredentialRepository
 import com.kaivoflow.core.data.FlowRepository
 import com.kaivoflow.core.engine.HttpGateway
+import com.kaivoflow.core.model.CredentialItem
 import com.kaivoflow.core.model.Flow
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -34,6 +35,7 @@ data class AiAssistantUiState(
     val modelDiscoveryIsError: Boolean = false,
     val viewMode: AssistantViewMode = AssistantViewMode.Chat,
     val savedSessions: List<AiSession> = emptyList(),
+    val savedCredentials: List<CredentialItem> = emptyList(),
     val activeSessionId: String = UUID.randomUUID().toString(),
 )
 
@@ -54,9 +56,32 @@ class AiAssistantViewModel @Inject constructor(
     val uiState: StateFlow<AiAssistantUiState> = _uiState.asStateFlow()
 
     init {
+        observeCredentials()
         loadProviderConfig()
         observeSavedSessions()
         initSession(flowId)
+    }
+
+    private fun observeCredentials() {
+        viewModelScope.launch {
+            credentialRepository.observeCredentials().collect { allCreds ->
+                val aiTypes = setOf("openAiApi", "geminiApi", "anthropicApi", "ollamaApi", "credential_type_openai", "credential_type_gemini", "credential_type_claude", "credential_type_ollama")
+                val filtered = allCreds.filter { cred ->
+                    cred.id != "ai_provider_config" && aiTypes.any { type -> cred.type.contains(type, ignoreCase = true) }
+                }
+                _uiState.update { it.copy(savedCredentials = filtered) }
+
+                val currentCredId = _uiState.value.providerConfig.credentialId
+                if (currentCredId != null) {
+                    val matching = filtered.find { it.id == currentCredId }
+                    if (matching != null && matching.name != _uiState.value.providerConfig.credentialName) {
+                        _uiState.update {
+                            it.copy(providerConfig = it.providerConfig.copy(credentialName = matching.name))
+                        }
+                    }
+                }
+            }
+        }
     }
 
     private fun observeSavedSessions() {
@@ -70,8 +95,24 @@ class AiAssistantViewModel @Inject constructor(
     private fun loadProviderConfig() {
         viewModelScope.launch {
             val fields = credentialRepository.getFields("ai_provider_config")
-            val config = AiProviderConfig.fromMap(fields)
+            var config = AiProviderConfig.fromMap(fields)
+
+            val credId = config.credentialId
+            if (!credId.isNullOrBlank()) {
+                val credFields = credentialRepository.getFields(credId)
+                if (credFields != null) {
+                    val apiKey = credFields["apiKey"] ?: credFields["token"] ?: ""
+                    val baseUrl = credFields["baseUrl"] ?: ""
+                    config = config.copy(
+                        apiKey = if (apiKey.isNotBlank()) apiKey else config.apiKey,
+                        baseUrl = if (baseUrl.isNotBlank()) baseUrl else config.baseUrl,
+                    )
+                }
+            }
             _uiState.update { it.copy(providerConfig = config) }
+            if (config.isConfigured) {
+                discoverModels(config.provider, config.baseUrl, config.apiKey)
+            }
         }
     }
 
@@ -167,22 +208,95 @@ class AiAssistantViewModel @Inject constructor(
         }
     }
 
-    fun saveProviderConfig(config: AiProviderConfig) {
+    fun saveProviderConfig(config: AiProviderConfig, credentialName: String? = null) {
         viewModelScope.launch {
+            val credId = config.credentialId ?: UUID.randomUUID().toString().take(16)
+            val name = credentialName?.ifBlank { null }
+                ?: config.credentialName?.ifBlank { null }
+                ?: "${config.provider.displayName} account"
+
+            val credFields = mapOf(
+                "apiKey" to config.apiKey,
+                "baseUrl" to config.baseUrl,
+                "model" to config.model,
+            )
+
+            // Save or update versioned credential in sovereign repository
+            credentialRepository.save(
+                id = credId,
+                type = config.provider.key,
+                label = name,
+                fields = credFields,
+            )
+
+            val updatedConfig = config.copy(
+                credentialId = credId,
+                credentialName = name,
+            )
+
+            // Save active AI provider configuration pointer
             credentialRepository.save(
                 id = "ai_provider_config",
                 type = "ai_assistant",
                 label = "AI Assistant Config",
-                fields = config.toMap(),
+                fields = updatedConfig.toMap(),
             )
+
             _uiState.update {
                 it.copy(
-                    providerConfig = config,
+                    providerConfig = updatedConfig,
                     showSettingsSheet = false,
                     modelDiscoveryMessage = null,
                 )
             }
         }
+    }
+
+    fun selectCredential(credentialId: String) {
+        viewModelScope.launch {
+            val cred = _uiState.value.savedCredentials.find { it.id == credentialId } ?: return@launch
+            val fields = credentialRepository.getFields(credentialId).orEmpty()
+            val apiKey = fields["apiKey"] ?: fields["token"] ?: ""
+            val baseUrl = fields["baseUrl"] ?: ""
+            val provider = AiProvider.fromKey(cred.type)
+
+            val updatedConfig = _uiState.value.providerConfig.copy(
+                provider = provider,
+                apiKey = apiKey,
+                baseUrl = baseUrl,
+                credentialId = credentialId,
+                credentialName = cred.name,
+            )
+
+            credentialRepository.save(
+                id = "ai_provider_config",
+                type = "ai_assistant",
+                label = "AI Assistant Config",
+                fields = updatedConfig.toMap(),
+            )
+
+            _uiState.update { state ->
+                state.copy(providerConfig = updatedConfig)
+            }
+            discoverModels(provider, baseUrl, apiKey)
+        }
+    }
+
+    fun selectModel(model: String) {
+        viewModelScope.launch {
+            val updated = _uiState.value.providerConfig.copy(model = model)
+            credentialRepository.save(
+                id = "ai_provider_config",
+                type = "ai_assistant",
+                label = "AI Assistant Config",
+                fields = updated.toMap(),
+            )
+            _uiState.update { it.copy(providerConfig = updated) }
+        }
+    }
+
+    suspend fun getCredentialFields(credentialId: String): Map<String, String> {
+        return credentialRepository.getFields(credentialId).orEmpty()
     }
 
     fun toggleSettingsSheet(show: Boolean) {
@@ -209,21 +323,11 @@ class AiAssistantViewModel @Inject constructor(
                 _uiState.update { it.copy(messages = emptyList(), currentFlow = null) }
             } else {
                 val flow = flowRepository.flow(targetFlowId)
-                if (flow != null) {
-                    val report = agent.diagnose(flow)
-                    val introText = "I see you're working on the \"${flow.name}\" workflow (${flow.steps.size} steps). What would you like to do with it — make changes, debug an issue, or add new steps?"
-                    _uiState.update {
-                        it.copy(
-                            currentFlow = flow,
-                            messages = listOf(
-                                AiChatMessage(
-                                    sender = MessageSender.Assistant,
-                                    text = introText,
-                                    diagnosisReport = report,
-                                )
-                            ),
-                        )
-                    }
+                _uiState.update {
+                    it.copy(
+                        currentFlow = flow,
+                        messages = emptyList(),
+                    )
                 }
             }
         }
@@ -254,12 +358,17 @@ class AiAssistantViewModel @Inject constructor(
                 chatHistory = updatedMessages,
             )
 
-            val proposed = response.flowProposal ?: _uiState.value.activeProposedFlow
+            val proposed = response.flowProposal
+            if (proposed != null) {
+                flowRepository.save(proposed)
+            }
+
             _uiState.update {
                 it.copy(
                     messages = it.messages + response,
                     isGenerating = false,
-                    activeProposedFlow = proposed,
+                    currentFlow = proposed ?: it.currentFlow,
+                    activeProposedFlow = null,
                 )
             }
             persistCurrentSession()

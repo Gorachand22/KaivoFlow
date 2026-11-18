@@ -31,7 +31,10 @@ class ModelDiscoveryService(
     ): List<String> {
         val cleanBase = baseUrl.trim().trimEnd('/')
         val endpoint = "$cleanBase/models"
-        val headers = mutableMapOf("Content-Type" to "application/json")
+        val headers = mutableMapOf(
+            "Content-Type" to "application/json",
+            "Accept" to "application/json",
+        )
         if (apiKey.isNotBlank()) {
             headers["Authorization"] = "Bearer ${apiKey.trim()}"
         }

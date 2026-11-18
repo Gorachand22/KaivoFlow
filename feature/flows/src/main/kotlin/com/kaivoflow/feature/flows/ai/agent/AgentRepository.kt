@@ -83,7 +83,51 @@ class FileAgentRepository @Inject constructor(
         val list = files.mapNotNull { file ->
             runCatching { deserializeAgent(file.readText()) }.getOrNull()
         }.sortedByDescending { it.updatedAt }
-        _agentsFlow.value = list
+
+        if (list.isEmpty()) {
+            val starter = createStarterAgent()
+            runCatching {
+                val file = agentsDir.resolve("${starter.id}.json")
+                file.writeText(serializeAgent(starter))
+            }
+            _agentsFlow.value = listOf(starter)
+        } else {
+            _agentsFlow.value = list
+        }
+    }
+
+    private fun createStarterAgent(): CustomAgent {
+        return CustomAgent(
+            id = "starter_morning_news",
+            name = "Morning News Brief",
+            iconEmoji = "☀️",
+            iconColorHex = 0xFFFF8A00,
+            instructions = "You are a news brief agent. Every morning at 9am, search the web for today's top headlines and compile a concise summary. For each story include a headline, a one-sentence summary, and a source link. Limit the brief to five stories.",
+            isPublished = false, // Default unpublished mode
+            triggers = listOf(
+                AgentTrigger(
+                    type = "schedule",
+                    name = "Daily 9:00 AM Spark",
+                    description = "Runs automatically every morning at 9am",
+                    config = mapOf("cron" to "0 9 * * *"),
+                    isEnabled = true,
+                )
+            ),
+            tools = listOf(
+                AgentTool(
+                    type = "web_search",
+                    name = "Web Search",
+                    description = "Searches the web for latest headlines and live articles",
+                    isEnabled = true,
+                ),
+                AgentTool(
+                    type = "device",
+                    name = "Phone Notification",
+                    description = "Sends the brief summary to your phone notifications",
+                    isEnabled = true,
+                ),
+            ),
+        )
     }
 
     private fun loadAgentFile(id: String): CustomAgent? {
@@ -100,10 +144,25 @@ class FileAgentRepository @Inject constructor(
         json.put("iconColorHex", agent.iconColorHex)
         json.put("provider", agent.provider.name)
         json.put("model", agent.model)
+        json.put("credentialId", agent.credentialId ?: "")
         json.put("instructions", agent.instructions)
+        json.put("webSearchEnabled", agent.webSearchEnabled)
+        json.put("crossSessionMemoryEnabled", agent.crossSessionMemoryEnabled)
         json.put("isPublished", agent.isPublished)
         json.put("createdAt", agent.createdAt)
         json.put("updatedAt", agent.updatedAt)
+
+        // Skills
+        val skillsArr = JSONArray()
+        agent.skills.forEach { sk ->
+            val sObj = JSONObject()
+            sObj.put("id", sk.id)
+            sObj.put("name", sk.name)
+            sObj.put("description", sk.description)
+            sObj.put("isEnabled", sk.isEnabled)
+            skillsArr.put(sObj)
+        }
+        json.put("skills", skillsArr)
 
         // Triggers
         val triggersArr = JSONArray()
@@ -175,6 +234,20 @@ class FileAgentRepository @Inject constructor(
 
     private fun deserializeAgent(jsonStr: String): CustomAgent {
         val json = JSONObject(jsonStr)
+        val skills = mutableListOf<AgentSkill>()
+        val skillsArr = json.optJSONArray("skills") ?: JSONArray()
+        for (i in 0 until skillsArr.length()) {
+            val sObj = skillsArr.getJSONObject(i)
+            skills.add(
+                AgentSkill(
+                    id = sObj.optString("id", UUID.randomUUID().toString()),
+                    name = sObj.optString("name", "Skill"),
+                    description = sObj.optString("description", ""),
+                    isEnabled = sObj.optBoolean("isEnabled", true),
+                )
+            )
+        }
+
         val triggers = mutableListOf<AgentTrigger>()
         val trigArr = json.optJSONArray("triggers") ?: JSONArray()
         for (i in 0 until trigArr.length()) {
@@ -254,12 +327,16 @@ class FileAgentRepository @Inject constructor(
             name = json.optString("name", "Custom Agent"),
             iconEmoji = json.optString("iconEmoji", "☀️"),
             iconColorHex = json.optLong("iconColorHex", 0xFFFF9800),
-            provider = AiProvider.fromKey(json.optString("provider", "Gemini")),
-            model = json.optString("model", "gemini-2.0-flash"),
+            provider = AiProvider.fromKey(json.optString("provider", "OpenAI")),
+            model = json.optString("model", "gpt-4o"),
+            credentialId = json.optString("credentialId").takeIf { it.isNotBlank() },
             instructions = json.optString("instructions", ""),
+            skills = skills,
             triggers = triggers,
             tools = tools,
             knowledge = knowledge,
+            webSearchEnabled = json.optBoolean("webSearchEnabled", false),
+            crossSessionMemoryEnabled = json.optBoolean("crossSessionMemoryEnabled", false),
             settings = settings,
             sessions = sessions,
             isPublished = json.optBoolean("isPublished", false),

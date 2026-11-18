@@ -40,7 +40,7 @@ import java.util.Date
 import java.util.Locale
 
 /**
- * Chat History Sheet matching n8n's Assistant Threads panel.
+ * Chat History Sheet for sovereign assistant threads.
  * Allows users to review past conversation sessions, switch threads, or delete them.
  */
 @OptIn(ExperimentalMaterial3Api::class)

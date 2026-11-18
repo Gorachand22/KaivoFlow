@@ -40,6 +40,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.input.pointer.pointerInput
@@ -387,6 +388,47 @@ fun CanvasScreen(
                     pixelScale = pixelScale,
                     modifier = Modifier.fillMaxSize(),
                 )
+
+                // Interactive stream disconnect joints at bezier midpoints
+                state.streams.forEach { stream ->
+                    val fromLayout = effectiveLayouts[stream.fromStepId]
+                    val toLayout = effectiveLayouts[stream.toStepId]
+                    if (fromLayout != null && toLayout != null) {
+                        val start = fromLayout.ports.outputs.getOrNull(stream.fromPort) ?: fromLayout.bottomCenter
+                        val end = toLayout.ports.input
+                        val control = CanvasGeometry.bezier(start, end, pixelScale = 1f)
+                        val mid = CanvasGeometry.pointAlongBezier(control, 0.5f)
+
+                        Box(
+                            modifier = Modifier
+                                .graphicsLayer {
+                                    translationX = (mid.x * pixelScale) - (13f * density.density)
+                                    translationY = (mid.y * pixelScale) - (13f * density.density)
+                                }
+                                .size(26.dp)
+                                .background(
+                                    color = Color(0xFF14141A),
+                                    shape = CircleShape,
+                                )
+                                .border(
+                                    width = 1.dp,
+                                    color = colors.hairline,
+                                    shape = CircleShape,
+                                )
+                                .clickable {
+                                    viewModel.requestDisconnectStream(stream)
+                                },
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            Icon(
+                                imageVector = KaivoIcons.icon("close"),
+                                contentDescription = "Disconnect stream",
+                                tint = colors.velvetRose,
+                                modifier = Modifier.size(13.dp),
+                            )
+                        }
+                    }
+                }
 
                 // Visual Step Group frames (underneath step cards)
                 state.groups.forEach { group ->

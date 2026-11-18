@@ -62,11 +62,13 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.PathEffect
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.kaivoflow.core.design.KaivoIcons
 import com.kaivoflow.core.design.KaivoShapes
 import com.kaivoflow.core.design.KaivoTheme
+import com.kaivoflow.core.model.CredentialItem
 import com.kaivoflow.feature.flows.ai.AiProvider
 import com.kaivoflow.feature.flows.ai.TinkeringPill
 import java.text.SimpleDateFormat
@@ -129,7 +131,14 @@ fun AgentBuilderScreen(
                     AgentBuilderTab.Build -> {
                         AgentBuildTabView(
                             agent = state.agent,
-                            availableModels = state.providerConfig.effectiveModels,
+                            templates = state.templates,
+                            selectedTemplateId = state.selectedTemplateId,
+                            onSelectTemplate = viewModel::applyTemplate,
+                            credentials = state.credentials,
+                            selectedCredentialId = state.agent.credentialId,
+                            onSelectCredential = viewModel::selectCredential,
+                            availableModels = state.effectiveModels,
+                            isDiscoveringModels = state.isDiscoveringModels,
                             onModelChange = { provider, model -> viewModel.updateModel(provider, model) },
                             onInstructionsChange = viewModel::updateInstructions,
                             onToggleTrigger = viewModel::toggleTrigger,
@@ -139,6 +148,9 @@ fun AgentBuilderScreen(
                             onDeleteTool = viewModel::removeTool,
                             onAddTool = { showAddToolDialog = true },
                             onAddSkill = { showAddSkillDialog = true },
+                            onRemoveSkill = viewModel::removeSkill,
+                            onToggleWebSearch = viewModel::toggleWebSearch,
+                            onToggleCrossSessionMemory = viewModel::toggleCrossSessionMemory,
                         )
                     }
                     AgentBuilderTab.Knowledge -> {
@@ -213,14 +225,7 @@ fun AgentBuilderScreen(
         AddSkillDialog(
             onDismiss = { showAddSkillDialog = false },
             onAdd = { skillName ->
-                viewModel.addTool(
-                    AgentTool(
-                        type = "skill",
-                        name = skillName,
-                        description = "Custom specialized agent skill",
-                        isEnabled = true,
-                    )
-                )
+                viewModel.addSkill(skillName)
                 showAddSkillDialog = false
             },
         )
@@ -258,7 +263,7 @@ private fun AgentBuilderTopBar(
     ) {
         IconButton(onClick = onBack) {
             Icon(
-                KaivoIcons.icon("arrowBack"),
+                KaivoIcons.icon("back"),
                 contentDescription = "Back",
                 tint = colors.inkPrimary,
             )
@@ -438,7 +443,14 @@ private fun AgentTabRow(
 @Composable
 private fun AgentBuildTabView(
     agent: CustomAgent,
+    templates: List<AgentTemplate>,
+    selectedTemplateId: String?,
+    onSelectTemplate: (AgentTemplate) -> Unit,
+    credentials: List<CredentialItem>,
+    selectedCredentialId: String?,
+    onSelectCredential: (String) -> Unit,
     availableModels: List<String>,
+    isDiscoveringModels: Boolean,
     onModelChange: (AiProvider, String) -> Unit,
     onInstructionsChange: (String) -> Unit,
     onToggleTrigger: (String) -> Unit,
@@ -448,21 +460,91 @@ private fun AgentBuildTabView(
     onDeleteTool: (String) -> Unit,
     onAddTool: () -> Unit,
     onAddSkill: () -> Unit,
+    onRemoveSkill: (String) -> Unit,
+    onToggleWebSearch: (Boolean) -> Unit,
+    onToggleCrossSessionMemory: (Boolean) -> Unit,
 ) {
     val colors = KaivoTheme.colors
     var showModelMenu by remember { mutableStateOf(false) }
-    var webSearchEnabled by remember { mutableStateOf(false) }
-    var crossSessionMemory by remember { mutableStateOf(false) }
 
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
         contentPadding = PaddingValues(16.dp),
         verticalArrangement = Arrangement.spacedBy(16.dp),
     ) {
-        // Section 1: Model & instructions (matching Screenshot 1)
+        // Section 0: Starter Templates Selector
+        item {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                ) {
+                    Text(
+                        text = "Starter Templates",
+                        style = androidx.compose.material3.MaterialTheme.typography.titleSmall,
+                        fontWeight = FontWeight.Bold,
+                        color = colors.inkPrimary,
+                    )
+                    Text(
+                        text = "Tap to load draft",
+                        style = androidx.compose.material3.MaterialTheme.typography.labelSmall,
+                        color = colors.inkSecondary,
+                    )
+                }
+
+                LazyRow(
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    contentPadding = PaddingValues(vertical = 2.dp),
+                ) {
+                    items(templates) { tmpl ->
+                        val isSelected = tmpl.id == selectedTemplateId
+                        Box(
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(12.dp))
+                                .background(if (isSelected) Color(tmpl.colorHex).copy(alpha = 0.2f) else colors.surfaceCard)
+                                .border(
+                                    1.dp,
+                                    if (isSelected) Color(tmpl.colorHex) else colors.hairline,
+                                    RoundedCornerShape(12.dp),
+                                )
+                                .clickable { onSelectTemplate(tmpl) }
+                                .padding(horizontal = 12.dp, vertical = 8.dp),
+                        ) {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            ) {
+                                Text(tmpl.emoji, fontSize = 20.sp)
+                                Column {
+                                    Text(
+                                        text = tmpl.name,
+                                        style = androidx.compose.material3.MaterialTheme.typography.labelMedium,
+                                        fontWeight = if (isSelected) FontWeight.Bold else FontWeight.SemiBold,
+                                        color = if (isSelected) colors.inkPrimary else colors.inkSecondary,
+                                    )
+                                    Text(
+                                        text = tmpl.description,
+                                        style = androidx.compose.material3.MaterialTheme.typography.labelSmall,
+                                        color = colors.inkSecondary,
+                                        maxLines = 1,
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // Section 1: Model & instructions (matching Reference)
         item {
             CardSection(title = "Model & instructions") {
-                // Model Field
+                val selectedCred = credentials.find { it.id == selectedCredentialId }
+                    ?: credentials.firstOrNull { it.type.contains("openai", ignoreCase = true) }
+                    ?: credentials.firstOrNull()
+
+                // Model Field (Matching sovereign reference design)
                 Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Text(
@@ -474,9 +556,9 @@ private fun AgentBuildTabView(
                         Text(text = " *", color = colors.royalGold, fontWeight = FontWeight.Bold)
                     }
                     Text(
-                        text = "What model this agent uses",
+                        text = if (isDiscoveringModels) "Discovering available models..." else "What model this agent uses",
                         style = androidx.compose.material3.MaterialTheme.typography.bodySmall,
-                        color = colors.inkSecondary,
+                        color = if (isDiscoveringModels) colors.royalGold else colors.inkSecondary,
                     )
                     Spacer(Modifier.height(4.dp))
 
@@ -497,6 +579,7 @@ private fun AgentBuildTabView(
                             Row(
                                 verticalAlignment = Alignment.CenterVertically,
                                 horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                modifier = Modifier.weight(1f, fill = false),
                             ) {
                                 Icon(
                                     KaivoIcons.icon("sparkles"),
@@ -509,17 +592,22 @@ private fun AgentBuildTabView(
                                     style = androidx.compose.material3.MaterialTheme.typography.bodyMedium,
                                     fontWeight = FontWeight.SemiBold,
                                     color = colors.inkPrimary,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                    modifier = Modifier.weight(1f, fill = false),
                                 )
                                 Box(
                                     modifier = Modifier
                                         .clip(KaivoShapes.chip)
                                         .background(colors.canvasVoid)
-                                        .padding(horizontal = 6.dp, vertical = 2.dp),
+                                        .padding(horizontal = 8.dp, vertical = 3.dp),
                                 ) {
                                     Text(
-                                        text = agent.provider.displayName,
+                                        text = selectedCred?.name ?: agent.provider.displayName,
                                         style = androidx.compose.material3.MaterialTheme.typography.labelSmall,
-                                        color = colors.inkSecondary,
+                                        fontWeight = FontWeight.SemiBold,
+                                        color = colors.royalGold,
+                                        maxLines = 1,
                                     )
                                 }
                             }
@@ -536,11 +624,89 @@ private fun AgentBuildTabView(
                             onDismissRequest = { showModelMenu = false },
                             modifier = Modifier.background(colors.surfaceCard),
                         ) {
-                            availableModels.forEach { modelName ->
+                            if (credentials.isNotEmpty()) {
                                 DropdownMenuItem(
-                                    text = { Text(modelName, color = colors.inkPrimary) },
+                                    text = {
+                                        Text(
+                                            "CONNECTED ACCOUNTS",
+                                            style = androidx.compose.material3.MaterialTheme.typography.labelSmall,
+                                            fontWeight = FontWeight.Bold,
+                                            color = colors.inkSecondary,
+                                        )
+                                    },
+                                    onClick = {},
+                                    enabled = false,
+                                )
+                                credentials.forEach { cred ->
+                                    val isCur = cred.id == selectedCredentialId
+                                    DropdownMenuItem(
+                                        text = {
+                                            Row(
+                                                modifier = Modifier.fillMaxWidth(),
+                                                horizontalArrangement = Arrangement.SpaceBetween,
+                                                verticalAlignment = Alignment.CenterVertically,
+                                            ) {
+                                                Text(
+                                                    cred.name,
+                                                    fontWeight = if (isCur) FontWeight.Bold else FontWeight.Normal,
+                                                    color = if (isCur) colors.royalGold else colors.inkPrimary,
+                                                )
+                                                Text(
+                                                    cred.type,
+                                                    style = androidx.compose.material3.MaterialTheme.typography.labelSmall,
+                                                    color = colors.inkSecondary,
+                                                )
+                                            }
+                                        },
+                                        leadingIcon = {
+                                            Icon(
+                                                KaivoIcons.icon("key"),
+                                                contentDescription = null,
+                                                tint = if (isCur) colors.royalGold else colors.inkSecondary,
+                                                modifier = Modifier.size(16.dp),
+                                            )
+                                        },
+                                        onClick = {
+                                            onSelectCredential(cred.id)
+                                        },
+                                    )
+                                }
+                                Box(
+                                    Modifier
+                                        .fillMaxWidth()
+                                        .height(1.dp)
+                                        .background(colors.hairline)
+                                )
+                            }
+
+                            DropdownMenuItem(
+                                text = {
+                                    Text(
+                                        "MODELS (${availableModels.size})",
+                                        style = androidx.compose.material3.MaterialTheme.typography.labelSmall,
+                                        fontWeight = FontWeight.Bold,
+                                        color = colors.inkSecondary,
+                                    )
+                                },
+                                onClick = {},
+                                enabled = false,
+                            )
+                            availableModels.forEach { modelName ->
+                                val isSelected = modelName == agent.model
+                                DropdownMenuItem(
+                                    text = {
+                                        Text(
+                                            modelName,
+                                            color = if (isSelected) colors.royalGold else colors.inkPrimary,
+                                            fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
+                                        )
+                                    },
+                                    leadingIcon = if (isSelected) {
+                                        { Icon(KaivoIcons.icon("check"), null, tint = colors.royalGold, modifier = Modifier.size(16.dp)) }
+                                    } else null,
                                     onClick = {
-                                        onModelChange(agent.provider, modelName)
+                                        val provider = selectedCred?.type?.let { AiProvider.fromKey(it) } ?: agent.provider
+                                        onModelChange(provider, modelName)
                                         showModelMenu = false
                                     },
                                 )
@@ -600,6 +766,39 @@ private fun AgentBuildTabView(
                 title = "Skills",
                 subtitle = "How this agent handles specific tasks",
             ) {
+                if (agent.skills.isNotEmpty()) {
+                    LazyRow(
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        items(agent.skills) { skill ->
+                            Row(
+                                modifier = Modifier
+                                    .clip(KaivoShapes.chip)
+                                    .background(colors.canvasVoid)
+                                    .border(1.dp, colors.hairline, KaivoShapes.chip)
+                                    .padding(horizontal = 10.dp, vertical = 6.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                            ) {
+                                Text(
+                                    text = skill.name,
+                                    style = androidx.compose.material3.MaterialTheme.typography.labelMedium,
+                                    color = colors.inkPrimary,
+                                )
+                                Icon(
+                                    KaivoIcons.icon("close"),
+                                    contentDescription = "Remove skill",
+                                    tint = colors.inkSecondary,
+                                    modifier = Modifier
+                                        .size(12.dp)
+                                        .clickable { onRemoveSkill(skill.id) },
+                                )
+                            }
+                        }
+                    }
+                    Spacer(Modifier.height(8.dp))
+                }
+
                 OutlinedButton(
                     onClick = onAddSkill,
                     shape = KaivoShapes.chip,
@@ -750,22 +949,22 @@ private fun AgentBuildTabView(
                     Box(
                         modifier = Modifier
                             .clip(KaivoShapes.chip)
-                            .background(if (webSearchEnabled) colors.royalGold else colors.surfaceCard)
+                            .background(if (agent.webSearchEnabled) colors.royalGold else colors.surfaceCard)
                             .border(1.dp, colors.hairline, KaivoShapes.chip)
-                            .clickable { webSearchEnabled = !webSearchEnabled }
+                            .clickable { onToggleWebSearch(!agent.webSearchEnabled) }
                             .padding(horizontal = 10.dp, vertical = 4.dp),
                     ) {
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             Text(
-                                text = if (webSearchEnabled) "On" else "Off",
+                                text = if (agent.webSearchEnabled) "On" else "Off",
                                 style = androidx.compose.material3.MaterialTheme.typography.labelSmall,
                                 fontWeight = FontWeight.Bold,
-                                color = if (webSearchEnabled) Color.Black else colors.inkPrimary,
+                                color = if (agent.webSearchEnabled) Color.Black else colors.inkPrimary,
                             )
                             Icon(
                                 KaivoIcons.icon("dropdown"),
                                 contentDescription = null,
-                                tint = if (webSearchEnabled) Color.Black else colors.inkSecondary,
+                                tint = if (agent.webSearchEnabled) Color.Black else colors.inkSecondary,
                                 modifier = Modifier.size(12.dp),
                             )
                         }
@@ -807,8 +1006,8 @@ private fun AgentBuildTabView(
                         )
                     }
                     Switch(
-                        checked = crossSessionMemory,
-                        onCheckedChange = { crossSessionMemory = it },
+                        checked = agent.crossSessionMemoryEnabled,
+                        onCheckedChange = { onToggleCrossSessionMemory(it) },
                         colors = SwitchDefaults.colors(
                             checkedThumbColor = colors.royalGold,
                             checkedTrackColor = colors.royalGold.copy(alpha = 0.4f),
@@ -1602,6 +1801,7 @@ private fun AddSkillDialog(
     onAdd: (String) -> Unit,
 ) {
     val colors = KaivoTheme.colors
+    var customSkill by remember { mutableStateOf("") }
     val skillPresets = listOf(
         "Headline Summarizer & Deduplicator",
         "Fact Checker & Citation Extractor",
@@ -1611,27 +1811,61 @@ private fun AddSkillDialog(
 
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("Add Agent Skill", color = colors.inkPrimary) },
+        title = { Text("Add Agent Skill", color = colors.inkPrimary, fontWeight = FontWeight.Bold) },
         text = {
-            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                OutlinedTextField(
+                    value = customSkill,
+                    onValueChange = { customSkill = it },
+                    placeholder = { Text("Enter skill name...", color = colors.inkSecondary) },
+                    singleLine = true,
+                    colors = OutlinedTextFieldDefaults.colors(
+                        focusedBorderColor = colors.royalGold,
+                        unfocusedBorderColor = colors.hairline,
+                        focusedTextColor = colors.inkPrimary,
+                        unfocusedTextColor = colors.inkPrimary,
+                    ),
+                    shape = KaivoShapes.chip,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+
+                Text(
+                    text = "Or choose a preset skill:",
+                    style = androidx.compose.material3.MaterialTheme.typography.labelSmall,
+                    color = colors.inkSecondary,
+                )
+
                 skillPresets.forEach { name ->
                     Box(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .clip(KaivoShapes.medallion)
+                            .clip(KaivoShapes.chip)
                             .background(colors.surfaceCard)
-                            .border(1.dp, colors.hairline, KaivoShapes.medallion)
+                            .border(1.dp, colors.hairline, KaivoShapes.chip)
                             .clickable { onAdd(name) }
-                            .padding(12.dp),
+                            .padding(10.dp),
                     ) {
-                        Text(name, fontWeight = FontWeight.SemiBold, color = colors.inkPrimary)
+                        Text(name, fontWeight = FontWeight.Medium, color = colors.inkPrimary, style = androidx.compose.material3.MaterialTheme.typography.bodySmall)
                     }
                 }
             }
         },
-        confirmButton = {},
+        confirmButton = {
+            Button(
+                onClick = {
+                    if (customSkill.isNotBlank()) {
+                        onAdd(customSkill.trim())
+                    }
+                },
+                enabled = customSkill.isNotBlank(),
+                colors = ButtonDefaults.buttonColors(containerColor = colors.royalGold, contentColor = Color.Black),
+                shape = KaivoShapes.chip,
+            ) {
+                Text("Add Skill", fontWeight = FontWeight.Bold)
+            }
+        },
         dismissButton = {
-            TextButton(onClick = onDismiss) { Text("Cancel", color = colors.royalGold) }
+            TextButton(onClick = onDismiss) { Text("Cancel", color = colors.inkSecondary) }
         },
         containerColor = colors.canvasVoid,
     )

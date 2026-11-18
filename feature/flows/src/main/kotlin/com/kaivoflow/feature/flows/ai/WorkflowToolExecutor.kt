@@ -8,13 +8,16 @@ import kotlinx.collections.immutable.toImmutableMap
 import java.util.UUID
 
 /**
- * Sovereign implementation of n8n's ai-workflow-builder tools:
- * - add-node.tool.ts
- * - connect-nodes.tool.ts
- * - remove-node.tool.ts
- * - update-node-parameters.tool.ts
- * - validate-structure.tool.ts
- * - get-workflow-overview.tool.ts
+ * Sovereign AI workflow manipulation tools:
+ * - add_node
+ * - connect_nodes
+ * - remove_connection
+ * - remove_node
+ * - rename_node
+ * - update_node_parameters
+ * - validate_structure
+ * - get_workflow_overview
+ * - list_available_nodes
  */
 class WorkflowToolExecutor {
 
@@ -80,6 +83,66 @@ class WorkflowToolExecutor {
         val record = ToolExecution(
             toolName = "connect_nodes",
             description = "Connected \"$fromLabel\" → \"$toLabel\"",
+            isSuccess = true,
+        )
+
+        return updatedFlow to record
+    }
+
+    /**
+     * Tool: remove_connection (disconnects sourceNodeId -> targetNodeId)
+     */
+    fun removeConnection(
+        flow: Flow,
+        sourceNodeId: String,
+        targetNodeId: String,
+    ): Pair<Flow, ToolExecution> {
+        val matching = flow.streams.filter { it.fromStepId == sourceNodeId && it.toStepId == targetNodeId }
+        val remainingStreams = flow.streams.filterNot { it.fromStepId == sourceNodeId && it.toStepId == targetNodeId }
+
+        val updatedFlow = flow.copy(
+            streams = remainingStreams.toImmutableList(),
+            updatedAt = System.currentTimeMillis(),
+        )
+
+        val fromStep = flow.steps.find { it.id == sourceNodeId }?.name ?: sourceNodeId
+        val toStep = flow.steps.find { it.id == targetNodeId }?.name ?: targetNodeId
+
+        val record = ToolExecution(
+            toolName = "remove_connection",
+            description = "Removed connection \"$fromStep\" ↛ \"$toStep\" (${matching.size} link)",
+            isSuccess = matching.isNotEmpty(),
+        )
+
+        return updatedFlow to record
+    }
+
+    /**
+     * Tool: rename_node (renames a step)
+     */
+    fun renameNode(
+        flow: Flow,
+        stepId: String,
+        newName: String,
+    ): Pair<Flow, ToolExecution> {
+        val target = flow.steps.find { it.id == stepId }
+        if (target == null) {
+            return flow to ToolExecution(
+                toolName = "rename_node",
+                description = "Step not found: $stepId",
+                isSuccess = false,
+            )
+        }
+
+        val updatedSteps = flow.steps.map { if (it.id == stepId) it.copy(name = newName) else it }
+        val updatedFlow = flow.copy(
+            steps = updatedSteps.toImmutableList(),
+            updatedAt = System.currentTimeMillis(),
+        )
+
+        val record = ToolExecution(
+            toolName = "rename_node",
+            description = "Renamed \"${target.name}\" to \"$newName\"",
             isSuccess = true,
         )
 
@@ -178,5 +241,23 @@ class WorkflowToolExecutor {
         )
 
         return flow to record
+    }
+
+    /**
+     * Tool: get_workflow_overview (provides complete structural overview of the workflow)
+     */
+    fun getWorkflowOverview(flow: Flow): String {
+        val stepSummary = flow.steps.joinToString("\n") { step ->
+            val incoming = flow.streams.filter { it.toStepId == step.id }.map { it.fromStepId }
+            val outgoing = flow.streams.filter { it.fromStepId == step.id }.map { it.toStepId }
+            "- ${step.name} [${step.type}] (id=${step.id}): in=[${incoming.joinToString(",")}], out=[${outgoing.joinToString(",")}], params=${step.params}"
+        }
+        return """
+Workflow: "${flow.name}" (ID: ${flow.id})
+Total Steps: ${flow.steps.size}
+Total Streams: ${flow.streams.size}
+Steps Detail:
+$stepSummary
+""".trimIndent()
     }
 }

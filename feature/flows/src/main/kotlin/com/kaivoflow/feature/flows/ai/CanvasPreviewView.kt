@@ -41,7 +41,7 @@ import com.kaivoflow.core.model.StepNode
 /**
  * Mobile-optimized Visual Canvas Preview.
  * Renders the proposed workflow changes side-by-side or as a live canvas tab.
- * Matches n8n's visual node graph editor.
+ * Native sovereign visual node graph editor.
  */
 @Composable
 fun CanvasPreviewView(

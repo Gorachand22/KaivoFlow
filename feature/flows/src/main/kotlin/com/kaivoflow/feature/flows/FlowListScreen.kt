@@ -1,6 +1,9 @@
 package com.kaivoflow.feature.flows
 
+import com.kaivoflow.core.engine.HttpGateway
 import com.kaivoflow.core.engine.LifecycleState
+import com.kaivoflow.feature.flows.ai.AiProvider
+import com.kaivoflow.feature.flows.ai.ModelDiscoveryService
 import com.kaivoflow.feature.flows.ai.agent.AgentRepository
 import com.kaivoflow.feature.flows.ai.agent.CustomAgent
 
@@ -104,7 +107,7 @@ import java.util.UUID
 import javax.inject.Inject
 
 enum class DashboardTab {
-    Flows, Credentials, Variables, DataTables
+    Flows, Agents, Credentials, Variables, DataTables
 }
 
 /**
@@ -123,17 +126,51 @@ class FlowListViewModel @Inject constructor(
     private val agentRepository: AgentRepository,
     private val scheduler: FlowScheduler,
     private val activation: com.kaivoflow.core.work.alwayson.ActivationManager,
+    private val http: HttpGateway,
 ) : ViewModel() {
+
+    private val modelDiscovery = ModelDiscoveryService(http)
 
     val agents: StateFlow<List<CustomAgent>> = agentRepository.observeAgents()
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
+    private val _activeEditingCredential = MutableStateFlow<CredentialItem?>(null)
+    val activeEditingCredential: StateFlow<CredentialItem?> = _activeEditingCredential.asStateFlow()
+
+    private val _activeEditingFields = MutableStateFlow<Map<String, String>>(emptyMap())
+    val activeEditingFields: StateFlow<Map<String, String>> = _activeEditingFields.asStateFlow()
+
+    private val _agentSearchQuery = MutableStateFlow("")
+    val agentSearchQuery: StateFlow<String> = _agentSearchQuery.asStateFlow()
+
+    private val _inspectingAgent = MutableStateFlow<CustomAgent?>(null)
+    val inspectingAgent: StateFlow<CustomAgent?> = _inspectingAgent.asStateFlow()
+
+    fun setAgentSearchQuery(query: String) { _agentSearchQuery.value = query }
+    fun inspectAgentHistory(agent: CustomAgent?) { _inspectingAgent.value = agent }
+
     fun deleteAgent(id: String) {
-        viewModelScope.launch { agentRepository.deleteAgent(id) }
+        viewModelScope.launch {
+            agentRepository.deleteAgent(id)
+            if (_inspectingAgent.value?.id == id) {
+                _inspectingAgent.value = null
+            }
+        }
     }
 
     fun duplicateAgent(id: String) {
         viewModelScope.launch { agentRepository.duplicateAgent(id) }
+    }
+
+    fun togglePublishAgent(id: String) {
+        viewModelScope.launch {
+            val agent = agentRepository.agentById(id) ?: return@launch
+            val updated = agent.copy(isPublished = !agent.isPublished)
+            agentRepository.saveAgent(updated)
+            if (_inspectingAgent.value?.id == id) {
+                _inspectingAgent.value = updated
+            }
+        }
     }
 
     private val _isCreating = MutableStateFlow(false)
@@ -319,16 +356,80 @@ class FlowListViewModel @Inject constructor(
     fun openCreateCredentialDialog() { _showCreateCredentialDialog.value = true }
     fun closeCreateCredentialDialog() { _showCreateCredentialDialog.value = false }
 
+    fun openCredentialEdit(credential: CredentialItem) {
+        viewModelScope.launch {
+            val fields = credentialRepository.getFields(credential.id).orEmpty()
+            _activeEditingFields.value = fields
+            _activeEditingCredential.value = credential
+        }
+    }
+
+    fun closeCredentialEdit() {
+        _activeEditingCredential.value = null
+        _activeEditingFields.value = emptyMap()
+    }
+
+    fun updateCredential(name: String, fields: Map<String, String>) {
+        val cred = _activeEditingCredential.value ?: return
+        viewModelScope.launch {
+            credentialRepository.save(cred.id, cred.type, name.trim(), fields)
+            closeCredentialEdit()
+        }
+    }
+
+    suspend fun testCredentialConnection(type: String, fields: Map<String, String>): Result<List<String>> {
+        val provider = AiProvider.fromKey(type)
+        val apiKey = fields["apiKey"].orEmpty()
+        val baseUrl = fields["baseUrl"]?.ifBlank { provider.defaultBaseUrl } ?: provider.defaultBaseUrl
+        return modelDiscovery.discoverModels(provider, baseUrl, apiKey)
+    }
+
     fun saveCredential(type: String, name: String, fields: Map<String, String>) {
         viewModelScope.launch {
-            credentialRepository.save(null, type, name.trim(), fields)
+            val id = credentialRepository.save(null, type, name.trim(), fields)
             closeCreateCredentialDialog()
+            // Auto open the newly created credential modal to test & review details
+            val newItem = CredentialItem(
+                id = id,
+                type = type,
+                name = name.trim(),
+                createdAt = System.currentTimeMillis(),
+                updatedAt = System.currentTimeMillis(),
+            )
+            openCredentialEdit(newItem)
         }
     }
 
     fun deleteCredential(id: String) {
         viewModelScope.launch {
             credentialRepository.delete(id)
+            if (_activeEditingCredential.value?.id == id) {
+                closeCredentialEdit()
+            }
+        }
+    }
+
+    fun renameCredential(id: String, newName: String) {
+        viewModelScope.launch {
+            val item = credentials.value.find { it.id == id } ?: return@launch
+            val fields = credentialRepository.getFields(id).orEmpty()
+            credentialRepository.save(
+                id = id,
+                type = item.type,
+                label = newName.trim(),
+                fields = fields,
+            )
+            val aiConfigFields = credentialRepository.getFields("ai_provider_config")
+            if (aiConfigFields != null && aiConfigFields["credentialId"] == id) {
+                val updated = aiConfigFields.toMutableMap()
+                updated["credentialName"] = newName.trim()
+                credentialRepository.save(
+                    id = "ai_provider_config",
+                    type = "ai_assistant",
+                    label = "AI Assistant Config",
+                    fields = updated,
+                )
+            }
         }
     }
 
@@ -441,9 +542,13 @@ fun FlowListScreen(
     val groupVariables by viewModel.groupVariables.collectAsStateWithLifecycle()
     val allVariables by viewModel.allVariables.collectAsStateWithLifecycle()
     val agents by viewModel.agents.collectAsStateWithLifecycle()
+    val agentSearchQuery by viewModel.agentSearchQuery.collectAsStateWithLifecycle()
+    val inspectingAgent by viewModel.inspectingAgent.collectAsStateWithLifecycle()
     val credentials by viewModel.credentials.collectAsStateWithLifecycle()
     val credentialSearchQuery by viewModel.credentialSearchQuery.collectAsStateWithLifecycle()
     val showCreateCredential by viewModel.showCreateCredentialDialog.collectAsStateWithLifecycle()
+    val activeEditingCredential by viewModel.activeEditingCredential.collectAsStateWithLifecycle()
+    val activeEditingFields by viewModel.activeEditingFields.collectAsStateWithLifecycle()
     val dataTables by viewModel.dataTables.collectAsStateWithLifecycle()
     val dataTableSearchQuery by viewModel.dataTableSearchQuery.collectAsStateWithLifecycle()
     val showCreateDataTable by viewModel.showCreateDataTableDialog.collectAsStateWithLifecycle()
@@ -497,12 +602,10 @@ fun FlowListScreen(
                             overflow = TextOverflow.Ellipsis,
                         )
                     }
-                    IconPill("history", "Run history", onOpenHistory)
-                    Spacer(Modifier.width(8.dp))
                     IconPill("settings", "Settings", onOpenSettings)
                 }
 
-                // Top Metrics Bar (n8n sovereign stats: Prod executions, Failed, Failure rate, Run time)
+                // Top Metrics Bar (Sovereign stats: Prod executions, Failed, Failure rate, Run time)
                 DashboardMetricsOverview(
                     totalExecutions = state.totalExecutions,
                     failedExecutions = state.failedExecutions,
@@ -525,6 +628,13 @@ fun FlowListScreen(
                             label = "Workflows (${state.flows.size})",
                             isSelected = currentTab == DashboardTab.Flows,
                             onClick = { viewModel.setTab(DashboardTab.Flows) },
+                        )
+                    }
+                    item {
+                        DashboardTabPill(
+                            label = "Agents (${agents.size})",
+                            isSelected = currentTab == DashboardTab.Agents,
+                            onClick = { viewModel.setTab(DashboardTab.Agents) },
                         )
                     }
                     item {
@@ -628,13 +738,30 @@ fun FlowListScreen(
                         }
                     }
 
+                    DashboardTab.Agents -> {
+                        AgentsDashboardView(
+                            agents = agents,
+                            searchQuery = agentSearchQuery,
+                            onSearchChange = viewModel::setAgentSearchQuery,
+                            onCreateAgent = { onOpenAgentBuilder(null) },
+                            onOpenAgent = { agentId -> onOpenAgentBuilder(agentId) },
+                            onViewHistory = viewModel::inspectAgentHistory,
+                            onDeleteAgent = viewModel::deleteAgent,
+                            onDuplicateAgent = viewModel::duplicateAgent,
+                            onTogglePublish = viewModel::togglePublishAgent,
+                            modifier = Modifier.weight(1f),
+                        )
+                    }
+
                     DashboardTab.Credentials -> {
                         CredentialsDashboardView(
                             credentials = credentials,
                             searchQuery = credentialSearchQuery,
                             onSearchChange = viewModel::setCredentialSearchQuery,
                             onCreateCredential = viewModel::openCreateCredentialDialog,
+                            onOpenCredential = viewModel::openCredentialEdit,
                             onDeleteCredential = viewModel::deleteCredential,
+                            onRenameCredential = viewModel::renameCredential,
                             modifier = Modifier.weight(1f),
                         )
                     }
@@ -665,8 +792,20 @@ fun FlowListScreen(
             }
 
             // Dialogs
+            activeEditingCredential?.let { cred ->
+                CredentialEditSheet(
+                    credential = cred,
+                    initialFields = activeEditingFields,
+                    onDismiss = viewModel::closeCredentialEdit,
+                    onSave = { name, fields -> viewModel.updateCredential(name, fields) },
+                    onDelete = viewModel::deleteCredential,
+                    onTestConnection = viewModel::testCredentialConnection,
+                )
+            }
+
             if (showCreateCredential) {
                 CreateCredentialDialog(
+                    existingCredentials = credentials,
                     onDismiss = viewModel::closeCreateCredentialDialog,
                     onSave = viewModel::saveCredential,
                 )
@@ -686,6 +825,17 @@ fun FlowListScreen(
                     onAddRow = { data -> viewModel.insertTableRow(table.id, data) },
                     onDeleteRow = viewModel::deleteTableRow,
                     onDismiss = viewModel::closeDataTable,
+                )
+            }
+
+            inspectingAgent?.let { agent ->
+                AgentExecutionHistorySheet(
+                    agent = agent,
+                    onDismiss = { viewModel.inspectAgentHistory(null) },
+                    onOpenBuilder = {
+                        viewModel.inspectAgentHistory(null)
+                        onOpenAgentBuilder(agent.id)
+                    },
                 )
             }
 

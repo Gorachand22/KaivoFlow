@@ -36,6 +36,13 @@ data class AgentKnowledgeItem(
     val updatedAt: Long = System.currentTimeMillis(),
 )
 
+data class AgentSkill(
+    val id: String = UUID.randomUUID().toString(),
+    val name: String,
+    val description: String = "",
+    val isEnabled: Boolean = true,
+)
+
 /**
  * Advanced runtime and memory tuning for the agent.
  */
@@ -69,12 +76,16 @@ data class CustomAgent(
     val name: String = "New Agent",
     val iconEmoji: String = "☀️",
     val iconColorHex: Long = 0xFFFF9800,
-    val provider: AiProvider = AiProvider.Gemini,
-    val model: String = AiProvider.Gemini.defaultModel,
+    val provider: AiProvider = AiProvider.OpenAI,
+    val model: String = AiProvider.OpenAI.defaultModel,
+    val credentialId: String? = null,
     val instructions: String = "",
+    val skills: List<AgentSkill> = emptyList(),
     val triggers: List<AgentTrigger> = emptyList(),
     val tools: List<AgentTool> = emptyList(),
     val knowledge: List<AgentKnowledgeItem> = emptyList(),
+    val webSearchEnabled: Boolean = false,
+    val crossSessionMemoryEnabled: Boolean = false,
     val settings: AgentSettings = AgentSettings(),
     val sessions: List<AgentSession> = emptyList(),
     val isPublished: Boolean = false,

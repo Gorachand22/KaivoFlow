@@ -1,8 +1,7 @@
 package com.kaivoflow.core.model
 
 /**
- * Sovereign Workspace Credential Item representation.
- * Learned from n8n's Credentials architecture:
+ * Sovereign Workspace Credential Item representation:
  * - Decoupled from workflows
  * - Referenced by id
  * - Securely stored in encrypted Keystore vault
@@ -36,28 +35,51 @@ data class CredentialTypeInfo(
     val fields: List<CredentialFieldSpec>,
 ) {
     companion object {
-        val GOOGLE_SHEETS = CredentialTypeInfo(
-            type = "googleSheetsOAuth2",
-            displayName = "Google Sheets OAuth2 API",
-            description = "OAuth2 access to read and append rows in Google Spreadsheets",
-            iconKey = "sheets",
-            accentColor = 0xFF10B981, // Emerald
+        val OPENAI = CredentialTypeInfo(
+            type = "openAiApi",
+            displayName = "OpenAI & Compatible API",
+            description = "API key and Base URL for OpenAI, NVIDIA NIM, OpenRouter, Groq, Mistral",
+            iconKey = "sparkles",
+            accentColor = 0xFF3B82F6, // Electric Indigo / Sapphire
             fields = listOf(
-                CredentialFieldSpec("clientId", "Client ID", isSecret = false, placeholder = "e.g. 1303358986-xxx.apps.googleusercontent.com"),
-                CredentialFieldSpec("clientSecret", "Client Secret", isSecret = true, placeholder = "GOCSPX-xxx"),
-                CredentialFieldSpec("email", "Account Email", isSecret = false, placeholder = "user@gmail.com", required = false),
+                CredentialFieldSpec("apiKey", "API Key", isSecret = true, placeholder = "sk-... or nvapi-..."),
+                CredentialFieldSpec("baseUrl", "Base URL", isSecret = false, placeholder = "https://api.openai.com/v1 (or compatible URL)", required = false),
             ),
         )
 
-        val OPENAI = CredentialTypeInfo(
-            type = "openAiApi",
-            displayName = "OpenAI API",
-            description = "API Key authentication for GPT-4o, embeddings and vision",
-            iconKey = "sparkle",
-            accentColor = 0xFF3B82F6, // Electric Indigo / Sapphire
+        val GEMINI = CredentialTypeInfo(
+            type = "geminiApi",
+            displayName = "Google Gemini API",
+            description = "API key authentication for Gemini 2.0 Flash / Pro models",
+            iconKey = "sparkles",
+            accentColor = 0xFF4285F4, // Google Blue
             fields = listOf(
-                CredentialFieldSpec("apiKey", "API Key", isSecret = true, placeholder = "sk-proj-xxx"),
-                CredentialFieldSpec("organizationId", "Organization ID", isSecret = false, placeholder = "org-xxx (optional)", required = false),
+                CredentialFieldSpec("apiKey", "API Key", isSecret = true, placeholder = "AIzaSy..."),
+                CredentialFieldSpec("baseUrl", "Base URL", isSecret = false, placeholder = "https://generativelanguage.googleapis.com", required = false),
+            ),
+        )
+
+        val CLAUDE = CredentialTypeInfo(
+            type = "anthropicApi",
+            displayName = "Anthropic Claude API",
+            description = "API key for Claude 3.5 Sonnet and Haiku models",
+            iconKey = "sparkles",
+            accentColor = 0xFFD97706, // Amber / Claude
+            fields = listOf(
+                CredentialFieldSpec("apiKey", "API Key", isSecret = true, placeholder = "sk-ant-api..."),
+                CredentialFieldSpec("baseUrl", "Base URL", isSecret = false, placeholder = "https://api.anthropic.com/v1", required = false),
+                CredentialFieldSpec("anthropicVersion", "Anthropic Version", isSecret = false, placeholder = "2023-06-01", required = false),
+            ),
+        )
+
+        val OLLAMA = CredentialTypeInfo(
+            type = "ollamaApi",
+            displayName = "Ollama Local API",
+            description = "Connect to local models running on device or local network",
+            iconKey = "bolt",
+            accentColor = 0xFF6366F1, // Indigo
+            fields = listOf(
+                CredentialFieldSpec("baseUrl", "Host URL", isSecret = false, placeholder = "http://localhost:11434"),
             ),
         )
 
@@ -107,15 +129,14 @@ data class CredentialTypeInfo(
             ),
         )
 
-        val ALL = listOf(GOOGLE_SHEETS, OPENAI, TELEGRAM, HTTP_BASIC, HEADER_AUTH, BEARER_TOKEN)
+        val ALL = listOf(OPENAI, GEMINI, CLAUDE, OLLAMA, TELEGRAM, HTTP_BASIC, HEADER_AUTH, BEARER_TOKEN)
 
         fun find(type: String): CredentialTypeInfo? = ALL.firstOrNull { it.type.equals(type, ignoreCase = true) }
     }
 }
 
 /**
- * Sovereign Data Table representation.
- * Learned from n8n's Data Tables:
+ * Sovereign Data Table representation:
  * - Embedded schema with typed columns (string, number, boolean, date)
  * - Rows stored locally on device
  * - Flows can insert, query, update and delete records
