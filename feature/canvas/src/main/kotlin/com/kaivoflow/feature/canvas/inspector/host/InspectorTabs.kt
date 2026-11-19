@@ -60,21 +60,32 @@ fun TestBanner(state: InspectorState, session: InspectorSession, node: StepNode)
         is TestState.Running -> Row(Modifier.fillMaxWidth().padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
             StatusBadge("Testing", BadgeKind.Gold)
             Spacer(Modifier.padding(4.dp))
-            Text(if (t.stepIds.size > 1) "Running ${t.stepIds.size} Steps, ending with this one." else "Running this Step on real data.", style = MaterialTheme.typography.bodySmall, color = colors.inkSecondary)
+            Text(if (t.stepIds.size > 1) "Running ${t.stepIds.size} Steps, ending with this one." else "Running only this Step.", style = MaterialTheme.typography.bodySmall, color = colors.inkSecondary)
         }
-        is TestState.NeedsParents -> Column(Modifier.fillMaxWidth().padding(12.dp).clip(KaivoShapes.chip).background(colors.surfaceElevated).border(1.dp, colors.royalGold.copy(alpha = 0.4f), KaivoShapes.chip).padding(12.dp)) {
-            Text("This Step has no input data yet", style = MaterialTheme.typography.titleSmall, color = colors.inkPrimary)
+        is TestState.NeedsConfirm -> Column(Modifier.fillMaxWidth().padding(12.dp).clip(KaivoShapes.chip).background(colors.surfaceElevated).border(1.dp, colors.royalGold.copy(alpha = 0.4f), KaivoShapes.chip).padding(12.dp)) {
+            Text("Testing runs this for real", style = MaterialTheme.typography.titleSmall, color = colors.inkPrimary)
+            t.risks.forEach { StatusBadge(it, BadgeKind.Gold) }
             Text(
-                "Run the earlier Steps to fill it, test with an empty item, or pin sample data on a parent Step.",
+                "A test is not a dry run. It does what the Step does, once, and is not counted as a Run.",
                 style = MaterialTheme.typography.bodySmall,
                 color = colors.inkSecondary,
                 modifier = Modifier.padding(vertical = 4.dp),
             )
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                GhostButton("Run earlier Steps", { session.holder.dispatch(InspectorIntent.TestStepRequested(ParentPolicy.RunThem)) }, icon = "play")
-                GhostButton("Use empty input", { session.holder.dispatch(InspectorIntent.TestStepRequested(ParentPolicy.UsePinnedOrLast)) })
+                GhostButton("Test anyway", { session.holder.dispatch(InspectorIntent.TestStepRequested(t.policy, confirmed = true)) }, icon = "play")
+                GhostButton("Cancel", { session.holder.dispatch(InspectorIntent.CancelTest) })
             }
-            GhostButton("Cancel", { session.holder.dispatch(InspectorIntent.CancelTest) }, Modifier.padding(top = 4.dp))
+        }
+        is TestState.Refused -> Text(t.message, style = MaterialTheme.typography.bodySmall, color = colors.inkSecondary, modifier = Modifier.padding(12.dp))
+        is TestState.Finished -> t.summary?.let { sm ->
+            val ports = sm.portCounts.entries.sortedBy { it.key }.joinToString(", ") { "port ${it.key + 1}: ${it.value}" }
+            Column(Modifier.fillMaxWidth().padding(12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                StatusBadge("Done" + (sm.durationMs?.let { " in $it ms" } ?: ""), BadgeKind.Gold)
+                Text(
+                    "${sm.itemsIn} in, ${sm.itemsOut} out" + (if (ports.isNotEmpty()) " ($ports)" else "") + ". Input: ${sm.source.label}.",
+                    style = MaterialTheme.typography.bodySmall, color = colors.inkSecondary,
+                )
+            }
         }
         is TestState.Failed -> {
             val where = t.itemIndex?.let { "Item ${it + 1}: " }.orEmpty()
@@ -86,10 +97,14 @@ fun TestBanner(state: InspectorState, session: InspectorSession, node: StepNode)
                     append(t.message)
                     t.itemIndex?.let { append("\nInput item: ${it + 1}") }
                     if (t.hasPartialData) append("\nSome items finished before the failure; see the Output panel.")
+                    t.summary?.let { sm ->
+                        append("\nInput: ${sm.source.label}, ${sm.itemsIn} items")
+                        sm.durationMs?.let { append("\nTook $it ms") }
+                    }
                 },
                 onCopyDetails = { clipboard.setText(AnnotatedString(t.message)) },
                 actionLabel = "Test again",
-                onAction = { session.holder.dispatch(InspectorIntent.TestStepRequested(ParentPolicy.Ask)) },
+                onAction = { session.holder.dispatch(InspectorIntent.TestStepRequested(ParentPolicy.OnlyThis)) },
             )
         }
         else -> Unit

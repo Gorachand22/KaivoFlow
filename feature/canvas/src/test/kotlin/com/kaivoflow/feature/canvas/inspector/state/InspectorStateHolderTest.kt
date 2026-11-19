@@ -32,8 +32,11 @@ class InspectorStateHolderTest {
         }
         override suspend fun pinCurrent(request: DataRequest) = PinInfo(7, 100, 1)
         override suspend fun unpin() { unpinned++ }
-        override fun runTest(stepId: String, policy: ParentPolicy): Flow<InspectorTestEvent> =
-            flowOf(InspectorTestEvent.Progress(listOf(stepId)), InspectorTestEvent.Finished("k"))
+        val requests = Collections.synchronizedList(ArrayList<TestRequest>())
+        override fun runTest(request: TestRequest): Flow<InspectorTestEvent> {
+            requests += request
+            return flowOf(InspectorTestEvent.Progress(listOf(request.stepId)), InspectorTestEvent.Finished("k"))
+        }
         override suspend fun evaluatePreview(text: String, itemIndex: Int) = PreviewState.Value("v:$text", "string")
         override fun persistParam(key: String, value: ParamValue?) { persisted += key to value }
     }
@@ -97,6 +100,17 @@ class InspectorStateHolderTest {
         until("finished") { h.state.value.test is TestState.Finished }
         until("reloaded") { h.state.value.output.status is DataStatus.Loaded }
         assertTrue(gw.loads.isNotEmpty())
+    }
+
+    @Test fun testRequestCarriesManualInputAndNeverParents() = withHolder { h, gw ->
+        h.dispatch(InspectorIntent.EditManualInput("[{\"a\":1}]"))
+        h.dispatch(InspectorIntent.SelectInputSource(InputSource.Manual))
+        h.dispatch(InspectorIntent.TestStepRequested())
+        until("finished") { h.state.value.test is TestState.Finished }
+        val r = gw.requests.single()
+        assertEquals(ParentPolicy.OnlyThis, r.policy)
+        assertEquals(InputSource.Manual, r.source)
+        assertEquals("[{\"a\":1}]", r.manualText)
     }
 
     @Test fun pinAndUnpinGoThroughGateway() = withHolder { h, gw ->

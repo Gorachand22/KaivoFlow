@@ -154,7 +154,7 @@ fun StepInspector(
                         else -> PagerBody(session, state, node, spec, credentials, actions, controller, dockTray = kind == InspectorLayoutKind.PhoneLandscape) { mapTo = it }
                     }
                 }
-                InspectorFooter(state, session)
+                InspectorFooter(state, session, stepOff = node.disabled)
             }
             SnackbarHost(snackbar, Modifier.align(Alignment.BottomCenter).padding(bottom = 72.dp))
         }
@@ -268,7 +268,7 @@ private fun InspectorHeader(
 
 /** Test Step stays at the bottom, above the keyboard. While a test runs it becomes Cancel. */
 @Composable
-private fun InspectorFooter(state: InspectorState, session: InspectorSession) {
+private fun InspectorFooter(state: InspectorState, session: InspectorSession, stepOff: Boolean = false) {
     val running = state.test is TestState.Running
     Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 10.dp), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
         if (running) {
@@ -277,8 +277,8 @@ private fun InspectorFooter(state: InspectorState, session: InspectorSession) {
         GoldButton(
             text = if (running) "Testing" else "Test Step",
             icon = "play",
-            enabled = !running && !state.readOnly,
-            onClick = { session.holder.dispatch(InspectorIntent.TestStepRequested(ParentPolicy.Ask)) },
+            enabled = !running && !state.readOnly && !stepOff,
+            onClick = { session.holder.dispatch(InspectorIntent.TestStepRequested(ParentPolicy.OnlyThis)) },
             modifier = Modifier.weight(1f),
         )
     }

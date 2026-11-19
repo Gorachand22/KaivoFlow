@@ -53,9 +53,10 @@ private fun panelCallbacks(
         onCopy = { _, text -> clipboard.setText(AnnotatedString(text)) },
         onInsert = { src -> controller.tapInsert(src) { onMapTo(it) } },
         onMapTo = onMapTo,
-        // Input: run the earlier Steps. Output: test this Step (it asks first when input is missing).
+        // Input: the explicit "Run previous Step" button (earlier Steps run only because the user pressed it).
+        // Output: test this Step alone.
         onRunPrevious = {
-            session.holder.dispatch(InspectorIntent.TestStepRequested(if (side == PanelSide.Input) ParentPolicy.RunThem else ParentPolicy.Ask))
+            session.holder.dispatch(InspectorIntent.TestStepRequested(if (side == PanelSide.Input) ParentPolicy.RunThem else ParentPolicy.OnlyThis))
         },
         onUnpin = { session.holder.dispatch(InspectorIntent.Unpin) },
     )
@@ -64,16 +65,19 @@ private fun panelCallbacks(
 @Composable
 fun InputPane(session: InspectorSession, state: InspectorState, node: StepNode, controller: DragMapController, onMapTo: (MapSource) -> Unit) {
     val src = state.input.sourceStepId
-    val name = state.input.sources.firstOrNull { it.stepId == src }?.name.orEmpty()
+    val name = if (state.input.inbound) node.name else state.input.sources.firstOrNull { it.stepId == src }?.name.orEmpty()
     Column(Modifier.fillMaxSize()) {
-        DataPanel(
-            state = state.input,
-            origin = PanelOrigin(src.orEmpty(), name, isImmediateParent = true),
-            source = session.source,
-            callbacks = panelCallbacks(session, controller, PanelSide.Input, onMapTo),
-            modifier = Modifier.weight(1f).fillMaxWidth(),
-            dragEnabled = true,
-        )
+        TestInputBar(session, state, hasParents = state.input.sources.isNotEmpty())
+        if (!showsTypedInput(state)) {
+            DataPanel(
+                state = state.input,
+                origin = PanelOrigin(src.orEmpty(), name, isImmediateParent = true),
+                source = session.source,
+                callbacks = panelCallbacks(session, controller, PanelSide.Input, onMapTo),
+                modifier = Modifier.weight(1f).fillMaxWidth(),
+                dragEnabled = true,
+            )
+        }
     }
 }
 

@@ -13,42 +13,35 @@ fun interface DataAvailability {
 }
 
 sealed interface TestPlan {
-    /** Test only this Step. Parents with data feed it; a Step without parents gets one empty item. */
+    /** Test only this Step. No parent Step runs; the input comes from stored, pinned or typed data. */
     data object RunNow : TestPlan
-    /** Test these Steps in order (missing ancestors first), then this one. */
+    /** The user chose "Run earlier Steps first": test these Steps in order (ancestors without data first), then this one. */
     data class RunInOrder(val steps: List<String>) : TestPlan
-    /** The input is missing: ask the user. [stepIds] are the parents without data. */
-    data class NeedsParents(val stepIds: List<String>) : TestPlan
 }
 
-/** Decides what Test Step does when upstream data may be missing (spec P2 5.8). Pure and JVM-tested. */
+/** Decides which Steps a Test Step executes. Pure and JVM-tested. */
 object TestPlanner {
     const val MAX_ANCESTORS = 12
 
     /**
-     * [parentsOf] returns the connections that feed a Step. A Step with no connections is always runnable.
-     * Policy [ParentPolicy.Ask] stops with [TestPlan.NeedsParents]; [ParentPolicy.UsePinnedOrLast] runs with whatever exists
-     * (the engine falls back to one empty item); [ParentPolicy.RunThem] tests the missing ancestors first.
+     * [parentsOf] returns the connections that feed a Step. [ParentPolicy.OnlyThis] is always [TestPlan.RunNow], whatever data
+     * exists: a parent is never executed implicitly. [ParentPolicy.RunThem] (an explicit user action) adds the ancestors that
+     * have no data, deepest first; when none is missing it is [TestPlan.RunNow] too.
      */
     fun plan(stepId: String, parentsOf: (String) -> List<ParentEdge>, data: DataAvailability, policy: ParentPolicy): TestPlan {
+        if (policy == ParentPolicy.OnlyThis) return TestPlan.RunNow
         val direct = parentsOf(stepId).map { it.stepId }.distinct()
         val missing = direct.filterNot(data::hasData)
-        if (direct.isEmpty() || missing.isEmpty()) return TestPlan.RunNow
-        return when (policy) {
-            ParentPolicy.Ask -> TestPlan.NeedsParents(missing)
-            ParentPolicy.UsePinnedOrLast -> TestPlan.RunNow
-            ParentPolicy.RunThem -> {
-                val order = LinkedHashSet<String>()
-                val visiting = HashSet<String>()
-                fun visit(id: String) {
-                    if (id in order || !visiting.add(id) || order.size >= MAX_ANCESTORS) return
-                    for (p in parentsOf(id).map { it.stepId }.distinct()) if (!data.hasData(p)) visit(p)
-                    order += id
-                }
-                missing.forEach(::visit)
-                TestPlan.RunInOrder(order.toList() + stepId)
-            }
+        if (missing.isEmpty()) return TestPlan.RunNow
+        val order = LinkedHashSet<String>()
+        val visiting = HashSet<String>()
+        fun visit(id: String) {
+            if (id in order || !visiting.add(id) || order.size >= MAX_ANCESTORS) return
+            for (p in parentsOf(id).map { it.stepId }.distinct()) if (!data.hasData(p)) visit(p)
+            order += id
         }
+        missing.forEach(::visit)
+        return TestPlan.RunInOrder(order.toList() + stepId)
     }
 }
 

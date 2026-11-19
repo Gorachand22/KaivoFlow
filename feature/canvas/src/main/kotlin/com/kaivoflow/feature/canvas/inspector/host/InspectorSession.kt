@@ -76,7 +76,7 @@ object InspectorSessions {
         val schema: ParamSchema = spec?.toSchema() ?: ParamSchema.Empty
         val gateway = CanvasInspectorGateway(flowId, stepId, currentFlow, stepData, pins, tester, assist, onParam)
         val reducer = InspectorReducer(exprSyntax = { text -> assist.analyze(text).errors.firstOrNull()?.message })
-        val holder = InspectorStateHolder(InspectorState.initial(stepId, replayRunId), gateway, scope, reducer)
+        val holder = InspectorStateHolder(InspectorState.initial(stepId, replayRunId, step.type), gateway, scope, reducer)
         val scopeFlow = MutableStateFlow(SchemaScope())
         val jobs = ArrayList<Job>()
 

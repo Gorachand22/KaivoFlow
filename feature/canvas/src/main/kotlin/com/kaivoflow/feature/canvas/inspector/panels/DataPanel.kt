@@ -59,7 +59,7 @@ fun DataPanel(
 ) {
     var view by remember(state.side, state.sourceStepId, state.port, state.run) { mutableStateOf(PanelViewState()) }
     val loaded = state.status is DataStatus.Loaded
-    val request = DataRequest(state.side, state.sourceStepId, state.run, state.port, state.page, state.appliedSearch)
+    val request = DataRequest(state.side, state.sourceStepId, state.run, state.port, state.page, state.appliedSearch, state.inbound)
     val schemaMode = state.mode == DataViewMode.Schema
     // The shape of a port does not depend on the page or the search, so those do not reload it.
     val loadKey = if (schemaMode) request.copy(page = PageRequest(), search = "") else request

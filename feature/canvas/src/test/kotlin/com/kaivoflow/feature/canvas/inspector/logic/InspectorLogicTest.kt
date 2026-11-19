@@ -12,12 +12,16 @@ import com.kaivoflow.core.model.ParamKind
 import com.kaivoflow.core.model.ParamSchema
 import com.kaivoflow.core.model.ParamValue
 import com.kaivoflow.core.model.RetryPolicy
+import com.kaivoflow.core.model.SchemaInference
 import com.kaivoflow.core.model.SchemaNode
 import com.kaivoflow.core.model.SchemaType
 import com.kaivoflow.core.model.StepCategory
 import com.kaivoflow.core.model.StepNode
 import com.kaivoflow.feature.canvas.inspector.panels.PanelDataSource
+import com.kaivoflow.feature.canvas.inspector.state.DEFAULT_MANUAL_INPUT
 import com.kaivoflow.feature.canvas.inspector.state.DataRequest
+import com.kaivoflow.feature.canvas.inspector.state.InputOption
+import com.kaivoflow.feature.canvas.inspector.state.InputSource
 import com.kaivoflow.feature.canvas.inspector.state.InspectorPage
 import com.kaivoflow.feature.canvas.inspector.state.PageRequest
 import com.kaivoflow.feature.canvas.inspector.state.PanelSide
@@ -132,11 +136,60 @@ class InspectorLogicTest {
     private fun plan(policy: ParentPolicy, have: Set<String>, step: String = "c") =
         TestPlanner.plan(step, { graph[it].orEmpty() }, { it in have }, policy)
 
-    @Test fun plannerAsksWhenInputMissing() {
-        assertEquals(TestPlan.NeedsParents(listOf("b")), plan(ParentPolicy.Ask, emptySet()))
-        assertEquals(TestPlan.RunNow, plan(ParentPolicy.Ask, setOf("b")))
-        assertEquals(TestPlan.RunNow, plan(ParentPolicy.Ask, emptySet(), step = "a"))
-        assertEquals(TestPlan.RunNow, plan(ParentPolicy.UsePinnedOrLast, emptySet()))
+    @Test fun defaultPolicyNeverRunsParents() {
+        assertEquals(TestPlan.RunNow, plan(ParentPolicy.OnlyThis, emptySet()))
+        assertEquals(TestPlan.RunNow, plan(ParentPolicy.OnlyThis, setOf("b")))
+        assertEquals(TestPlan.RunNow, plan(ParentPolicy.OnlyThis, emptySet(), step = "a"))
+        assertEquals(TestPlan.RunNow, plan(ParentPolicy.RunThem, setOf("b")))
+    }
+
+    // ---- test input ----
+    private fun opt(s: InputSource, n: Int = 1) = InputOption(s, n)
+
+    @Test fun inputOrderIsPinnedThenLastRunThenLastTestThenManual() {
+        val all = listOf(opt(InputSource.LastTest), opt(InputSource.LastRun), opt(InputSource.Pinned))
+        assertEquals(InputSource.Pinned, TestInputPolicy.auto(all, false))
+        assertEquals(InputSource.LastRun, TestInputPolicy.auto(all.drop(2).take(0) + all.take(2), false))
+        assertEquals(InputSource.LastTest, TestInputPolicy.auto(listOf(opt(InputSource.LastTest)), false))
+        assertEquals(InputSource.Manual, TestInputPolicy.auto(emptyList(), false))
+        assertEquals(InputSource.Manual, TestInputPolicy.auto(listOf(opt(InputSource.Pinned, 0)), false))
+        assertEquals(InputSource.Sample, TestInputPolicy.auto(all, true))
+    }
+
+    @Test fun pickIsHonouredOnlyWhenAvailable() {
+        val o = listOf(opt(InputSource.LastRun))
+        assertEquals(InputSource.LastRun, TestInputPolicy.effective(InputSource.LastRun, o, false))
+        assertEquals(InputSource.LastRun, TestInputPolicy.effective(InputSource.Pinned, o, false))
+        assertEquals(InputSource.Manual, TestInputPolicy.effective(InputSource.Manual, o, false))
+        assertEquals(InputSource.Sample, TestInputPolicy.effective(InputSource.Pinned, o, true))
+    }
+
+    @Test fun manualInputValidatesWithPosition() {
+        assertTrue(ManualInput.parse("[{\"a\": 1}, {\"b\": 2}]") is ManualInput.Parsed.Items)
+        assertEquals(1, (ManualInput.parse("{\"a\": 1}") as ManualInput.Parsed.Items).items.size)
+        val bad = ManualInput.errorOf("[\n  {\"a\": }\n]")!!
+        assertEquals(2, bad.line)
+        assertTrue(ManualInput.errorOf("") != null && ManualInput.errorOf("")!!.message.startsWith("Nothing to test with"))
+        assertEquals("Item 1 must be an object.", ManualInput.errorOf("[1]")!!.message)
+    }
+
+    @Test fun sampleFromSchemaFollowsInferredShape() {
+        val items = listOf(Item(json = mapOf("name" to "Ada", "age" to 36L, "ok" to true, "tags" to listOf("x"), "who" to mapOf("id" to 7L))))
+        val text = SampleFromSchema.generate(SchemaInference.infer(items.asSequence()))
+        val parsed = (ManualInput.parse(text) as ManualInput.Parsed.Items).items.single().json
+        assertEquals("Ada", parsed["name"]); assertEquals(36L, parsed["age"]); assertEquals(true, parsed["ok"])
+        assertEquals(listOf("x"), parsed["tags"]); assertEquals(mapOf("id" to 7L), parsed["who"])
+        assertEquals(DEFAULT_MANUAL_INPUT, SampleFromSchema.generate(null))
+    }
+
+    @Test fun sideEffectStepsAreFlagged() {
+        assertEquals("sends an SMS", TestRisks.of("device.sms", emptyMap())!!.label)
+        assertTrue(TestRisks.of("net.http", mapOf("method" to ParamValue.Fixed("POST"))) != null)
+        assertTrue(TestRisks.of("net.http", mapOf("method" to ParamValue.Expr("{{ \$json.m }}"))) != null)
+        assertNull(TestRisks.of("net.http", mapOf("method" to ParamValue.Fixed("get"))))
+        assertNull(TestRisks.of("net.http", emptyMap()))
+        assertNull(TestRisks.of("data.set", emptyMap()))
+        assertNull(TestRisks.of("spark.sms", emptyMap()))
     }
 
     @Test fun plannerRunsMissingAncestorsFirst() {

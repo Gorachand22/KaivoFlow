@@ -90,8 +90,17 @@ class FlowEngine @Inject constructor(
 
     suspend fun resolveEffectiveFlow(flow: Flow): Flow {
         val scopedVars = runCatching { variableRepository.resolveVariables(flow.groupId) }.getOrNull().orEmpty()
-        return if (scopedVars.isNotEmpty()) {
-            flow.copy(vars = (scopedVars + flow.vars).toImmutableMap())
+        val merged: Map<String, Any?> = if (scopedVars.isNotEmpty()) scopedVars + flow.vars else flow.vars
+        // Spec P3: variable values may be expressions; they are evaluated once per Run, here, against the global scope.
+        val resolved = com.kaivoflow.core.engine.VariableResolution.resolve(
+            raw = merged,
+            evaluator = expressionEvaluator,
+            flowId = flow.id,
+            flowName = flow.name,
+            timezone = flow.settings.timezone,
+        )
+        return if (scopedVars.isNotEmpty() || resolved.vars !== merged) {
+            flow.copy(vars = resolved.vars.toImmutableMap())
         } else {
             flow
         }
@@ -132,7 +141,12 @@ class FlowEngine @Inject constructor(
             registry = registry,
             evaluator = expressionEvaluator,
             http = http,
-            credentials = credentials,
+            // Spec P3: non-secret credential fields may be expressions; they are evaluated per call, in the vault wrapper.
+            credentials = com.kaivoflow.core.engine.ExprCredentialProvider(
+                delegate = credentials,
+                evaluator = expressionEvaluator,
+                vars = { variableRepository.resolveVariables(null) },
+            ),
             flowInvoker = subFlowInvoker,
             recorder = captureRecorder,
             pins = pinStore,
@@ -288,10 +302,19 @@ class FlowEngine @Inject constructor(
         runCatching { RunRetention.pruneStepData(stepData) }
     }
 
-    /** "Test Step" from the inspector: runs exactly one Step, persists nothing. */
-    suspend fun testStep(flow: Flow, stepId: String, input: List<com.kaivoflow.core.model.FlowData>): StepRun {
+    /**
+     * "Test Step" from the inspector: runs exactly one Step on [input]. Never runs another Step, never writes a Run record,
+     * never notifies and never touches the Always-On engine; the only thing stored is the Step's data, marked as a test.
+     * Cancelling the calling coroutine cancels the Step.
+     */
+    suspend fun testStep(
+        flow: Flow,
+        stepId: String,
+        input: List<com.kaivoflow.core.model.FlowData>,
+        upstream: Map<String, Map<Int, List<com.kaivoflow.core.model.FlowData>>> = emptyMap(),
+    ): StepRun {
         val effectiveFlow = resolveEffectiveFlow(flow)
-        return runner.testStep(effectiveFlow, stepId, input) { _events.value = it }
+        return runner.testStep(effectiveFlow, stepId, input, upstream) { _events.value = it }
     }
 
     fun cancel(flowId: String) {

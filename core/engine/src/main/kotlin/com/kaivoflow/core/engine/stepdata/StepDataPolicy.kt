@@ -402,6 +402,8 @@ data class RunDataMeta(
 /** Count-based retention (spec 5.3 rule 5): which Runs lose their Step data. */
 object StepDataRetention {
     const val KEEP_MANUAL_RUNS = 20
+    /** Test Step executions have their own small bucket so they never push real manual Runs out. */
+    const val KEEP_TEST_RUNS = 10
     const val KEEP_SUCCESSFUL_PRODUCTION_RUNS = 5
 
     fun runsToDrop(
@@ -410,11 +412,14 @@ object StepDataRetention {
         protectedRunIds: Set<String> = emptySet(),
         keepManual: Int = KEEP_MANUAL_RUNS,
         keepSuccessful: Int = KEEP_SUCCESSFUL_PRODUCTION_RUNS,
+        keepTest: Int = KEEP_TEST_RUNS,
     ): List<String> {
         val drop = ArrayList<RunDataMeta>()
         for ((_, flowRuns) in runs.groupBy { it.flowId }) {
             val newestFirst = flowRuns.sortedWith(compareByDescending<RunDataMeta> { it.startedAt }.thenByDescending { it.runId })
-            val (manual, production) = newestFirst.partition { it.manual }
+            val (tests, rest) = newestFirst.partition { it.runId.startsWith(TEST_RUN_PREFIX) }
+            val (manual, production) = rest.partition { it.manual }
+            drop += tests.drop(keepTest)
             drop += manual.drop(keepManual)
             when (mode) {
                 SaveDataMode.All -> {}

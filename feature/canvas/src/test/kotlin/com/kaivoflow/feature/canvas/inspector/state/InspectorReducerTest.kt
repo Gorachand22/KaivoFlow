@@ -11,6 +11,7 @@ import com.kaivoflow.core.model.ParamSchema
 import com.kaivoflow.core.model.ParamValue
 import com.kaivoflow.core.model.SchemaPath
 import com.kaivoflow.core.model.ShowWhen
+import com.kaivoflow.feature.canvas.inspector.logic.TestRisks
 import kotlinx.collections.immutable.persistentListOf
 import kotlinx.collections.immutable.toImmutableList
 import org.junit.Assert.assertEquals
@@ -55,7 +56,7 @@ class InspectorReducerTest {
         val r = InspectorState.initial("me").apply(InspectorIntent.Refresh)
         assertEquals(DataStatus.NoConnection, r.state.input.status)
         assertEquals(DataStatus.Loading, r.state.output.status)
-        val load = r.effects.single() as InspectorEffect.LoadData
+        val load = r.effects.filterIsInstance<InspectorEffect.LoadData>().single()
         assertEquals("me", load.request.stepId); assertEquals(PanelSide.Output, load.request.side)
     }
 
@@ -158,8 +159,8 @@ class InspectorReducerTest {
     @Test fun stepDataChangedReloadsLatestOnly() {
         var s = opened()
         val r = s.apply(InspectorIntent.StepDataChanged("me"))
-        assertEquals(PanelSide.Output, (r.effects.single() as InspectorEffect.LoadData).request.side)
-        assertEquals(1, s.apply(InspectorIntent.StepDataChanged("p1")).effects.size)
+        assertEquals(PanelSide.Output, (r.effects.filterIsInstance<InspectorEffect.LoadData>().single()).request.side)
+        assertEquals(1, s.apply(InspectorIntent.StepDataChanged("p1")).effects.filterIsInstance<InspectorEffect.LoadData>().size)
         assertTrue(s.apply(InspectorIntent.StepDataChanged("other")).effects.isEmpty())
         s = s.apply(InspectorIntent.SelectRun(PanelSide.Output, RunSelection.Specific("old"))).state
         assertTrue(s.apply(InspectorIntent.StepDataChanged("me")).effects.isEmpty())
@@ -384,30 +385,47 @@ class InspectorReducerTest {
 
     // ---- test step ----
 
+    private val summary = TestSummary("test-1", InputSource.Manual, itemsIn = 2, itemsOut = 3, portCounts = mapOf(0 to 1, 1 to 2), durationMs = 12)
+
     @Test fun testEventSequenceRunningToFinished() {
         var s = opened()
-        val start = s.apply(InspectorIntent.TestStepRequested(ParentPolicy.RunThem))
+        val start = s.apply(InspectorIntent.TestStepRequested())
         assertEquals(TestState.Running(listOf("me")), start.state.test)
-        assertEquals(InspectorEffect.RunTest("me", ParentPolicy.RunThem), start.effects.single())
+        val req = (start.effects.single() as InspectorEffect.RunTest).request
+        assertEquals("me", req.stepId); assertEquals(ParentPolicy.OnlyThis, req.policy)
         s = start.state
+        // a second tap while running is ignored
         assertTrue(s.apply(InspectorIntent.TestStepRequested()).effects.isEmpty())
-        s = s.apply(InspectorIntent.TestEventReceived(InspectorTestEvent.NeedsParents(listOf("p1")))).state
-        assertEquals(TestState.NeedsParents(listOf("p1")), s.test)
-        s = s.apply(InspectorIntent.TestStepRequested(ParentPolicy.RunThem)).state
+        assertEquals(s, s.apply(InspectorIntent.TestStepRequested()).state)
         s = s.apply(InspectorIntent.TestEventReceived(InspectorTestEvent.Progress(listOf("p1", "me")))).state
         assertEquals(TestState.Running(listOf("p1", "me")), s.test)
         s = s.apply(InspectorIntent.SelectRun(PanelSide.Output, RunSelection.Specific("old"))).state
-        val done = s.apply(InspectorIntent.TestEventReceived(InspectorTestEvent.Finished("k1")))
-        assertEquals(TestState.Finished("k1"), done.state.test)
+        val done = s.apply(InspectorIntent.TestEventReceived(InspectorTestEvent.Finished("test-1", summary)))
+        assertEquals(TestState.Finished("test-1", summary), done.state.test)
         assertEquals(RunSelection.Latest, done.state.output.run)
         assertEquals(2, done.effects.filterIsInstance<InspectorEffect.LoadData>().size)
         assertTrue(done.state.apply(InspectorIntent.TestEventReceived(InspectorTestEvent.Failed("late"))).effects.isEmpty())
     }
 
+    @Test fun finishedTestShowsExactlyTheUsedInputAndPortCounts() {
+        val s = opened().copy(output = opened().output.copy(ports = persistentListOf(PortChip(0, "true"), PortChip(1, "false"))))
+        val done = s.apply(InspectorIntent.TestStepRequested()).state.apply(InspectorIntent.TestEventReceived(InspectorTestEvent.Finished("test-1", summary)))
+        val inp = done.state.input
+        assertTrue(inp.inbound); assertEquals("me", inp.sourceStepId); assertEquals(RunSelection.Specific("test-1"), inp.run)
+        val req = done.effects.filterIsInstance<InspectorEffect.LoadData>().first { it.request.side == PanelSide.Input }.request
+        assertTrue(req.inbound); assertEquals("me", req.stepId)
+        assertEquals(listOf(1, 2), done.state.output.ports.map { it.itemCount })
+        assertEquals(summary, done.state.used)
+        assertTrue(done.effects.contains(InspectorEffect.LoadInputCatalog))
+        // choosing a parent again leaves the used-input view
+        val back = done.state.apply(InspectorIntent.SelectInputParent("p2")).state.input
+        assertFalse(back.inbound); assertEquals("p2", back.sourceStepId)
+    }
+
     @Test fun failedTestKeepsErrorAndReloadsPartialData() {
         val s = opened().apply(InspectorIntent.TestStepRequested()).state
-        val f = s.apply(InspectorIntent.TestEventReceived(InspectorTestEvent.Failed("boom", 2, true)))
-        assertEquals(TestState.Failed("boom", 2, true), f.state.test)
+        val f = s.apply(InspectorIntent.TestEventReceived(InspectorTestEvent.Failed("boom", 2, true, summary)))
+        assertEquals(TestState.Failed("boom", 2, true, summary), f.state.test)
         assertTrue(f.effects.isNotEmpty())
         assertEquals(TestState.Running(listOf("me")), f.state.apply(InspectorIntent.TestStepRequested()).state.test)
     }
@@ -420,8 +438,79 @@ class InspectorReducerTest {
         assertTrue(c.state.apply(InspectorIntent.TestEventReceived(InspectorTestEvent.Finished("late"))).effects.isEmpty())
         assertEquals(TestState.Idle, c.state.apply(InspectorIntent.TestEventReceived(InspectorTestEvent.Finished("late"))).state.test)
         assertTrue(c.state.apply(InspectorIntent.CancelTest).effects.isEmpty())
-        val waiting = running.apply(InspectorIntent.TestEventReceived(InspectorTestEvent.NeedsParents(listOf("p")))).state
+        val waiting = running.apply(InspectorIntent.TestEventReceived(InspectorTestEvent.NeedsConfirm(listOf("sends an SMS")))).state
         assertEquals(TestState.Idle, waiting.apply(InspectorIntent.CancelTest).state.test)
+    }
+
+    @Test fun mainButtonNeverAsksForParentsAndAlwaysStartsOnlyThisStep() {
+        // no parent data at all: still runs, with the manual input
+        val r = opened().apply(InspectorIntent.TestStepRequested())
+        val req = (r.effects.single() as InspectorEffect.RunTest).request
+        assertEquals(ParentPolicy.OnlyThis, req.policy)
+        assertNull(req.source)
+        assertEquals(DEFAULT_MANUAL_INPUT, req.manualText)
+    }
+
+    @Test fun invalidManualInputBlocksTheTestAndPointsToTheInputPage() {
+        var s = opened().apply(InspectorIntent.EditManualInput("[{\"a\": }]")).state
+        assertNotNull(s.testInput.manualError)
+        val r = s.apply(InspectorIntent.TestStepRequested())
+        assertTrue(r.effects.isEmpty()); assertEquals(TestState.Idle, r.state.test); assertEquals(InspectorPage.Input, r.state.page)
+        s = s.apply(InspectorIntent.EditManualInput("[{\"a\": 1}]")).state
+        assertNull(s.testInput.manualError)
+        assertEquals("[{\"a\": 1}]", ((s.apply(InspectorIntent.TestStepRequested()).effects.single()) as InspectorEffect.RunTest).request.manualText)
+    }
+
+    @Test fun pickedSourceIsSentAndCatalogDrivesTheDefaultText() {
+        var s = opened().apply(InspectorIntent.InputCatalogLoaded(InputCatalogInfo(listOf(InputOption(InputSource.LastRun, 3)), "[{\"id\": 0}]"))).state
+        assertEquals("[{\"id\": 0}]", s.testInput.manualText)
+        s = s.apply(InspectorIntent.SelectInputSource(InputSource.Manual)).state
+        assertEquals(InputSource.Manual, (s.apply(InspectorIntent.TestStepRequested()).effects.single() as InspectorEffect.RunTest).request.source)
+        // typed text is never overwritten by a later catalog
+        s = s.apply(InspectorIntent.EditManualInput("[{\"mine\": 1}]")).state
+        s = s.apply(InspectorIntent.InputCatalogLoaded(InputCatalogInfo(emptyList(), "[{\"other\": 1}]"))).state
+        assertEquals("[{\"mine\": 1}]", s.testInput.manualText)
+        assertEquals("[{\"other\": 1}]", s.apply(InspectorIntent.FillSampleFromSchema).state.testInput.manualText)
+        // a pick that vanished falls back to automatic
+        val gone = opened().apply(InspectorIntent.InputCatalogLoaded(InputCatalogInfo(listOf(InputOption(InputSource.Pinned, 1))))).state
+            .apply(InspectorIntent.SelectInputSource(InputSource.Pinned)).state
+            .apply(InspectorIntent.InputCatalogLoaded(InputCatalogInfo(emptyList()))).state
+        assertNull(gone.testInput.selection)
+    }
+
+    @Test fun pickingPinnedOrLastTestPointsTheInputPanelAtThoseItems() {
+        val s = opened().apply(InspectorIntent.InputCatalogLoaded(InputCatalogInfo(listOf(
+            InputOption(InputSource.Pinned, 2), InputOption(InputSource.LastTest, 1, "test-9"))))).state
+        val pinned = s.apply(InspectorIntent.SelectInputSource(InputSource.Pinned))
+        assertEquals(RunSelection.Pinned, pinned.state.input.run); assertEquals("p1", pinned.state.input.sourceStepId)
+        val lastTest = s.apply(InspectorIntent.SelectInputSource(InputSource.LastTest))
+        assertTrue(lastTest.state.input.inbound); assertEquals(RunSelection.Specific("test-9"), lastTest.state.input.run)
+    }
+
+    @Test fun sideEffectStepNeedsConfirmationBeforeItRuns() {
+        val sms = InspectorState.initial("me", null, "device.sms")
+        val first = reducer.reduce(sms, InspectorIntent.TestStepRequested())
+        assertEquals(TestState.NeedsConfirm(listOf("sends an SMS")), first.state.test)
+        assertTrue(first.effects.isEmpty())
+        val ok = reducer.reduce(first.state, InspectorIntent.TestStepRequested(confirmed = true))
+        assertEquals(TestState.Running(listOf("me")), ok.state.test)
+        assertTrue((ok.effects.single() as InspectorEffect.RunTest).request.confirmed)
+        // a plain data Step does not ask
+        assertTrue(opened().apply(InspectorIntent.TestStepRequested()).effects.single() is InspectorEffect.RunTest)
+    }
+
+    @Test fun sparkAlwaysTestsWithItsSample() {
+        val spark = InspectorState.initial("sp", null, "spark.sms")
+        val r = reducer.reduce(spark, InspectorIntent.InputCatalogLoaded(InputCatalogInfo(emptyList(), "[{\"from\": \"+1\"}]")))
+        assertEquals("[{\"from\": \"+1\"}]", r.state.testInput.manualText)
+        val t = reducer.reduce(r.state, InspectorIntent.TestStepRequested())
+        assertEquals("[{\"from\": \"+1\"}]", (t.effects.single() as InspectorEffect.RunTest).request.manualText)
+        assertNull(TestRisks.of("spark.sms", emptyMap()))
+    }
+
+    @Test fun refusedEventShowsMessage() {
+        val s = opened().apply(InspectorIntent.TestStepRequested()).state
+        assertEquals(TestState.Refused("off"), s.apply(InspectorIntent.TestEventReceived(InspectorTestEvent.Refused("off"))).state.test)
     }
 
     // ---- replay ----

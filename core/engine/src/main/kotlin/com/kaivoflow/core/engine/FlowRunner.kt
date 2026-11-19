@@ -9,6 +9,7 @@ import com.kaivoflow.core.engine.stepdata.StepErrorInfo
 import com.kaivoflow.core.engine.stepdata.StepExecutionCapture
 import com.kaivoflow.core.engine.stepdata.StepExecutionKey
 import com.kaivoflow.core.engine.stepdata.StepExecutionRecorder
+import com.kaivoflow.core.engine.stepdata.TEST_RUN_PREFIX
 import com.kaivoflow.core.model.Flow
 import com.kaivoflow.core.model.FlowData
 import com.kaivoflow.core.model.ItemError
@@ -119,19 +120,36 @@ class FlowRunner(
     }
 
     /**
-     * Executes one Step on its own — the "Test Step" button in the inspector.
-     * Uses the previous Step's known output as input and never touches other Steps.
+     * Executes exactly one Step: the "Test Step" button. No other Step of the Flow ever runs here.
+     *
+     * Input: [input] when given, else the pinned items of the parents, else one empty item. A Spark with no input is
+     * tested with [SparkSamples] (its realistic sample event); nothing is armed or published. [upstream] optionally
+     * seeds `$step("Name")` lookups with the parents' stored output; it is never computed by running parents.
+     * A switched-off Step is not executed. The execution is recorded as a test (run id starts with
+     * [TEST_RUN_PREFIX]) and no Run record exists for it.
      */
     suspend fun testStep(
         flow: Flow,
         stepId: String,
         input: List<FlowData>,
+        upstream: Map<String, Map<Int, List<FlowData>>> = emptyMap(),
         onEvent: (RunEvent) -> Unit = {},
     ): StepRun {
         val step = flow.step(stepId) ?: throw KaivoException("Step not found: $stepId")
-        val pinnedInput = if (input.isEmpty()) pinnedParentItems(flow, stepId) else emptyList()
-        val effectiveInput = if (input.isNotEmpty()) input else pinnedInput.ifEmpty { listOf(FlowData()) }
-        val execution = Execution(flow, RunTrigger(kind = "test", items = effectiveInput.toImmutableList()), RunOptions(mode = ExecutionMode.TestStep), onEvent)
+        if (step.disabled) {
+            val now = clock()
+            return StepRun(step.id, step.name, StepRunStatus.Skipped, now, now, error = "This Step is switched off. Turn it on to test it.")
+        }
+        val pinnedInput = if (input.isEmpty() && !step.isTrigger) pinnedParentItems(flow, stepId) else emptyList()
+        val sample = if (input.isEmpty() && pinnedInput.isEmpty() && step.isTrigger) {
+            listOf(FlowData(json = SparkSamples.payload(step, clock(), "", "test")))
+        } else emptyList()
+        val effectiveInput = input.ifEmpty { pinnedInput.ifEmpty { sample.ifEmpty { listOf(FlowData()) } } }
+        val execution = Execution(
+            flow, RunTrigger(kind = "test", items = effectiveInput.toImmutableList()), RunOptions(mode = ExecutionMode.TestStep), onEvent,
+            idPrefix = TEST_RUN_PREFIX,
+        )
+        upstream.forEach { (id, ports) -> if (id != stepId) execution.stepOutputs[id] = ports }
         onEvent(RunEvent.RunStarted(execution.runId, flow.id, 1))
         val result = try {
             execution.runWithRetries(step, Collected.of(effectiveInput))
@@ -196,8 +214,9 @@ class FlowRunner(
         val options: RunOptions,
         val onEvent: (RunEvent) -> Unit,
         val onRunStarted: (suspend (RunRecord) -> Unit)? = null,
+        idPrefix: String = "",
     ) {
-        val runId: String = newId()
+        val runId: String = idPrefix + newId()
         val startedAt: Long = clock()
 
         /**
@@ -488,95 +507,8 @@ class FlowRunner(
             return Collected(streams, streams.flatMap { it.items }, streams.flatMap { it.refs }, ports)
         }
 
-        private fun defaultTriggerPayload(step: StepNode): Map<String, Any?> {
-            val now = clock()
-            return when (step.type) {
-                "spark.webhook" -> mapOf(
-                    "headers" to mapOf(
-                        "host" to "kaivoflow.local",
-                        "user-agent" to "KaivoFlow/1.0",
-                        "content-type" to "application/json",
-                    ),
-                    "params" to emptyMap<String, Any>(),
-                    "query" to emptyMap<String, Any>(),
-                    "body" to mapOf("message" to "Webhook trigger payload", "timestamp" to now),
-                    "path" to (step.params["path"] as? String ?: "my-flow"),
-                    "method" to (step.params["method"] as? String ?: "POST"),
-                    "timestamp" to now,
-                    "executionId" to runId,
-                )
-                "spark.notification" -> mapOf(
-                    "app" to "com.whatsapp",
-                    "appName" to "WhatsApp",
-                    "title" to (step.params["titleContains"] as? String ?: "Notification"),
-                    "text" to (step.params["textContains"] as? String ?: "Sample notification text"),
-                    "isOngoing" to false,
-                    "timestamp" to now,
-                    "executionId" to runId,
-                )
-                "spark.sms" -> mapOf(
-                    "from" to (step.params["senderContains"] as? String ?: "+919876543210"),
-                    "body" to (step.params["bodyContains"] as? String ?: "Sample SMS message body"),
-                    "timestamp" to now,
-                    "executionId" to runId,
-                )
-                "spark.battery" -> mapOf(
-                    "level" to (step.params["threshold"] as? Number ?: 15),
-                    "isCharging" to false,
-                    "temperature" to 31.5,
-                    "timestamp" to now,
-                    "executionId" to runId,
-                )
-                "spark.wifi" -> mapOf(
-                    "ssid" to (step.params["ssidContains"] as? String ?: "MyHome_WiFi"),
-                    "event" to (step.params["event"] as? String ?: "connected"),
-                    "ipAddress" to "192.168.1.100",
-                    "timestamp" to now,
-                    "executionId" to runId,
-                )
-                "spark.bluetooth" -> mapOf(
-                    "name" to (step.params["deviceNameContains"] as? String ?: "Wireless Headphones"),
-                    "event" to (step.params["event"] as? String ?: "connected"),
-                    "address" to "12:34:56:78:9A:BC",
-                    "timestamp" to now,
-                    "executionId" to runId,
-                )
-                "spark.geofence" -> mapOf(
-                    "transition" to (step.params["transition"] as? String ?: "enter"),
-                    "latitude" to (step.params["latitude"] as? Number ?: 20.2961),
-                    "longitude" to (step.params["longitude"] as? Number ?: 85.8245),
-                    "timestamp" to now,
-                    "executionId" to runId,
-                )
-                "spark.headset" -> mapOf(
-                    "event" to (step.params["event"] as? String ?: "plugged"),
-                    "hasMic" to true,
-                    "timestamp" to now,
-                    "executionId" to runId,
-                )
-                "spark.boot" -> mapOf(
-                    "event" to "boot_completed",
-                    "reason" to "reboot",
-                    "boot" to true,
-                    "uptimeMs" to 60_000L,
-                    "timestamp" to now,
-                    "executionId" to runId,
-                )
-                "spark.share" -> mapOf(
-                    "text" to "https://kaivoflow.app",
-                    "type" to "text",
-                    "timestamp" to now,
-                    "executionId" to runId,
-                )
-                else -> mapOf(
-                    "timestamp" to now,
-                    "executionId" to runId,
-                    "trigger" to trigger.kind,
-                    "stepId" to step.id,
-                    "stepName" to step.name,
-                )
-            }
-        }
+        private fun defaultTriggerPayload(step: StepNode): Map<String, Any?> =
+            SparkSamples.payload(step, clock(), runId, trigger.kind)
 
         private fun portCountsOf(outputs: Map<Int, List<FlowData>>) =
             outputs.mapValues { it.value.size }.toImmutableMap()

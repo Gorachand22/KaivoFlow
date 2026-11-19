@@ -17,7 +17,70 @@ enum class InspectorPage { Input, Parameters, Output }
 enum class ParamsTab { Parameters, Behaviour, About }
 enum class PanelSide { Input, Output }
 enum class DataViewMode { Schema, Table, Json, Binary }
-enum class ParentPolicy { Ask, RunThem, UsePinnedOrLast }
+/**
+ * What Test Step does about the Steps before this one. [OnlyThis] never runs a parent Step (the default and the only policy
+ * of the main button). [RunThem] is the separate, explicit "Run earlier Steps first" action: it tests the parents that have
+ * no data first, in order, and only because the user chose it.
+ */
+enum class ParentPolicy { OnlyThis, RunThem }
+
+/** Where the input of a Test Step came from. [Mixed] is only a resolved label, never a choice. */
+enum class InputSource(val label: String, val isText: Boolean = false) {
+    Pinned("Pinned"),
+    LastRun("Last run"),
+    LastTest("Last test"),
+    Manual("Manual", isText = true),
+    /** The editable sample event of a Spark. */
+    Sample("Sample event", isText = true),
+}
+
+/** One input the user can pick that exists right now. [runId] is the stored execution behind it, when there is one. */
+data class InputOption(val source: InputSource, val itemCount: Int, val runId: String? = null)
+
+/** What a catalog load found: the sources that exist and the text a fresh manual input starts with. */
+data class InputCatalogInfo(val options: List<InputOption> = emptyList(), val sampleText: String = DEFAULT_MANUAL_INPUT)
+
+const val DEFAULT_MANUAL_INPUT = "[\n  {}\n]"
+
+/** Where the manual input text is not valid JSON (1-based, as the editor shows it). */
+data class ManualInputError(val message: String, val line: Int, val column: Int)
+
+data class TestInputState(
+    /** The user's pick; null means automatic: pinned, else last run, else last test, else manual. */
+    val selection: InputSource? = null,
+    val options: ImmutableList<InputOption> = persistentListOf(),
+    val manualText: String = DEFAULT_MANUAL_INPUT,
+    /** True once the user typed; a fresh sample then never overwrites the text. */
+    val manualEdited: Boolean = false,
+    val manualError: ManualInputError? = null,
+    val sampleText: String = DEFAULT_MANUAL_INPUT,
+)
+
+/** A Step that acts in the outside world; testing it for real needs a confirmation. [label] reads "sends an SMS". */
+data class TestRisk(val label: String)
+
+/** Facts of one finished test, for the banner: what ran on what, how long it took, how many items on which port. */
+data class TestSummary(
+    val runId: String?,
+    val source: InputSource,
+    /** Per-parent breakdown such as `A: pinned, B: last run`, when more than one parent fed the input. */
+    val detail: String? = null,
+    val itemsIn: Int = 0,
+    val itemsOut: Int = 0,
+    val portCounts: Map<Int, Int> = emptyMap(),
+    val durationMs: Long? = null,
+    val attempts: Int = 1,
+)
+
+/** Everything one Test Step needs to start; built by the reducer so the gateway never guesses. */
+data class TestRequest(
+    val stepId: String,
+    val policy: ParentPolicy = ParentPolicy.OnlyThis,
+    val source: InputSource? = null,
+    val manualText: String = DEFAULT_MANUAL_INPUT,
+    /** The user accepted that a Step with side effects runs for real. */
+    val confirmed: Boolean = false,
+)
 
 /** Which stored execution a panel shows. */
 sealed interface RunSelection {
@@ -56,6 +119,8 @@ sealed interface DataStatus {
 
 data class DataPanelState(
     val side: PanelSide,
+    /** Input side only: shows the items the open Step itself received in a test (Input direction), not a parent's output. */
+    val inbound: Boolean = false,
     /** Selected parent (Input) or the open Step (Output). */
     val sourceStepId: String? = null,
     val sources: ImmutableList<SourceChip> = persistentListOf(),
@@ -84,6 +149,8 @@ data class DataRequest(
     val port: Int,
     val page: PageRequest,
     val search: String,
+    /** Read the Step's own input instead of its output (the items a test actually used). */
+    val inbound: Boolean = false,
 )
 
 data class PinInfo(val itemCount: Int, val bytes: Long, val pinnedAt: Long)
@@ -111,13 +178,23 @@ data class DragState(
 sealed interface TestState {
     data object Idle : TestState
     data class Running(val stepIds: List<String>) : TestState
-    data class NeedsParents(val stepIds: List<String>) : TestState
-    data class Finished(val executionKey: String?) : TestState
-    data class Failed(val message: String, val itemIndex: Int? = null, val hasPartialData: Boolean = false) : TestState
+    /** A Step that acts in the outside world would run for real: wait for the user's yes. */
+    data class NeedsConfirm(val risks: List<String>, val policy: ParentPolicy = ParentPolicy.OnlyThis) : TestState
+    /** Nothing ran (for example the Step is switched off). */
+    data class Refused(val message: String) : TestState
+    data class Finished(val executionKey: String?, val summary: TestSummary? = null) : TestState
+    data class Failed(
+        val message: String,
+        val itemIndex: Int? = null,
+        val hasPartialData: Boolean = false,
+        val summary: TestSummary? = null,
+    ) : TestState
 }
 
 data class InspectorState(
     val stepId: String,
+    /** The Step's type id, to tell a Spark from a Step and to find side effects. */
+    val stepType: String = "",
     /** Non-null when a past Run is shown (replay): everything that edits is disabled. */
     val readOnlyRun: String? = null,
     val page: InspectorPage = InspectorPage.Parameters,
@@ -136,7 +213,11 @@ data class InspectorState(
     val output: DataPanelState = DataPanelState(PanelSide.Output, sourceStepId = stepId),
     val pin: PinInfo? = null,
     val test: TestState = TestState.Idle,
+    val testInput: TestInputState = TestInputState(),
+    /** What the last finished test received, shown on the Input pane. */
+    val used: TestSummary? = null,
 ) {
+    val isSpark: Boolean get() = stepType.startsWith("spark.")
     val readOnly: Boolean get() = readOnlyRun != null
     val issueCount: Int get() = issues.size
     val canUndo: Boolean get() = lastEdit != null && !readOnly
@@ -146,10 +227,11 @@ data class InspectorState(
 
     companion object {
         /** Fresh state for opening [stepId]. With [replayRunId] both panels start on that Run and the inspector is read-only. */
-        fun initial(stepId: String, replayRunId: String? = null): InspectorState {
+        fun initial(stepId: String, replayRunId: String? = null, stepType: String = ""): InspectorState {
             val run: RunSelection = if (replayRunId != null) RunSelection.Specific(replayRunId) else RunSelection.Latest
             return InspectorState(
                 stepId = stepId,
+                stepType = stepType,
                 readOnlyRun = replayRunId,
                 page = if (replayRunId != null) InspectorPage.Output else InspectorPage.Parameters,
                 input = DataPanelState(PanelSide.Input, run = run),
@@ -163,9 +245,15 @@ enum class InspectorMessage { DropRejected, ExpressionNotAllowed, FixedNotAllowe
 
 sealed interface InspectorTestEvent {
     data class Progress(val stepIds: List<String>) : InspectorTestEvent
-    data class NeedsParents(val stepIds: List<String>) : InspectorTestEvent
-    data class Finished(val executionKey: String?) : InspectorTestEvent
-    data class Failed(val message: String, val itemIndex: Int? = null, val hasPartialData: Boolean = false) : InspectorTestEvent
+    data class NeedsConfirm(val risks: List<String>, val policy: ParentPolicy = ParentPolicy.OnlyThis) : InspectorTestEvent
+    data class Refused(val message: String) : InspectorTestEvent
+    data class Finished(val executionKey: String?, val summary: TestSummary? = null) : InspectorTestEvent
+    data class Failed(
+        val message: String,
+        val itemIndex: Int? = null,
+        val hasPartialData: Boolean = false,
+        val summary: TestSummary? = null,
+    ) : InspectorTestEvent
 }
 
 sealed interface InspectorIntent {
@@ -217,7 +305,14 @@ sealed interface InspectorIntent {
     data object PinCurrent : InspectorIntent
     data object Unpin : InspectorIntent
     data class PinChanged(val info: PinInfo?) : InspectorIntent
-    data class TestStepRequested(val policy: ParentPolicy = ParentPolicy.Ask) : InspectorIntent
+    /** Tests this Step only. [confirmed] answers the side-effect question; [policy] is [ParentPolicy.OnlyThis] unless the user chose to run earlier Steps. */
+    data class TestStepRequested(val policy: ParentPolicy = ParentPolicy.OnlyThis, val confirmed: Boolean = false) : InspectorIntent
+    /** Picks the test input; null goes back to automatic. */
+    data class SelectInputSource(val source: InputSource?) : InspectorIntent
+    data class EditManualInput(val text: String) : InspectorIntent
+    /** Replaces the manual text with a sample built from the data shape the Step receives (or the Spark's sample event). */
+    data object FillSampleFromSchema : InspectorIntent
+    data class InputCatalogLoaded(val info: InputCatalogInfo) : InspectorIntent
     data class TestEventReceived(val event: InspectorTestEvent) : InspectorIntent
     /** Stops a running or waiting Test Step and returns to idle. */
     data object CancelTest : InspectorIntent
@@ -229,7 +324,8 @@ sealed interface InspectorEffect {
     data class ScheduleSearchCommit(val side: PanelSide, val text: String, val delayMs: Long) : InspectorEffect
     data class EvaluatePreview(val key: String, val text: String, val itemIndex: Int) : InspectorEffect
     data class PersistParam(val key: String, val value: ParamValue?) : InspectorEffect
-    data class RunTest(val stepId: String, val policy: ParentPolicy) : InspectorEffect
+    data class RunTest(val request: TestRequest) : InspectorEffect
+    data object LoadInputCatalog : InspectorEffect
     data object CancelTest : InspectorEffect
     data class PinCurrent(val request: DataRequest) : InspectorEffect
     data object Unpin : InspectorEffect

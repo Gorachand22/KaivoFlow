@@ -16,7 +16,13 @@ import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicLong
 
 /** Identity of one execution of a Step inside a Run. */
-data class StepExecutionKey(val runId: String, val stepId: String, val runIndex: Int = 0)
+data class StepExecutionKey(val runId: String, val stepId: String, val runIndex: Int = 0) {
+    /** True for an execution written by Test Step: never part of a production or manual Run. */
+    val isTest: Boolean get() = runId.startsWith(TEST_RUN_PREFIX)
+}
+
+/** Run ids of Test Step executions start with this, so storage can tell a test from a Run without a schema change. */
+const val TEST_RUN_PREFIX = "test-"
 
 /** Which Step and output port fed an input port. */
 data class ParentRef(val stepId: String, val port: Int = 0)

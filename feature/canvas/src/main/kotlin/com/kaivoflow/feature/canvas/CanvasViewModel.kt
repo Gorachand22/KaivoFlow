@@ -234,7 +234,7 @@ class CanvasViewModel @Inject constructor(
             registrySpec = { registry.spec(it) },
             stepData = stepData,
             pins = pinStore,
-            tester = StepTestRunner { f, id, input -> flowEngine.testStep(f, id, input).also(::applyTestResult) },
+            tester = StepTestRunner { f, id, input, upstream -> flowEngine.testStep(f, id, input, upstream).also(::applyTestResult) },
             assist = assist,
             credentialRefs = credentialRefs,
             onParam = { key, value -> setParam(stepId, key, value) },
@@ -244,8 +244,8 @@ class CanvasViewModel @Inject constructor(
     }
 
     /**
-     * "Test from here" in the executions sheet: opens the Step and tests it on the newest stored or pinned upstream data
-     * (the Test Step path). Missing in the engine: starting a Run at an arbitrary Step with the chosen Run's upstream data
+     * "Test from here" in the executions sheet: opens the Step and tests only that Step on the automatic input (pinned, else
+     * last stored upstream output, else last test, else the manual sample); no earlier Step runs. Missing in the engine: starting a Run at an arbitrary Step with the chosen Run's upstream data
      * replayed as pins (RunTrigger.startAtStepId only selects a Spark), and a per-Run input override for Test Step.
      */
     fun testFromHere(stepId: String) {
@@ -253,7 +253,7 @@ class CanvasViewModel @Inject constructor(
         openInspector(stepId)
         _inspectorSession.value?.holder?.dispatch(
             com.kaivoflow.feature.canvas.inspector.state.InspectorIntent.TestStepRequested(
-                com.kaivoflow.feature.canvas.inspector.state.ParentPolicy.UsePinnedOrLast,
+                com.kaivoflow.feature.canvas.inspector.state.ParentPolicy.OnlyThis,
             ),
         )
     }
@@ -284,6 +284,7 @@ class CanvasViewModel @Inject constructor(
 
     /** Keeps the Step card's status line in step with a Test Step; the data itself is in the StepDataStore. */
     private fun applyTestResult(stepRun: com.kaivoflow.core.model.StepRun) {
+        if (stepRun.status == StepRunStatus.Skipped) return
         _state.update { current ->
             current.copy(
                 steps = current.steps.map { s ->

@@ -1,7 +1,13 @@
 package com.kaivoflow.feature.canvas
 
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.EnterTransition
+import androidx.compose.animation.ExitTransition
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInVertically
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -56,7 +62,13 @@ import com.kaivoflow.core.design.GlassPill
 import com.kaivoflow.core.design.GoldButton
 import com.kaivoflow.core.design.KaivoIcons
 import com.kaivoflow.core.design.KaivoShapes
+import com.kaivoflow.core.design.KaivoMotionTokens
 import com.kaivoflow.core.design.KaivoTheme
+import com.kaivoflow.core.design.MotionTokenValues
+import com.kaivoflow.core.design.Stagger
+import com.kaivoflow.core.design.goldSweep
+import com.kaivoflow.core.design.rememberKaivoHaptics
+import com.kaivoflow.core.design.tweenSpec
 import com.kaivoflow.core.design.StatusBadge
 import com.kaivoflow.core.design.BadgeKind
 import com.kaivoflow.core.model.NodeSpec
@@ -71,6 +83,8 @@ import com.kaivoflow.feature.canvas.render.CanvasGroupFrame
 import com.kaivoflow.feature.canvas.render.CanvasStickyNote
 import com.kaivoflow.feature.canvas.render.JewelStepCard
 import com.kaivoflow.feature.canvas.render.StreamCanvasLayer
+import com.kaivoflow.feature.canvas.render.StreamCountChip
+import com.kaivoflow.feature.canvas.render.deriveLiveStreams
 import com.kaivoflow.feature.canvas.render.StreamDragPreview
 import com.kaivoflow.feature.canvas.inspector.host.StepInspector
 import com.kaivoflow.feature.canvas.inspector.host.StepInspectorActions
@@ -104,6 +118,19 @@ fun CanvasScreen(
     val density = LocalDensity.current
     val pixelScale = density.density
     val haptics = LocalHapticFeedback.current
+    val policy = KaivoTheme.motionPolicy
+    val kaivoHaptics = rememberKaivoHaptics()
+    // Streams with run-derived flags (Flowing / Done / Dimmed) and the item counts for edge chips.
+    val live = remember(state.streams, state.run, state.steps) {
+        deriveLiveStreams(state.streams, state.run, state.steps)
+    }
+    // Step ids whose entrance has played: re-scrolling a card into view must not replay it.
+    val enteredSteps = remember { mutableSetOf<String>() }
+
+    // Run starting: one light tick, the Run button's gold sweep plays from the same trigger.
+    LaunchedEffect(state.run.runId, state.run.isRunning) {
+        if (state.run.runId != null && state.run.isRunning) kaivoHaptics.tick()
+    }
 
     val transform = rememberCanvasTransformState()
     var viewportSize by remember { mutableStateOf(androidx.compose.ui.unit.IntSize.Zero) }
@@ -382,7 +409,7 @@ fun CanvasScreen(
             ) {
                 StreamCanvasLayer(
                     layouts = effectiveLayouts,
-                    streams = state.streams,
+                    streams = live.streams,
                     transform = transform,
                     reduceMotion = motion.reduceMotion,
                     pixelScale = pixelScale,
@@ -427,6 +454,17 @@ fun CanvasScreen(
                                 modifier = Modifier.size(13.dp),
                             )
                         }
+
+                        val chipCount = live.counts[stream.id]
+                        if (chipCount != null) {
+                            StreamCountChip(
+                                count = chipCount,
+                                modifier = Modifier.graphicsLayer {
+                                    translationX = (mid.x * pixelScale) + (18f * density.density)
+                                    translationY = (mid.y * pixelScale) - (10f * density.density)
+                                },
+                            )
+                        }
                     }
                 }
 
@@ -466,17 +504,22 @@ fun CanvasScreen(
                     viewportSize.height.toFloat().coerceAtLeast(1f),
                     pixelScale = pixelScale,
                 )
-                layouts.values.forEach { layout ->
-                    if (!CanvasGeometry.isVisible(layout, visible)) return@forEach
-                    val step = state.steps.firstOrNull { it.id == layout.id } ?: return@forEach
-                    val entrance = remember(step.id) { Animatable(0f) }
+                layouts.values.forEachIndexed { layoutIndex, layout ->
+                    if (!CanvasGeometry.isVisible(layout, visible)) return@forEachIndexed
+                    val step = state.steps.firstOrNull { it.id == layout.id } ?: return@forEachIndexed
+                    val animateIn = Stagger.shouldAnimate(policy, step.id in enteredSteps)
+                    // Only the very first paint staggers; a Step added later appears at once.
+                    val staggerIndex = if (enteredSteps.isEmpty()) layoutIndex else 0
+                    val entrance = remember(step.id) { Animatable(if (animateIn) 0f else 1f) }
                     LaunchedEffect(step.id) {
-                        if (!motion.reduceMotion) {
-                            delay(motion.stagerStepMs * (layouts.keys.indexOf(step.id).coerceAtLeast(0)))
-                            entrance.animateTo(1f, tween(220))
-                        } else {
-                            entrance.snapTo(1f)
+                        if (animateIn) {
+                            delay(Stagger.delayMs(staggerIndex, policy.staggerStepMs, policy.staggerMaxItems))
+                            entrance.animateTo(
+                                1f,
+                                policy.tweenSpec<Float>(MotionTokenValues.STANDARD_MS, KaivoMotionTokens.flowing),
+                            )
                         }
+                        enteredSteps.add(step.id)
                     }
                     val currentPos = liveCardDrag?.takeIf { it.first == step.id }?.let { it.second to it.third }
                         ?: (state.positions[step.id]?.takeIf { it.first != 0f || it.second != 0f }
@@ -750,14 +793,25 @@ fun CanvasScreen(
                 .padding(16.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
         ) {
-            if (state.run.runId != null) {
-                RunHud(
-                    run = state.run,
-                    flowName = state.flowName.ifBlank { "Flow" },
-                    onCancel = viewModel::cancelRun,
-                    onOpenHistory = { viewModel.openExecutions() },
-                )
-                Spacer(Modifier.height(12.dp))
+            AnimatedVisibility(
+                visible = state.run.runId != null,
+                enter = if (policy.animationsEnabled) {
+                    fadeIn(tween(policy.ms(MotionTokenValues.STANDARD_MS), easing = KaivoMotionTokens.flowing)) +
+                        slideInVertically(tween(policy.ms(MotionTokenValues.EMPHASIZED_MS), easing = KaivoMotionTokens.settle)) { it / 2 }
+                } else EnterTransition.None,
+                exit = if (policy.animationsEnabled) {
+                    fadeOut(tween(policy.ms(MotionTokenValues.QUICK_MS), easing = KaivoMotionTokens.exit))
+                } else ExitTransition.None,
+            ) {
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    RunHud(
+                        run = state.run,
+                        flowName = state.flowName.ifBlank { "Flow" },
+                        onCancel = viewModel::cancelRun,
+                        onOpenHistory = { viewModel.openExecutions() },
+                    )
+                    Spacer(Modifier.height(12.dp))
+                }
             }
 
             Row(
@@ -779,6 +833,9 @@ fun CanvasScreen(
                 }
                 Spacer(Modifier.size(12.dp))
                 GoldButton(
+                    modifier = Modifier
+                        .clip(KaivoShapes.pill)
+                        .goldSweep(trigger = state.run.runId?.takeIf { state.run.isRunning }),
                     text = if (state.run.isRunning) "Running…" else "Run",
                     icon = if (state.run.isRunning) "pause" else "play",
                     enabled = state.canRun || state.run.isRunning,

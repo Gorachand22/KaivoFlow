@@ -13,6 +13,9 @@ import com.kaivoflow.core.model.ParamValue
 import com.kaivoflow.core.model.ShowRules
 import com.kaivoflow.core.model.ValidationContext
 import com.kaivoflow.core.model.ValidationPhase
+import com.kaivoflow.feature.canvas.inspector.logic.ManualInput
+import com.kaivoflow.feature.canvas.inspector.logic.TestInputPolicy
+import com.kaivoflow.feature.canvas.inspector.logic.TestRisks
 import kotlinx.collections.immutable.toImmutableList
 import kotlinx.collections.immutable.toImmutableMap
 
@@ -30,7 +33,8 @@ class InspectorReducer(
     fun reduce(s: InspectorState, intent: InspectorIntent): Reduction {
         if (s.readOnly && intent.mutates()) return Reduction(s)
         return when (intent) {
-            is InspectorIntent.SelectPage -> Reduction(s.copy(page = intent.page))
+            is InspectorIntent.SelectPage ->
+                Reduction(s.copy(page = intent.page), if (intent.page == InspectorPage.Input) listOf(InspectorEffect.LoadInputCatalog) else emptyList())
             is InspectorIntent.SelectParamsTab -> Reduction(s.copy(paramsTab = intent.tab))
             InspectorIntent.Refresh -> reloadBoth(s)
 
@@ -113,20 +117,28 @@ class InspectorReducer(
                 if (intent.info == null && s.output.run == RunSelection.Pinned) reload(n.withPanel(PanelSide.Output, n.output.copy(run = RunSelection.Latest, page = n.output.page.copy(offset = 0))), PanelSide.Output)
                 else Reduction(n)
             }
-            is InspectorIntent.TestStepRequested -> {
-                if (s.test is TestState.Running) Reduction(s)
-                else Reduction(s.copy(test = TestState.Running(listOf(s.stepId))), listOf(InspectorEffect.RunTest(s.stepId, intent.policy)))
-            }
+            is InspectorIntent.TestStepRequested -> testRequested(s, intent)
             is InspectorIntent.TestEventReceived -> testEvent(s, intent.event)
             InspectorIntent.CancelTest ->
-                if (s.test is TestState.Running || s.test is TestState.NeedsParents) Reduction(s.copy(test = TestState.Idle), listOf(InspectorEffect.CancelTest)) else Reduction(s)
+                if (s.test is TestState.Running || s.test is TestState.NeedsConfirm) Reduction(s.copy(test = TestState.Idle), listOf(InspectorEffect.CancelTest)) else Reduction(s)
+            is InspectorIntent.SelectInputSource -> selectInputSource(s, intent.source)
+            is InspectorIntent.EditManualInput -> {
+                val ti = s.testInput
+                Reduction(s.copy(testInput = ti.copy(manualText = intent.text, manualEdited = true, manualError = ManualInput.errorOf(intent.text))))
+            }
+            InspectorIntent.FillSampleFromSchema -> {
+                val ti = s.testInput
+                Reduction(s.copy(testInput = ti.copy(manualText = ti.sampleText, manualEdited = false, manualError = null)))
+            }
+            is InspectorIntent.InputCatalogLoaded -> catalogLoaded(s, intent.info)
         }
     }
 
     private fun InspectorIntent.mutates(): Boolean = when (this) {
         is InspectorIntent.EditParam, is InspectorIntent.SwitchToExpression, is InspectorIntent.SwitchToFixed, InspectorIntent.UndoParamEdit,
         is InspectorIntent.FocusField, is InspectorIntent.SetMapperVisible, is InspectorIntent.BeginDrag, is InspectorIntent.InsertReference,
-        InspectorIntent.PinCurrent, InspectorIntent.Unpin, is InspectorIntent.TestStepRequested, InspectorIntent.JumpToNextIssue -> true
+        InspectorIntent.PinCurrent, InspectorIntent.Unpin, is InspectorIntent.TestStepRequested, InspectorIntent.JumpToNextIssue,
+        is InspectorIntent.SelectInputSource, is InspectorIntent.EditManualInput, InspectorIntent.FillSampleFromSchema -> true
         else -> false
     }
 
@@ -257,7 +269,7 @@ class InspectorReducer(
 
     private fun requestFor(s: InspectorState, side: PanelSide): DataRequest {
         val p = s.panel(side)
-        return DataRequest(side, p.sourceStepId, p.run, p.port, p.page, p.appliedSearch)
+        return DataRequest(side, p.sourceStepId, p.run, p.port, p.page, p.appliedSearch, p.inbound)
     }
 
     private fun reload(s: InspectorState, side: PanelSide): Reduction {
@@ -271,7 +283,7 @@ class InspectorReducer(
     private fun reloadBoth(s: InspectorState): Reduction {
         val a = reload(s, PanelSide.Input)
         val b = reload(a.state, PanelSide.Output)
-        return Reduction(b.state, a.effects + b.effects)
+        return Reduction(b.state, a.effects + b.effects + InspectorEffect.LoadInputCatalog)
     }
 
     private fun parentsChanged(s: InspectorState, parents: List<SourceChip>): Reduction {
@@ -282,7 +294,7 @@ class InspectorReducer(
             val updated = s.copy(input = p.copy(sources = chips))
             return if (selected == null && p.status !is DataStatus.NoConnection) reload(updated, PanelSide.Input) else Reduction(updated)
         }
-        val reset = p.copy(sources = chips, sourceStepId = selected, port = 0, ports = persistentEmpty(), run = defaultRun(s), runs = persistentEmpty(), page = p.page.copy(offset = 0))
+        val reset = p.copy(inbound = false, sources = chips, sourceStepId = selected, port = 0, ports = persistentEmpty(), run = defaultRun(s), runs = persistentEmpty(), page = p.page.copy(offset = 0))
         return reload(s.copy(input = reset), PanelSide.Input)
     }
 
@@ -292,7 +304,7 @@ class InspectorReducer(
         val p = s.input
         if (stepId == p.sourceStepId) return Reduction(s)
         if (p.sources.isNotEmpty() && p.sources.none { it.stepId == stepId }) return Reduction(s)
-        val reset = p.copy(sourceStepId = stepId, port = 0, ports = persistentEmpty(), run = defaultRun(s), runs = persistentEmpty(), page = p.page.copy(offset = 0))
+        val reset = p.copy(inbound = false, sourceStepId = stepId, port = 0, ports = persistentEmpty(), run = defaultRun(s), runs = persistentEmpty(), page = p.page.copy(offset = 0))
         return reload(s.copy(input = reset), PanelSide.Input)
     }
 
@@ -327,6 +339,7 @@ class InspectorReducer(
         val effects = ArrayList<InspectorEffect>()
         if (stepId == s.stepId && s.output.run == RunSelection.Latest) { val r = reload(cur, PanelSide.Output); cur = r.state; effects += r.effects }
         if (stepId == s.input.sourceStepId && s.input.run == RunSelection.Latest) { val r = reload(cur, PanelSide.Input); cur = r.state; effects += r.effects }
+        if (s.input.sources.any { it.stepId == stepId }) effects += InspectorEffect.LoadInputCatalog
         return Reduction(cur, effects)
     }
 
@@ -339,21 +352,86 @@ class InspectorReducer(
         return Reduction(s, listOf(InspectorEffect.PinCurrent(requestFor(s, PanelSide.Output))))
     }
 
+    // ---- test input ----
+
+    private fun effectiveSource(s: InspectorState): InputSource =
+        TestInputPolicy.effective(s.testInput.selection, s.testInput.options, s.isSpark)
+
+    private fun testRequested(s: InspectorState, i: InspectorIntent.TestStepRequested): Reduction {
+        // A second tap while a test runs does nothing: one Step, one execution.
+        if (s.test is TestState.Running) return Reduction(s)
+        val source = effectiveSource(s)
+        val ti = s.testInput
+        if (i.policy == ParentPolicy.OnlyThis && source.isText) {
+            val bad = ManualInput.errorOf(ti.manualText)
+            if (bad != null) return Reduction(s.copy(testInput = ti.copy(manualError = bad), page = InspectorPage.Input, test = TestState.Idle))
+        }
+        val risk = TestRisks.of(s.stepType, s.values)
+        if (risk != null && !i.confirmed) {
+            return Reduction(s.copy(test = TestState.NeedsConfirm(listOf(risk.label), i.policy), testInput = ti.copy(manualError = null)))
+        }
+        // Automatic stays null so the gateway decides on fresh data, not on a catalog that may still be loading.
+        val request = TestRequest(s.stepId, i.policy, ti.selection, ti.manualText, confirmed = true)
+        return Reduction(s.copy(test = TestState.Running(listOf(s.stepId)), testInput = ti.copy(manualError = null)), listOf(InspectorEffect.RunTest(request)))
+    }
+
+    /** The panel follows the pick, so the Input pane shows the items a test would use right now. */
+    private fun selectInputSource(s: InspectorState, source: InputSource?): Reduction {
+        val ti = s.testInput.copy(selection = source)
+        val base = s.copy(testInput = ti)
+        val effective = effectiveSource(base)
+        val p = base.input
+        val parent = p.sources.firstOrNull()?.stepId
+        val next = when (effective) {
+            InputSource.Pinned -> parent?.let { p.copy(inbound = false, sourceStepId = it, run = RunSelection.Pinned, port = 0, page = p.page.copy(offset = 0)) }
+            InputSource.LastRun -> parent?.let { p.copy(inbound = false, sourceStepId = it, run = RunSelection.Latest, port = 0, page = p.page.copy(offset = 0)) }
+            InputSource.LastTest -> ti.options.firstOrNull { it.source == InputSource.LastTest }?.runId?.let { inboundPanel(base, it) }
+            InputSource.Manual, InputSource.Sample -> null
+        } ?: return Reduction(base)
+        return reload(base.copy(input = next), PanelSide.Input)
+    }
+
+    private fun inboundPanel(s: InspectorState, runId: String): DataPanelState =
+        s.input.copy(
+            inbound = true, sourceStepId = s.stepId, run = RunSelection.Specific(runId), port = 0,
+            ports = kotlinx.collections.immutable.persistentListOf(PortChip(0)), page = s.input.page.copy(offset = 0),
+        )
+
+    private fun catalogLoaded(s: InspectorState, info: InputCatalogInfo): Reduction {
+        val ti = s.testInput
+        val text = if (ti.manualEdited) ti.manualText else info.sampleText
+        val next = ti.copy(
+            options = info.options.toImmutableList(), sampleText = info.sampleText, manualText = text,
+            manualError = if (ti.manualEdited) ti.manualError else null,
+            // A pick that no longer exists falls back to automatic.
+            selection = ti.selection?.takeIf { sel -> sel.isText || info.options.any { it.source == sel } },
+        )
+        return Reduction(s.copy(testInput = next))
+    }
+
+    // ---- test events ----
+
     private fun testEvent(s: InspectorState, e: InspectorTestEvent): Reduction {
-        if (s.test !is TestState.Running && s.test !is TestState.NeedsParents) return Reduction(s)
+        if (s.test !is TestState.Running) return Reduction(s)
         return when (e) {
             is InspectorTestEvent.Progress -> Reduction(s.copy(test = TestState.Running(e.stepIds)))
-            is InspectorTestEvent.NeedsParents -> Reduction(s.copy(test = TestState.NeedsParents(e.stepIds)))
-            is InspectorTestEvent.Finished -> refreshAfterTest(s.copy(test = TestState.Finished(e.executionKey)))
-            is InspectorTestEvent.Failed -> refreshAfterTest(s.copy(test = TestState.Failed(e.message, e.itemIndex, e.hasPartialData)))
+            is InspectorTestEvent.NeedsConfirm -> Reduction(s.copy(test = TestState.NeedsConfirm(e.risks, e.policy)))
+            is InspectorTestEvent.Refused -> Reduction(s.copy(test = TestState.Refused(e.message)))
+            is InspectorTestEvent.Finished -> refreshAfterTest(s.copy(test = TestState.Finished(e.executionKey, e.summary)), e.summary)
+            is InspectorTestEvent.Failed -> refreshAfterTest(s.copy(test = TestState.Failed(e.message, e.itemIndex, e.hasPartialData, e.summary)), e.summary)
         }
     }
 
-    /** Show fresh data: both panels go back to the latest execution and reload. */
-    private fun refreshAfterTest(s: InspectorState): Reduction {
-        val inp = s.input.copy(run = RunSelection.Latest, page = s.input.page.copy(offset = 0))
-        val out = s.output.copy(run = RunSelection.Latest, page = s.output.page.copy(offset = 0))
-        return reloadBoth(s.copy(input = inp, output = out))
+    /**
+     * Show fresh data: the Input pane shows exactly the items this test received (its own stored input), the Output pane the
+     * latest result with the item count of every port, and both reload.
+     */
+    private fun refreshAfterTest(s: InspectorState, summary: TestSummary?): Reduction {
+        val runId = summary?.runId
+        val inp = if (runId != null) inboundPanel(s, runId) else s.input.copy(run = RunSelection.Latest, page = s.input.page.copy(offset = 0))
+        val ports = s.output.ports.map { c -> summary?.portCounts?.get(c.port)?.let { c.copy(itemCount = it) } ?: c }
+        val out = s.output.copy(run = RunSelection.Latest, page = s.output.page.copy(offset = 0), ports = ports.toImmutableList())
+        return reloadBoth(s.copy(input = inp, output = out, used = summary ?: s.used))
     }
 
     private fun persistentEmpty() = kotlinx.collections.immutable.persistentListOf<Nothing>()

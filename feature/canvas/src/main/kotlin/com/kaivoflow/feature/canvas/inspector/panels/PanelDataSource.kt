@@ -42,13 +42,16 @@ class StepDataStorePanelSource(
     override suspend fun page(request: DataRequest): ItemPage {
         val key = keyOf(request) ?: return ItemPage.Empty
         val filter = request.search.trim().takeIf { it.isNotEmpty() }?.let { ItemFilter(query = it) }
-        return store.page(key, direction, request.port, request.page.offset, request.page.size, filter)
+        return store.page(key, directionOf(request), request.port, request.page.offset, request.page.size, filter)
     }
 
     override suspend fun schema(request: DataRequest): SchemaNode {
         val key = keyOf(request) ?: return SchemaNode(SchemaType.Object)
-        return store.schema(key, direction, request.port)
+        return store.schema(key, directionOf(request), request.port)
     }
+
+    /** An inbound request reads what the Step itself received (the used input of a test). */
+    private fun directionOf(r: DataRequest): Direction = if (r.inbound) Direction.In else direction
 }
 
 /** What a panel body has loaded for the current request. */

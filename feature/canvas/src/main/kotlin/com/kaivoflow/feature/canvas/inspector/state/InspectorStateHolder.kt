@@ -22,7 +22,9 @@ interface InspectorGateway {
     /** Pins the shown output and returns the pin, or throws. */
     suspend fun pinCurrent(request: DataRequest): PinInfo
     suspend fun unpin()
-    fun runTest(stepId: String, policy: ParentPolicy): Flow<InspectorTestEvent>
+    fun runTest(request: TestRequest): Flow<InspectorTestEvent>
+    /** The sources a Test Step could take its input from right now, and the sample text for a manual input. */
+    suspend fun loadInputCatalog(): InputCatalogInfo = InputCatalogInfo()
     suspend fun evaluatePreview(text: String, itemIndex: Int): PreviewState
     /** Hands a parameter change to the owner of the Flow document. */
     fun persistParam(key: String, value: ParamValue?)
@@ -95,9 +97,18 @@ class InspectorStateHolder(
             }
             is InspectorEffect.PersistParam -> gateway.persistParam(effect.key, effect.value)
             is InspectorEffect.RunTest -> launchLatest("test") {
-                gateway.runTest(effect.stepId, effect.policy)
+                gateway.runTest(effect.request)
                     .catch { dispatch(InspectorIntent.TestEventReceived(InspectorTestEvent.Failed(it.message ?: "Test failed"))) }
                     .collect { dispatch(InspectorIntent.TestEventReceived(it)) }
+            }
+            InspectorEffect.LoadInputCatalog -> launchLatest("catalog") {
+                try {
+                    dispatch(InspectorIntent.InputCatalogLoaded(gateway.loadInputCatalog()))
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (_: Throwable) {
+                    // The catalog only offers choices; without it the pick stays automatic.
+                }
             }
             InspectorEffect.CancelTest -> synchronized(jobs) { jobs.remove("test")?.cancel() }
             is InspectorEffect.PinCurrent -> launchLatest("pin") {
