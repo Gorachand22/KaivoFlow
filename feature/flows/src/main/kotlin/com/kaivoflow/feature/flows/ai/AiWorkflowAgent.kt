@@ -525,6 +525,7 @@ $flowContext
   ]
 }
 ```
+5. Parameter values may hold expressions in double braces, for example `"message": "Hello {{ ${'$'}json.name }}"`. Use `${'$'}json` for the incoming item, `${'$'}step("Name")` for an earlier step, `${'$'}vars.KEY` for variables and `${'$'}now` for the time. Never put expressions in secret or credential fields, and keep every expression syntactically complete: a broken one is reported to the user and the step fails.
 """.trimIndent()
     }
 
@@ -559,6 +560,11 @@ $flowContext
 
             val (_, valRecord) = tools.validateStructure(flow)
             toolCalls.add(valRecord)
+
+            // Spec P3: a syntax error in an AI-written expression is shown, never silently saved and never thrown.
+            ExpressionGuard.check(flow).forEach { p ->
+                toolCalls.add(ToolExecution("check_expression", "Expression problem in ${p.where}: ${p.message}", isSuccess = false))
+            }
         }
 
         return AiChatMessage(

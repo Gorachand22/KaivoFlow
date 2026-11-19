@@ -4,7 +4,13 @@ import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.kaivoflow.core.data.CredentialRepository
+import com.kaivoflow.core.data.WorkflowVariableRepository
+import com.kaivoflow.core.engine.CredentialExpr
+import com.kaivoflow.core.engine.GlobalScope
 import com.kaivoflow.core.engine.HttpGateway
+import com.kaivoflow.core.engine.UniversalResolver
+import com.kaivoflow.core.engine.VariableResolution
+import com.kaivoflow.core.expressions.KaivoExpressionEvaluator
 import com.kaivoflow.core.model.CredentialItem
 import com.kaivoflow.feature.flows.ai.AiChatMessage
 import com.kaivoflow.feature.flows.ai.AiProvider
@@ -12,6 +18,7 @@ import com.kaivoflow.feature.flows.ai.AiProviderConfig
 import com.kaivoflow.feature.flows.ai.AiWorkflowAgent
 import com.kaivoflow.feature.flows.ai.ModelDiscoveryService
 import dagger.hilt.android.lifecycle.HiltViewModel
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -153,6 +160,10 @@ data class AgentBuilderUiState(
     val credentials: List<CredentialItem> = emptyList(),
     val discoveredModels: List<String> = emptyList(),
     val isDiscoveringModels: Boolean = false,
+    /** Workspace variables, the `$vars` the expression fields preview against. */
+    val workspaceVars: Map<String, Any?> = emptyMap(),
+    /** A credential field expression that could not be evaluated, shown under the header. */
+    val credentialError: String? = null,
 ) {
     val effectiveModels: List<String>
         get() = if (discoveredModels.isNotEmpty()) discoveredModels else providerConfig.effectiveModels
@@ -163,18 +174,22 @@ class AgentBuilderViewModel @Inject constructor(
     private val agentRepository: AgentRepository,
     private val credentialRepository: CredentialRepository,
     private val http: HttpGateway,
+    private val variableRepository: WorkflowVariableRepository,
     savedStateHandle: SavedStateHandle,
 ) : ViewModel() {
 
     private val agentId: String? = savedStateHandle["agentId"]
     private val workflowAgent = AiWorkflowAgent(http)
     private val modelDiscovery = ModelDiscoveryService(http)
+    private val evaluator = KaivoExpressionEvaluator()
+    private val resolver = UniversalResolver(evaluator)
 
     private val _uiState = MutableStateFlow(AgentBuilderUiState())
     val uiState: StateFlow<AgentBuilderUiState> = _uiState.asStateFlow()
 
     init {
         observeCredentials()
+        loadWorkspaceVars()
         loadProviderConfig()
         loadOrCreateAgent(agentId)
     }
@@ -198,6 +213,19 @@ class AgentBuilderViewModel @Inject constructor(
         }
     }
 
+    /** Variable values may themselves be expressions; the editor previews against their evaluated form. */
+    private fun loadWorkspaceVars() {
+        viewModelScope.launch {
+            val raw = runCatching { variableRepository.resolveVariables(null) }.getOrNull().orEmpty()
+            val vars = VariableResolution.resolve(raw, evaluator).vars
+            _uiState.update { it.copy(workspaceVars = vars) }
+        }
+    }
+
+    /** Global scope of one agent call: `$vars`, `$now`, `$today` and the agent as flow info. No item data, no environment. */
+    private fun agentScope(agent: CustomAgent): Map<String, Any?> =
+        GlobalScope.build(_uiState.value.workspaceVars, flowId = agent.id, flowName = agent.name)
+
     private fun loadProviderConfig() {
         viewModelScope.launch {
             val fields = credentialRepository.getFields("ai_provider_config")
@@ -209,13 +237,24 @@ class AgentBuilderViewModel @Inject constructor(
     fun selectCredential(credentialId: String) {
         viewModelScope.launch {
             val cred = _uiState.value.credentials.find { it.id == credentialId } ?: return@launch
-            val fields = credentialRepository.getFields(cred.id).orEmpty()
+            val resolvedCred = CredentialExpr.resolveFields(
+                cred.type,
+                credentialRepository.getFields(cred.id).orEmpty(),
+                evaluator,
+                GlobalScope.build(_uiState.value.workspaceVars),
+            )
+            resolvedCred.errors.values.firstOrNull()?.let { msg ->
+                _uiState.update { it.copy(credentialError = msg) }
+                return@launch
+            }
+            val fields = resolvedCred.fields
             val apiKey = fields["apiKey"] ?: fields["token"] ?: ""
             val baseUrl = fields["baseUrl"] ?: ""
             val provider = AiProvider.fromKey(cred.type)
 
             _uiState.update { state ->
                 state.copy(
+                    credentialError = null,
                     agent = state.agent.copy(
                         credentialId = cred.id,
                         provider = provider,
@@ -417,7 +456,11 @@ class AgentBuilderViewModel @Inject constructor(
             var activeProvider = targetCred?.let { AiProvider.fromKey(it.type) } ?: currentAgent.provider
 
             if (targetCred != null) {
-                val fields = credentialRepository.getFields(targetCred.id).orEmpty()
+                val stored = credentialRepository.getFields(targetCred.id).orEmpty()
+                // Non-secret credential fields may be expressions (spec P3); a bad one ends the test with its message.
+                val resolvedCred = CredentialExpr.resolveFields(targetCred.type, stored, evaluator, agentScope(currentAgent))
+                resolvedCred.errors.values.firstOrNull()?.let { failTest(prompt, it, startTime); return@launch }
+                val fields = resolvedCred.fields
                 fields["apiKey"]?.takeIf { it.isNotBlank() }?.let { activeApiKey = it }
                 fields["baseUrl"]?.takeIf { it.isNotBlank() }?.let { activeBaseUrl = it }
                 activeProvider = AiProvider.fromKey(targetCred.type)
@@ -434,32 +477,26 @@ class AgentBuilderViewModel @Inject constructor(
                 baseUrl = activeBaseUrl,
             )
 
-            // Compose system prompt with Agent instructions + knowledge base + tools
-            val fullPrompt = buildString {
-                append("AGENT INSTRUCTIONS:\n")
-                append(currentAgent.instructions)
-                if (currentAgent.knowledge.isNotEmpty()) {
-                    append("\n\nKNOWLEDGE BASE CONTEXT:\n")
-                    currentAgent.knowledge.forEach {
-                        append("- ${it.title}: ${it.content}\n")
-                    }
-                }
-                if (currentAgent.tools.isNotEmpty()) {
-                    append("\nAVAILABLE TOOLS:\n")
-                    currentAgent.tools.filter { it.isEnabled }.forEach {
-                        append("- ${it.name} (${it.type}): ${it.description}\n")
-                    }
-                }
-                append("\n\nUSER PROMPT / TASK:\n")
-                append(prompt)
+            // Instructions and knowledge may hold expressions; they are resolved here, on every call (spec P3).
+            val built = AgentPrompt.build(currentAgent, prompt, resolver, agentScope(currentAgent))
+            val fullPrompt = when (built) {
+                is AgentPrompt.Built.Ok -> built.text
+                is AgentPrompt.Built.Failed -> { failTest(prompt, built.message, startTime); return@launch }
             }
 
-            val response = workflowAgent.executeTurn(
-                prompt = fullPrompt,
-                currentFlow = null,
-                config = config,
-                chatHistory = emptyList(),
-            )
+            val response = try {
+                workflowAgent.executeTurn(
+                    prompt = fullPrompt,
+                    currentFlow = null,
+                    config = config,
+                    chatHistory = emptyList(),
+                )
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                failTest(prompt, e.message ?: "The model call failed.", startTime)
+                return@launch
+            }
 
             val duration = System.currentTimeMillis() - startTime
             val session = AgentSession(
@@ -478,6 +515,20 @@ class AgentBuilderViewModel @Inject constructor(
                     agent = it.agent.copy(sessions = listOf(session) + it.agent.sessions),
                 )
             }
+        }
+    }
+
+    /** A bad expression ends the test run with a readable message; nothing is sent to the model and nothing crashes. */
+    private fun failTest(prompt: String, message: String, startTime: Long) {
+        val text = "Could not run this agent.\n$message"
+        val session = AgentSession(
+            status = "Error",
+            prompt = prompt,
+            response = text,
+            durationMs = System.currentTimeMillis() - startTime,
+        )
+        _uiState.update {
+            it.copy(isTesting = false, testSessionOutput = text, agent = it.agent.copy(sessions = listOf(session) + it.agent.sessions))
         }
     }
 

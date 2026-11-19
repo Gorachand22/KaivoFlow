@@ -94,6 +94,9 @@ data class PreviewContext(
     val timezone: String = "UTC",
     val clock: () -> Long = { System.currentTimeMillis() },
     val upstreamStepNames: Set<String>? = null,
+    /** Flow facts for `$run.flowId` and `$run.flowName`; screens outside a node (agents, variables) set them. */
+    val flowId: String = "",
+    val flowName: String = "",
 )
 
 enum class CompletionKind { Variable, Field, Function, Method, Step, Namespace, Keyword }
@@ -158,7 +161,7 @@ class KaivoExpressionAssist(
 
     /** The scope a Run would build for the same data. */
     fun buildScope(c: PreviewContext): Map<String, Any?> =
-        ScopeBuilder(c.vars, c.runId, c.stepOutputs, c.clock, c.timezone, c.stepNames)
+        ScopeBuilder(c.vars, c.runId, c.stepOutputs, c.clock, c.timezone, c.stepNames, flowId = c.flowId, flowName = c.flowName)
             .build(c.inputs, c.itemIndex, c.stepName)
 
     private fun errorOf(e: ExpressionException): PreviewResult.Error =

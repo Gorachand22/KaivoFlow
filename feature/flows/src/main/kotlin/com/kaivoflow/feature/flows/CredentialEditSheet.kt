@@ -64,6 +64,9 @@ import com.kaivoflow.core.design.KaivoIcons
 import com.kaivoflow.core.design.KaivoShapes
 import com.kaivoflow.core.design.KaivoTheme
 import com.kaivoflow.core.model.CredentialItem
+import com.kaivoflow.core.model.ExprFieldCodec
+import com.kaivoflow.core.model.WorkflowVariable
+import com.kaivoflow.feature.canvas.input.KaivoInputField
 import com.kaivoflow.core.model.CredentialTypeInfo
 import kotlinx.coroutines.launch
 
@@ -95,8 +98,11 @@ fun CredentialEditSheet(
     onDelete: (id: String) -> Unit,
     onTestConnection: suspend (type: String, fields: Map<String, String>) -> Result<List<String>>,
     modifier: Modifier = Modifier,
+    variables: List<WorkflowVariable> = emptyList(),
 ) {
     val colors = KaivoTheme.colors
+    // Spec P3: only non-secret fields take expressions, against the global scope ($vars, $now).
+    val exprScope = remember(variables) { variableExprScope(variables) }
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
@@ -523,36 +529,51 @@ fun CredentialEditSheet(
                                     }
                                 }
 
-                                OutlinedTextField(
-                                    value = value,
-                                    onValueChange = {
-                                        fields[spec.key] = it
-                                        isSavedDirty = true
-                                    },
-                                    placeholder = { Text(spec.placeholder, style = androidx.compose.material3.MaterialTheme.typography.bodySmall) },
-                                    singleLine = true,
-                                    shape = KaivoShapes.chip,
-                                    visualTransformation = if (isSecret && !isVisible) PasswordVisualTransformation() else VisualTransformation.None,
-                                    trailingIcon = if (isSecret) {
-                                        {
-                                            IconButton(onClick = { secretVisibility[spec.key] = !isVisible }) {
-                                                Icon(
-                                                    KaivoIcons.icon(if (isVisible) "eyeOff" else "eye"),
-                                                    contentDescription = "Toggle visibility",
-                                                    tint = if (isVisible) colors.royalGold else colors.inkMuted,
-                                                    modifier = Modifier.size(18.dp),
-                                                )
+                                if (!isSecret) {
+                                    KaivoInputField(
+                                        value = ExprFieldCodec.decode(value),
+                                        onValueChange = {
+                                            fields[spec.key] = ExprFieldCodec.encode(it)
+                                            isSavedDirty = true
+                                        },
+                                        label = spec.label,
+                                        fieldId = "credential.field." + spec.key,
+                                        scope = exprScope,
+                                        placeholder = spec.placeholder,
+                                        showLabel = false,
+                                    )
+                                } else {
+                                    OutlinedTextField(
+                                        value = value,
+                                        onValueChange = {
+                                            fields[spec.key] = it
+                                            isSavedDirty = true
+                                        },
+                                        placeholder = { Text(spec.placeholder, style = androidx.compose.material3.MaterialTheme.typography.bodySmall) },
+                                        singleLine = true,
+                                        shape = KaivoShapes.chip,
+                                        visualTransformation = if (isSecret && !isVisible) PasswordVisualTransformation() else VisualTransformation.None,
+                                        trailingIcon = if (isSecret) {
+                                            {
+                                                IconButton(onClick = { secretVisibility[spec.key] = !isVisible }) {
+                                                    Icon(
+                                                        KaivoIcons.icon(if (isVisible) "eyeOff" else "eye"),
+                                                        contentDescription = "Toggle visibility",
+                                                        tint = if (isVisible) colors.royalGold else colors.inkMuted,
+                                                        modifier = Modifier.size(18.dp),
+                                                    )
+                                                }
                                             }
-                                        }
-                                    } else null,
-                                    colors = OutlinedTextFieldDefaults.colors(
-                                        focusedBorderColor = colors.royalGold,
-                                        unfocusedBorderColor = colors.hairline,
-                                        focusedTextColor = colors.inkPrimary,
-                                        unfocusedTextColor = colors.inkPrimary,
-                                    ),
-                                    modifier = Modifier.fillMaxWidth(),
-                                )
+                                        } else null,
+                                        colors = OutlinedTextFieldDefaults.colors(
+                                            focusedBorderColor = colors.royalGold,
+                                            unfocusedBorderColor = colors.hairline,
+                                            focusedTextColor = colors.inkPrimary,
+                                            unfocusedTextColor = colors.inkPrimary,
+                                        ),
+                                        modifier = Modifier.fillMaxWidth(),
+                                    )
+                                }
                             }
                         }
                     }

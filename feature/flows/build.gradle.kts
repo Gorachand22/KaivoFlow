@@ -26,6 +26,7 @@ dependencies {
     implementation(project(":core:nodes"))
     implementation(project(":core:data"))
     implementation(project(":core:work"))
+    implementation(project(":core:expressions"))
     implementation(project(":feature:canvas"))
 
     implementation(platform(libs.androidx.compose.bom))
@@ -41,4 +42,8 @@ dependencies {
     implementation(libs.kotlinx.collections.immutable)
     implementation(libs.hilt.android)
     ksp(libs.hilt.compiler)
+
+    testImplementation(libs.junit)
 }
+
+tasks.withType<Test> { useJUnit() }

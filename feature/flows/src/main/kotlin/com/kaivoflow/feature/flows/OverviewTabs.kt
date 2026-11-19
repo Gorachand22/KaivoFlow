@@ -60,6 +60,9 @@ import com.kaivoflow.core.design.KaivoIcons
 import com.kaivoflow.core.design.KaivoShapes
 import com.kaivoflow.core.design.KaivoTheme
 import com.kaivoflow.core.model.CredentialItem
+import com.kaivoflow.core.model.ExprFieldCodec
+import com.kaivoflow.core.model.WorkflowVariable
+import com.kaivoflow.feature.canvas.input.KaivoInputField
 import com.kaivoflow.core.model.CredentialTypeInfo
 import com.kaivoflow.core.model.DataTable
 import com.kaivoflow.core.model.DataTableColumn
@@ -465,8 +468,10 @@ fun CreateCredentialDialog(
     existingCredentials: List<CredentialItem> = emptyList(),
     onDismiss: () -> Unit,
     onSave: (type: String, name: String, fields: Map<String, String>) -> Unit,
+    variables: List<WorkflowVariable> = emptyList(),
 ) {
     val colors = KaivoTheme.colors
+    val exprScope = remember(variables) { variableExprScope(variables) }
 
     fun nextReplicaName(typeInfo: CredentialTypeInfo): String {
         val prefix = when (typeInfo.type) {
@@ -597,34 +602,45 @@ fun CreateCredentialDialog(
                     val value = fieldValues[field.key] ?: ""
 
                     Spacer(Modifier.height(6.dp))
-                    OutlinedTextField(
-                        value = value,
-                        onValueChange = { fieldValues[field.key] = it },
-                        label = { Text(field.label) },
-                        placeholder = { Text(field.placeholder, style = androidx.compose.material3.MaterialTheme.typography.bodySmall) },
-                        singleLine = true,
-                        shape = KaivoShapes.chip,
-                        visualTransformation = if (isSecret && !isVisible) PasswordVisualTransformation() else VisualTransformation.None,
-                        trailingIcon = if (isSecret) {
-                            {
-                                IconButton(onClick = { secretVisibility[field.key] = !isVisible }) {
-                                    Icon(
-                                        KaivoIcons.icon(if (isVisible) "eyeOff" else "eye"),
-                                        contentDescription = "Toggle visibility",
-                                        tint = colors.inkMuted,
-                                        modifier = Modifier.size(16.dp),
-                                    )
+                    if (!isSecret) {
+                        KaivoInputField(
+                            value = ExprFieldCodec.decode(value),
+                            onValueChange = { fieldValues[field.key] = ExprFieldCodec.encode(it) },
+                            label = field.label,
+                            fieldId = "credential.field." + field.key,
+                            scope = exprScope,
+                            placeholder = field.placeholder,
+                        )
+                    } else {
+                        OutlinedTextField(
+                            value = value,
+                            onValueChange = { fieldValues[field.key] = it },
+                            label = { Text(field.label) },
+                            placeholder = { Text(field.placeholder, style = androidx.compose.material3.MaterialTheme.typography.bodySmall) },
+                            singleLine = true,
+                            shape = KaivoShapes.chip,
+                            visualTransformation = if (isSecret && !isVisible) PasswordVisualTransformation() else VisualTransformation.None,
+                            trailingIcon = if (isSecret) {
+                                {
+                                    IconButton(onClick = { secretVisibility[field.key] = !isVisible }) {
+                                        Icon(
+                                            KaivoIcons.icon(if (isVisible) "eyeOff" else "eye"),
+                                            contentDescription = "Toggle visibility",
+                                            tint = colors.inkMuted,
+                                            modifier = Modifier.size(16.dp),
+                                        )
+                                    }
                                 }
-                            }
-                        } else null,
-                        colors = OutlinedTextFieldDefaults.colors(
-                            focusedBorderColor = colors.royalGold,
-                            unfocusedBorderColor = colors.hairline,
-                            focusedTextColor = colors.inkPrimary,
-                            unfocusedTextColor = colors.inkPrimary,
-                        ),
-                        modifier = Modifier.fillMaxWidth(),
-                    )
+                            } else null,
+                            colors = OutlinedTextFieldDefaults.colors(
+                                focusedBorderColor = colors.royalGold,
+                                unfocusedBorderColor = colors.hairline,
+                                focusedTextColor = colors.inkPrimary,
+                                unfocusedTextColor = colors.inkPrimary,
+                            ),
+                            modifier = Modifier.fillMaxWidth(),
+                        )
+                    }
                 }
             }
         },

@@ -21,6 +21,10 @@ import java.util.UUID
  */
 class WorkflowToolExecutor {
 
+    /** The change is kept; the record says which expression is broken (spec P3). */
+    private fun problemsNote(problems: List<ExpressionProblem>): String =
+        if (problems.isEmpty()) "" else ". Expression problem: " + ExpressionGuard.summary(problems).replace("\n", "; ")
+
     /**
      * Tool: add_node (adds a step to the workflow)
      */
@@ -46,10 +50,11 @@ class WorkflowToolExecutor {
             updatedAt = System.currentTimeMillis(),
         )
 
+        val problems = ExpressionGuard.check(params, name)
         val record = ToolExecution(
             toolName = "add_node",
-            description = "Added step \"$name\" ($type)",
-            isSuccess = true,
+            description = "Added step \"$name\" ($type)" + problemsNote(problems),
+            isSuccess = problems.isEmpty(),
         )
 
         return updatedFlow to record
@@ -175,10 +180,11 @@ class WorkflowToolExecutor {
             updatedAt = System.currentTimeMillis(),
         )
 
+        val problems = ExpressionGuard.check(newParams, targetStep.name)
         val record = ToolExecution(
             toolName = "update_node_parameters",
-            description = "Updated parameters on \"${targetStep.name}\"",
-            isSuccess = true,
+            description = "Updated parameters on \"${targetStep.name}\"" + problemsNote(problems),
+            isSuccess = problems.isEmpty(),
         )
 
         return updatedFlow to record

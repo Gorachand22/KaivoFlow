@@ -5,6 +5,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.kaivoflow.core.data.CredentialRepository
 import com.kaivoflow.core.data.FlowRepository
+import com.kaivoflow.core.data.WorkflowVariableRepository
 import com.kaivoflow.core.engine.HttpGateway
 import com.kaivoflow.core.model.CredentialItem
 import com.kaivoflow.core.model.Flow
@@ -45,11 +46,13 @@ class AiAssistantViewModel @Inject constructor(
     private val credentialRepository: CredentialRepository,
     private val aiSessionRepository: AiSessionRepository,
     private val http: HttpGateway,
+    variableRepository: WorkflowVariableRepository,
     savedStateHandle: SavedStateHandle,
 ) : ViewModel() {
 
     private val agent = AiWorkflowAgent(http)
     private val modelDiscovery = ModelDiscoveryService(http)
+    private val credentialFields = CredentialFieldResolver(variableRepository)
     private val flowId: String? = savedStateHandle["flowId"]
 
     private val _uiState = MutableStateFlow(AiAssistantUiState())
@@ -99,7 +102,15 @@ class AiAssistantViewModel @Inject constructor(
 
             val credId = config.credentialId
             if (!credId.isNullOrBlank()) {
-                val credFields = credentialRepository.getFields(credId)
+                val storedFields = credentialRepository.getFields(credId)
+                // Non-secret fields may be expressions (spec P3); a bad one is shown, the config keeps its last good values.
+                val credType = _uiState.value.savedCredentials.firstOrNull { it.id == credId }?.type
+                    ?: runCatching { credentialRepository.list().firstOrNull { it.id == credId }?.type }.getOrNull()
+                val resolvedCred = storedFields?.let { credentialFields.resolve(credType, it) }
+                resolvedCred?.errors?.values?.firstOrNull()?.let { msg ->
+                    _uiState.update { it.copy(modelDiscoveryMessage = msg, modelDiscoveryIsError = true) }
+                }
+                val credFields = resolvedCred?.takeIf { it.errors.isEmpty() }?.fields
                 if (credFields != null) {
                     val apiKey = credFields["apiKey"] ?: credFields["token"] ?: ""
                     val baseUrl = credFields["baseUrl"] ?: ""
@@ -255,7 +266,12 @@ class AiAssistantViewModel @Inject constructor(
     fun selectCredential(credentialId: String) {
         viewModelScope.launch {
             val cred = _uiState.value.savedCredentials.find { it.id == credentialId } ?: return@launch
-            val fields = credentialRepository.getFields(credentialId).orEmpty()
+            val resolvedCred = credentialFields.resolve(cred.type, credentialRepository.getFields(credentialId).orEmpty())
+            resolvedCred.errors.values.firstOrNull()?.let { msg ->
+                _uiState.update { it.copy(modelDiscoveryMessage = msg, modelDiscoveryIsError = true) }
+                return@launch
+            }
+            val fields = resolvedCred.fields
             val apiKey = fields["apiKey"] ?: fields["token"] ?: ""
             val baseUrl = fields["baseUrl"] ?: ""
             val provider = AiProvider.fromKey(cred.type)

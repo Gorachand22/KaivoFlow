@@ -69,6 +69,12 @@ import com.kaivoflow.core.design.KaivoIcons
 import com.kaivoflow.core.design.KaivoShapes
 import com.kaivoflow.core.design.KaivoTheme
 import com.kaivoflow.core.model.CredentialItem
+import com.kaivoflow.core.model.ExprFieldCodec
+import com.kaivoflow.core.model.ExprInputModes
+import com.kaivoflow.core.model.ParamValue
+import com.kaivoflow.feature.canvas.input.ExpressionScopeProvider
+import com.kaivoflow.feature.canvas.input.GlobalExpressionScope
+import com.kaivoflow.feature.canvas.input.KaivoInputField
 import com.kaivoflow.feature.flows.ai.AiProvider
 import com.kaivoflow.feature.flows.ai.TinkeringPill
 import java.text.SimpleDateFormat
@@ -88,6 +94,10 @@ fun AgentBuilderScreen(
     var showAddKnowledgeDialog by remember { mutableStateOf(false) }
     var showAddSkillDialog by remember { mutableStateOf(false) }
     var showIconPickerDialog by remember { mutableStateOf(false) }
+    // Spec P3: agent text fields take expressions against the global scope ($vars, $now, flow info), never item data.
+    val exprScope: ExpressionScopeProvider = remember(state.workspaceVars, state.agent.id, state.agent.name) {
+        GlobalExpressionScope(state.workspaceVars, flowId = state.agent.id, flowName = state.agent.name)
+    }
 
     Surface(
         modifier = Modifier
@@ -115,6 +125,15 @@ fun AgentBuilderScreen(
                 onTestClick = { viewModel.toggleTestSheet(true) },
             )
 
+            state.credentialError?.let { msg ->
+                Text(
+                    text = msg,
+                    style = androidx.compose.material3.MaterialTheme.typography.bodySmall,
+                    color = colors.statusError,
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp),
+                )
+            }
+
             // Tabs matching Screenshot: Build | Knowledge | Sessions | Settings
             AgentTabRow(
                 selectedTab = state.currentTab,
@@ -141,6 +160,7 @@ fun AgentBuilderScreen(
                             isDiscoveringModels = state.isDiscoveringModels,
                             onModelChange = { provider, model -> viewModel.updateModel(provider, model) },
                             onInstructionsChange = viewModel::updateInstructions,
+                            exprScope = exprScope,
                             onToggleTrigger = viewModel::toggleTrigger,
                             onDeleteTrigger = viewModel::removeTrigger,
                             onAddTrigger = { showAddTriggerDialog = true },
@@ -213,6 +233,7 @@ fun AgentBuilderScreen(
 
     if (showAddKnowledgeDialog) {
         AddKnowledgeDialog(
+            exprScope = exprScope,
             onDismiss = { showAddKnowledgeDialog = false },
             onAdd = { title, content ->
                 viewModel.addKnowledge(title, content)
@@ -453,6 +474,7 @@ private fun AgentBuildTabView(
     isDiscoveringModels: Boolean,
     onModelChange: (AiProvider, String) -> Unit,
     onInstructionsChange: (String) -> Unit,
+    exprScope: ExpressionScopeProvider,
     onToggleTrigger: (String) -> Unit,
     onDeleteTrigger: (String) -> Unit,
     onAddTrigger: () -> Unit,
@@ -735,26 +757,17 @@ private fun AgentBuildTabView(
                     )
                     Spacer(Modifier.height(4.dp))
 
-                    OutlinedTextField(
-                        value = agent.instructions,
-                        onValueChange = onInstructionsChange,
-                        placeholder = {
-                            Text(
-                                "Describe what this agent should do, its tone, constraints, and output format...",
-                                color = colors.inkSecondary,
-                            )
-                        },
-                        colors = OutlinedTextFieldDefaults.colors(
-                            focusedBorderColor = colors.royalGold,
-                            unfocusedBorderColor = colors.hairline,
-                            focusedTextColor = colors.inkPrimary,
-                            unfocusedTextColor = colors.inkPrimary,
-                            cursorColor = colors.royalGold,
-                        ),
-                        shape = KaivoShapes.medallion,
+                    KaivoInputField(
+                        value = ExprFieldCodec.decode(agent.instructions),
+                        onValueChange = { onInstructionsChange(ExprFieldCodec.encode(it)) },
+                        label = "Instructions",
+                        fieldId = "agent.instructions",
+                        scope = exprScope,
+                        multiline = true,
                         minLines = 4,
                         maxLines = 8,
-                        modifier = Modifier.fillMaxWidth(),
+                        placeholder = "Describe what this agent should do, its tone, constraints, and output format...",
+                        showLabel = false,
                     )
                 }
             }
@@ -1109,7 +1122,7 @@ private fun AgentKnowledgeTabView(
                             ) {
                                 Column(modifier = Modifier.weight(1f)) {
                                     Text(item.title, fontWeight = FontWeight.SemiBold, color = colors.inkPrimary)
-                                    Text(item.content, style = androidx.compose.material3.MaterialTheme.typography.bodySmall, color = colors.inkSecondary, maxLines = 1)
+                                    Text(ExprFieldCodec.displayText(item.content), style = androidx.compose.material3.MaterialTheme.typography.bodySmall, color = colors.inkSecondary, maxLines = 1)
                                 }
                                 IconButton(onClick = { onDeleteKnowledge(item.id) }) {
                                     Icon(KaivoIcons.icon("delete"), contentDescription = "Delete", tint = colors.inkSecondary, modifier = Modifier.size(16.dp))
@@ -1873,12 +1886,13 @@ private fun AddSkillDialog(
 
 @Composable
 private fun AddKnowledgeDialog(
+    exprScope: ExpressionScopeProvider,
     onDismiss: () -> Unit,
     onAdd: (String, String) -> Unit,
 ) {
     val colors = KaivoTheme.colors
     var title by remember { mutableStateOf("") }
-    var content by remember { mutableStateOf("") }
+    var content by remember { mutableStateOf<ParamValue>(ParamValue.Fixed("")) }
 
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -1898,25 +1912,21 @@ private fun AddKnowledgeDialog(
                     ),
                     modifier = Modifier.fillMaxWidth(),
                 )
-                OutlinedTextField(
+                KaivoInputField(
                     value = content,
                     onValueChange = { content = it },
-                    label = { Text("Document Content / Markdown") },
-                    placeholder = { Text("Paste document text, facts, or instructions for retrieval...") },
+                    label = "Document Content / Markdown",
+                    fieldId = "agent.knowledge.content",
+                    scope = exprScope,
+                    multiline = true,
                     minLines = 4,
-                    colors = OutlinedTextFieldDefaults.colors(
-                        focusedBorderColor = colors.royalGold,
-                        unfocusedBorderColor = colors.hairline,
-                        focusedTextColor = colors.inkPrimary,
-                        unfocusedTextColor = colors.inkPrimary,
-                    ),
-                    modifier = Modifier.fillMaxWidth(),
+                    placeholder = "Paste document text, facts, or instructions for retrieval...",
                 )
             }
         },
         confirmButton = {
             Button(
-                onClick = { if (title.isNotBlank()) onAdd(title.trim(), content.trim()) },
+                onClick = { if (title.isNotBlank()) onAdd(title.trim(), ExprFieldCodec.encode(ExprInputModes.withText(content, ExprInputModes.text(content).trim()))) },
                 enabled = title.isNotBlank(),
                 colors = ButtonDefaults.buttonColors(containerColor = colors.royalGold, contentColor = Color.Black),
             ) {

@@ -28,6 +28,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
@@ -82,9 +83,18 @@ import com.kaivoflow.core.design.KaivoIcons
 import com.kaivoflow.core.design.KaivoShapes
 import com.kaivoflow.core.design.KaivoTheme
 import com.kaivoflow.core.design.StatusBadge
+import com.kaivoflow.core.design.AnimatedStatusBadge
+import com.kaivoflow.core.design.breathing
+import com.kaivoflow.core.design.kaivoPressable
+import com.kaivoflow.core.design.staggeredEntrance
 import com.kaivoflow.core.model.RunRecord
 import com.kaivoflow.core.model.WorkflowGroup
 import com.kaivoflow.core.model.WorkflowVariable
+import com.kaivoflow.core.model.ExprFieldCodec
+import com.kaivoflow.feature.flows.ai.CredentialFieldResolver
+import com.kaivoflow.core.model.ParamValue
+import com.kaivoflow.feature.canvas.input.GlobalExpressionScope
+import com.kaivoflow.feature.canvas.input.KaivoInputField
 import com.kaivoflow.core.work.FlowScheduler
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -130,6 +140,8 @@ class FlowListViewModel @Inject constructor(
 ) : ViewModel() {
 
     private val modelDiscovery = ModelDiscoveryService(http)
+
+    private val credentialFields = CredentialFieldResolver(variableRepository)
 
     val agents: StateFlow<List<CustomAgent>> = agentRepository.observeAgents()
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
@@ -377,7 +389,11 @@ class FlowListViewModel @Inject constructor(
         }
     }
 
-    suspend fun testCredentialConnection(type: String, fields: Map<String, String>): Result<List<String>> {
+    suspend fun testCredentialConnection(type: String, storedFields: Map<String, String>): Result<List<String>> {
+        // Non-secret fields may be expressions (spec P3); the test uses their evaluated form and reports a bad one.
+        val resolved = credentialFields.resolve(type, storedFields)
+        resolved.errors.values.firstOrNull()?.let { return Result.failure(IllegalArgumentException(it)) }
+        val fields = resolved.fields
         val provider = AiProvider.fromKey(type)
         val apiKey = fields["apiKey"].orEmpty()
         val baseUrl = fields["baseUrl"]?.ifBlank { provider.defaultBaseUrl } ?: provider.defaultBaseUrl
@@ -698,12 +714,15 @@ fun FlowListScreen(
                                 onCreate = { viewModel.createFlow(onOpenFlow) },
                             )
                         } else {
+                            // Entrance plays once per Flow id, so scrolling back never replays it.
+                            val playedFlows = remember { mutableSetOf<Any>() }
                             LazyColumn(
                                 contentPadding = PaddingValues(16.dp),
                                 verticalArrangement = Arrangement.spacedBy(12.dp),
                                 modifier = Modifier.weight(1f),
                             ) {
-                                items(state.flows, key = { it.id }) { flow ->
+                                itemsIndexed(state.flows, key = { _, flow -> flow.id }) { index, flow ->
+                                    Box(Modifier.staggeredEntrance(index = index, key = flow.id, played = playedFlows)) {
                                     FlowRowCard(
                                         flow = flow,
                                         groupName = null,
@@ -718,6 +737,7 @@ fun FlowListScreen(
                                         onRetry = { viewModel.retryNow(flow.id) },
                                         onUnpublish = { viewModel.unpublish(flow.id) },
                                     )
+                                    }
                                 }
                             }
 
@@ -800,6 +820,7 @@ fun FlowListScreen(
                     onSave = { name, fields -> viewModel.updateCredential(name, fields) },
                     onDelete = viewModel::deleteCredential,
                     onTestConnection = viewModel::testCredentialConnection,
+                    variables = allVariables,
                 )
             }
 
@@ -808,6 +829,7 @@ fun FlowListScreen(
                     existingCredentials = credentials,
                     onDismiss = viewModel::closeCreateCredentialDialog,
                     onSave = viewModel::saveCredential,
+                    variables = allVariables,
                 )
             }
 
@@ -848,6 +870,7 @@ fun FlowListScreen(
 
             if (showCreateVariable) {
                 CreateVariableDialog(
+                    existing = allVariables,
                     onSave = { key, value ->
                         viewModel.saveVariable(key, value)
                     },
@@ -859,6 +882,7 @@ fun FlowListScreen(
                 GroupVariablesDialog(
                     groupName = selectedGroup.name,
                     variables = groupVariables,
+                    workspaceVariables = allVariables,
                     onAddVariable = viewModel::saveVariable,
                     onDeleteVariable = viewModel::deleteVariable,
                     onDismiss = viewModel::closeVariablesDialog,
@@ -1028,13 +1052,15 @@ internal fun workflowGroupColor(colorName: String): Color = when (colorName.lowe
 private fun GroupVariablesDialog(
     groupName: String,
     variables: List<WorkflowVariable>,
+    workspaceVariables: List<WorkflowVariable>,
     onAddVariable: (String, String) -> Unit,
     onDeleteVariable: (String) -> Unit,
     onDismiss: () -> Unit,
 ) {
     val colors = KaivoTheme.colors
     var newKey by remember { mutableStateOf("") }
-    var newValue by remember { mutableStateOf("") }
+    var newValue by remember { mutableStateOf<ParamValue>(ParamValue.Fixed("")) }
+    val exprScope = remember(workspaceVariables, variables) { variableExprScope(workspaceVariables + variables) }
 
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -1086,7 +1112,7 @@ private fun GroupVariablesDialog(
                                 Column(Modifier.weight(1f)) {
                                     Text(variable.key, style = androidx.compose.material3.MaterialTheme.typography.titleSmall, color = colors.royalGold)
                                     Text(
-                                        variable.value,
+                                        (if (ExprFieldCodec.isExpression(variable.value)) "fx " else "") + ExprFieldCodec.displayText(variable.value),
                                         style = androidx.compose.material3.MaterialTheme.typography.bodySmall,
                                         color = colors.inkSecondary,
                                         maxLines = 1,
@@ -1127,28 +1153,21 @@ private fun GroupVariablesDialog(
                     modifier = Modifier.fillMaxWidth(),
                 )
                 Spacer(Modifier.height(6.dp))
-                OutlinedTextField(
+                KaivoInputField(
                     value = newValue,
                     onValueChange = { newValue = it },
-                    label = { Text("Value") },
-                    singleLine = true,
-                    shape = KaivoShapes.chip,
-                    colors = OutlinedTextFieldDefaults.colors(
-                        focusedBorderColor = colors.royalGold,
-                        unfocusedBorderColor = colors.hairline,
-                        focusedTextColor = colors.inkPrimary,
-                        unfocusedTextColor = colors.inkPrimary,
-                    ),
-                    modifier = Modifier.fillMaxWidth(),
+                    label = "Value",
+                    fieldId = "variable.value",
+                    scope = exprScope,
                 )
                 Spacer(Modifier.height(8.dp))
                 Button(
                     onClick = {
                         val trimmedKey = newKey.trim().uppercase()
                         if (trimmedKey.isNotBlank()) {
-                            onAddVariable(trimmedKey, newValue)
+                            onAddVariable(trimmedKey, ExprFieldCodec.encode(newValue))
                             newKey = ""
-                            newValue = ""
+                            newValue = ParamValue.Fixed("")
                         }
                     },
                     colors = ButtonDefaults.buttonColors(containerColor = colors.royalGold, contentColor = colors.canvasVoid),
@@ -1429,10 +1448,11 @@ private fun VariableRowItem(
 ) {
     val colors = KaivoTheme.colors
     val valuePreview = remember(variable.value) {
-        if (variable.value.length > 20) {
-            "${variable.value.take(10)}…${variable.value.takeLast(4)}"
+        val shown = (if (ExprFieldCodec.isExpression(variable.value)) "fx " else "") + ExprFieldCodec.displayText(variable.value)
+        if (shown.length > 20) {
+            "${shown.take(10)}…${shown.takeLast(4)}"
         } else {
-            variable.value
+            shown
         }
     }
 
@@ -1495,12 +1515,14 @@ private fun VariableRowItem(
 
 @Composable
 private fun CreateVariableDialog(
+    existing: List<WorkflowVariable>,
     onSave: (key: String, value: String) -> Unit,
     onDismiss: () -> Unit,
 ) {
     val colors = KaivoTheme.colors
     var key by remember { mutableStateOf("") }
-    var value by remember { mutableStateOf("") }
+    var value by remember { mutableStateOf<ParamValue>(ParamValue.Fixed("")) }
+    val exprScope = remember(existing) { variableExprScope(existing) }
     var keyError by remember { mutableStateOf<String?>(null) }
 
     fun validateAndSave() {
@@ -1513,7 +1535,7 @@ private fun CreateVariableDialog(
             keyError = "Only letters, numbers, and underscores allowed"
             return
         }
-        onSave(trimmedKey, value)
+        onSave(trimmedKey, ExprFieldCodec.encode(value))
     }
 
     AlertDialog(
@@ -1561,18 +1583,14 @@ private fun CreateVariableDialog(
                 )
                 Spacer(Modifier.height(8.dp))
 
-                OutlinedTextField(
+                KaivoInputField(
                     value = value,
                     onValueChange = { value = it },
-                    label = { Text("Value") },
-                    shape = KaivoShapes.chip,
-                    colors = OutlinedTextFieldDefaults.colors(
-                        focusedBorderColor = colors.royalGold,
-                        unfocusedBorderColor = colors.hairline,
-                        focusedTextColor = colors.inkPrimary,
-                        unfocusedTextColor = colors.inkPrimary,
-                    ),
-                    modifier = Modifier.fillMaxWidth(),
+                    label = "Value",
+                    fieldId = "variable.value",
+                    scope = exprScope,
+                    multiline = true,
+                    maxLines = 4,
                 )
             }
         },
@@ -1693,10 +1711,10 @@ private fun FlowRowCard(
     Column(
         Modifier
             .fillMaxWidth()
+            .kaivoPressable(onClick = onOpen, cornerRadius = 20.dp)
             .clip(KaivoShapes.stepCard)
             .background(colors.surfaceCard)
             .border(1.dp, if (flow.isFavorite) colors.royalGold.copy(alpha = 0.5f) else colors.hairline, KaivoShapes.stepCard)
-            .clickable(onClick = onOpen)
             .padding(16.dp)
             .semantics { contentDescription = "${flow.name}, ${flow.stepCount} Steps" },
     ) {
@@ -1879,7 +1897,7 @@ private fun FlowRowCard(
         if (lastRun != null) {
             Spacer(Modifier.height(10.dp))
             Row(verticalAlignment = Alignment.CenterVertically) {
-                StatusBadge(
+                AnimatedStatusBadge(
                     text = when (lastRun.status) {
                         com.kaivoflow.core.model.RunStatus.Succeeded -> "✓ last run worked"
                         com.kaivoflow.core.model.RunStatus.PartialSuccess -> "✓ with warnings"
@@ -1936,6 +1954,8 @@ private fun EmptyFlows(isCreating: Boolean, onCreate: () -> Unit) {
     ) {
         Box(
             Modifier
+                .staggeredEntrance(index = 0)
+                .breathing()
                 .size(84.dp)
                 .clip(CircleShape)
                 .background(Brush.radialGradient(listOf(colors.velvetRose.copy(alpha = 0.35f), colors.royalGold.copy(alpha = 0.12f)))),
@@ -1948,15 +1968,19 @@ private fun EmptyFlows(isCreating: Boolean, onCreate: () -> Unit) {
             "Automate your phone",
             style = androidx.compose.material3.MaterialTheme.typography.displayLarge,
             color = colors.inkPrimary,
+            modifier = Modifier.staggeredEntrance(index = 1),
         )
         Spacer(Modifier.height(8.dp))
         Text(
             "Build automated flows Step by Step with sovereign local power.",
             style = androidx.compose.material3.MaterialTheme.typography.bodyMedium,
             color = colors.inkSecondary,
+            modifier = Modifier.staggeredEntrance(index = 2),
         )
         Spacer(Modifier.height(24.dp))
-        GoldButton(text = if (isCreating) "Creating…" else "New Flow", icon = "add", enabled = !isCreating, onClick = onCreate)
+        Box(Modifier.staggeredEntrance(index = 3)) {
+            GoldButton(text = if (isCreating) "Creating…" else "New Flow", icon = "add", enabled = !isCreating, onClick = onCreate)
+        }
     }
 }
 
@@ -1980,21 +2004,24 @@ internal fun relativeTime(timestamp: Long): String {
 private fun LifecycleChip(flow: FlowSummary) {
     val now = System.currentTimeMillis()
     val timeFmt = remember { java.text.SimpleDateFormat("EEE HH:mm", java.util.Locale.getDefault()) }
+    // One main chip call site, so Live, Paused and Failing crossfade into each other.
+    val main: Pair<String, BadgeKind>? = when (flow.lifecycle) {
+        LifecycleState.Published -> "Live" to BadgeKind.Success
+        LifecycleState.Paused ->
+            (flow.pausedUntil?.let { "Paused, resumes ${timeFmt.format(java.util.Date(it))}" } ?: "Paused") to BadgeKind.Warning
+        LifecycleState.Error -> "Failing" to BadgeKind.Error
+        LifecycleState.Draft -> null
+    }
     Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
-        when (flow.lifecycle) {
-            LifecycleState.Published -> {
-                StatusBadge("Live", BadgeKind.Success)
-                if (flow.updatedAt > flow.lifecycleSince) StatusBadge("Changes not live", BadgeKind.Gold)
+        if (main != null) AnimatedStatusBadge(main.first, main.second)
+        if (flow.lifecycle == LifecycleState.Published && flow.updatedAt > flow.lifecycleSince) {
+            AnimatedStatusBadge("Changes not live", BadgeKind.Gold)
+        }
+        if (flow.lifecycle == LifecycleState.Error) {
+            flow.nextRetryAt?.takeIf { it > now }?.let {
+                val mins = ((it - now) / 60_000L).coerceAtLeast(1)
+                AnimatedStatusBadge("Retrying in ${mins} min", BadgeKind.Neutral)
             }
-            LifecycleState.Paused -> StatusBadge(flow.pausedUntil?.let { "Paused, resumes ${timeFmt.format(java.util.Date(it))}" } ?: "Paused", BadgeKind.Warning)
-            LifecycleState.Error -> {
-                StatusBadge("Failing", BadgeKind.Error)
-                flow.nextRetryAt?.takeIf { it > now }?.let {
-                    val mins = ((it - now) / 60_000L).coerceAtLeast(1)
-                    StatusBadge("Retrying in ${mins} min", BadgeKind.Neutral)
-                }
-            }
-            LifecycleState.Draft -> Unit
         }
     }
 }
@@ -2265,3 +2292,5 @@ private fun HomeActionButton(
         )
     }
 }
+
+
