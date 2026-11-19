@@ -115,7 +115,8 @@ class AiWorkflowAgent @Inject constructor(
                 ExpressionGuard.check(params, name).map { "${it.where}: ${it.message}" }
             })
             val r = turn.run(prompt, currentFlow, history)
-            if (r.failure != null) return offlineAfterFailure(r.failure, prompt, currentFlow)
+            val failure = r.failure
+            if (failure != null) return offlineAfterFailure(failure, prompt, currentFlow)
             toMessage(r)
         } catch (e: CancellationException) {
             throw e
