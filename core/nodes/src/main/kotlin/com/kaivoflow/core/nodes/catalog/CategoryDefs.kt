@@ -75,6 +75,11 @@ object CategoryDefs {
         "ai.chat" to p("ai/chains", lifecycle = Lifecycle.Legacy),
         "ai.extract" to p("ai/chains", lifecycle = Lifecycle.Legacy),
         "ai.classify" to p("ai/chains", lifecycle = Lifecycle.Legacy),
+        // 3.4 AI family (phase 3E): the real Agent and its building blocks
+        "ai.agent" to p("ai/agents"),
+        "ai.chat_model" to p("ai/models"),
+        "ai.basic_chain" to p("ai/chains"),
+        "ai.parser.structured" to p("ai/parsers"),
         // 3.5 SaaS
         "net.http" to p("net/web"),
         "net.rss" to p("net/web"),

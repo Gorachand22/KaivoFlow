@@ -9,6 +9,7 @@ kotlin { jvmToolchain(21) }
 // fake HttpGateway, and Android capabilities arrive through the DeviceGateway interface.
 dependencies {
     api(project(":core:engine"))
+    api(project(":core:ai"))
     testImplementation(libs.junit)
     testImplementation(libs.kotlinx.coroutines.test)
 }

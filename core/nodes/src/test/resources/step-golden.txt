@@ -1,6 +1,10 @@
+ai.agent | legacy=Ai | path=ai/agents | alsoIn= | lifecycle=Stable | role=Main | kind=Action | outputs=1[] | params=prompt,system,data,chatModel,memory,tools,outputParser,maxIterations,maxToolCalls,maxTotalTokens,timeoutSeconds,maxCost,promptPricePer1k,completionPricePer1k,outputField
+ai.basic_chain | legacy=Ai | path=ai/chains | alsoIn= | lifecycle=Stable | role=Main | kind=Action | outputs=1[] | params=provider,credential,model,baseUrl,localAccess,temperature,maxTokens,prompt,system,data,outputSchema,timeoutSeconds,outputField
 ai.chat | legacy=Ai | path=ai/chains | alsoIn= | lifecycle=Legacy | role=Main | kind=Action | outputs=1[] | params=provider,credential,model,baseUrl,temperature,maxTokens,prompt,system,outputField
+ai.chat_model | legacy=Ai | path=ai/models | alsoIn= | lifecycle=Stable | role=AiModel | kind=Action | outputs=1[] | params=provider,credential,model,baseUrl,localAccess,temperature,maxTokens
 ai.classify | legacy=Ai | path=ai/chains | alsoIn= | lifecycle=Legacy | role=Main | kind=Action | outputs=4[label 1,label 2,label 3,anything else] | params=provider,credential,model,baseUrl,temperature,maxTokens,text,labels,instructions,outputField
 ai.extract | legacy=Ai | path=ai/chains | alsoIn= | lifecycle=Legacy | role=Main | kind=Action | outputs=1[] | params=provider,credential,model,baseUrl,temperature,maxTokens,text,schema,instructions,mergeIntoItem
+ai.parser.structured | legacy=Ai | path=ai/parsers | alsoIn= | lifecycle=Stable | role=AiParser | kind=Action | outputs=1[] | params=schema,text,outputField
 app.discord | legacy=Saas | path=app/messaging | alsoIn= | lifecycle=Stable | role=Main | kind=Action | outputs=1[] | params=webhookUrl,content,username
 app.google_sheets | legacy=Saas | path=app/productivity | alsoIn= | lifecycle=Stable | role=Main | kind=Action | outputs=1[] | params=action,credential,spreadsheetId,range,columns,valueInputOption
 app.notion | legacy=Saas | path=app/productivity | alsoIn= | lifecycle=Stable | role=Main | kind=Action | outputs=1[] | params=credential,databaseId,title,content,properties

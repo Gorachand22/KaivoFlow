@@ -3,7 +3,12 @@ package com.kaivoflow.core.nodes
 import com.kaivoflow.core.engine.NodeRegistry
 import com.kaivoflow.core.engine.StepExecutor
 import com.kaivoflow.core.model.StepCategory
+import com.kaivoflow.core.nodes.ai.agents.AgentNode
+import com.kaivoflow.core.nodes.ai.agents.ToolStepResolver
 import com.kaivoflow.core.nodes.ai.chains.AiChatNode
+import com.kaivoflow.core.nodes.ai.chains.BasicLlmNode
+import com.kaivoflow.core.nodes.ai.models.ChatModelNode
+import com.kaivoflow.core.nodes.ai.parsers.StructuredParserNode
 import com.kaivoflow.core.nodes.ai.chains.AiClassifyNode
 import com.kaivoflow.core.nodes.ai.chains.AiExtractNode
 import com.kaivoflow.core.nodes.app.messaging.DiscordNode
@@ -78,9 +83,22 @@ import com.kaivoflow.core.nodes.spark.start.ScheduleTriggerNode
  */
 object NodeCatalog {
 
-    fun executors(devices: DeviceGateway = NoopDeviceGateway): List<StepExecutor> = rawExecutors(devices).map { PlacedExecutor(it) }
+    fun executors(devices: DeviceGateway = NoopDeviceGateway): List<StepExecutor> {
+        // The Agent offers existing Steps as tools, so it needs to find them by id. It looks them up in
+        // the placed list (specs with lifecycle), which only exists once the list is built: bind it after.
+        val late = LateToolResolver()
+        val placed = rawExecutors(devices, late).map { PlacedExecutor(it) }
+        late.bind(placed)
+        return placed
+    }
 
-    private fun rawExecutors(devices: DeviceGateway): List<StepExecutor> = listOf(
+    private class LateToolResolver : ToolStepResolver {
+        private var byId: Map<String, StepExecutor> = emptyMap()
+        fun bind(list: List<StepExecutor>) { byId = list.associateBy { it.spec.id } }
+        override fun executor(type: String): StepExecutor? = byId[type]
+    }
+
+    private fun rawExecutors(devices: DeviceGateway, tools: ToolStepResolver): List<StepExecutor> = listOf(
         // Sparks
         ManualTriggerNode(),
         ScheduleTriggerNode(),
@@ -130,6 +148,10 @@ object NodeCatalog {
         AiChatNode(),
         AiExtractNode(),
         AiClassifyNode(),
+        AgentNode(tools),
+        ChatModelNode(),
+        BasicLlmNode(),
+        StructuredParserNode(),
         // SaaS
         HttpNode(devices),
         GoogleSheetsNode(),
