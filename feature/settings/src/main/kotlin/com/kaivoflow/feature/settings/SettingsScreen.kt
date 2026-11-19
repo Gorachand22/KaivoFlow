@@ -136,6 +136,9 @@ fun SettingsScreen(
         }
 
         Spacer(Modifier.height(24.dp))
+        com.kaivoflow.core.design.MotionSettingsSection()
+
+        Spacer(Modifier.height(24.dp))
         SectionHeader(title = "Privacy", subtitle = "Your automations stay on your phone")
         Spacer(Modifier.height(10.dp))
         SettingRow("Privacy centre", "What is stored, what leaves the device", "shield", onOpenPrivacy)

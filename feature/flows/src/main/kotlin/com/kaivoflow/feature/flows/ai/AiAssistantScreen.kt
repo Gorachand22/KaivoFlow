@@ -180,8 +180,17 @@ fun AiAssistantScreen(
                     verticalArrangement = Arrangement.spacedBy(16.dp),
                 ) {
                     items(state.messages, key = { it.id }) { msg ->
+                        val applied = state.lastApplied
+                        val status = when {
+                            applied != null && applied.messageId == msg.id -> if (applied.before != null) ProposalStatus.Applied else ProposalStatus.AppliedNoUndo
+                            msg.flowProposal != null && msg.flowProposal == state.activeProposedFlow -> ProposalStatus.Pending
+                            else -> ProposalStatus.Older
+                        }
                         ChatMessageRow(
                             message = msg,
+                            status = status,
+                            onApply = { msg.flowProposal?.let { f -> viewModel.applyProposedFlow(f) { } } },
+                            onUndo = { viewModel.undoLastApply() },
                             onOpenCanvas = { flowId -> onOpenCanvas(flowId) },
                         )
                     }
@@ -206,6 +215,20 @@ fun AiAssistantScreen(
                     enabled = !state.isGenerating,
                 )
             }
+        }
+
+        // ---------------- Approve / deny card for tools that act on the world ----------------
+        AttachApprovalPresenter(viewModel.approvalRelay, inline = true)
+        val pendingApproval by viewModel.approvalRelay.pending.collectAsStateWithLifecycle()
+        pendingApproval?.let { request ->
+            ApprovalCard(
+                request = request,
+                onApprove = { viewModel.approvalRelay.respond(true) },
+                onDeny = { viewModel.approvalRelay.respond(false) },
+                modifier = Modifier
+                    .align(Alignment.BottomCenter)
+                    .padding(start = 16.dp, end = 16.dp, bottom = 84.dp),
+            )
         }
 
         // ---------------- AI Credentials Sheet ----------------
@@ -591,6 +614,9 @@ private fun EmptyStateCenteredPrompt(
 @Composable
 private fun ChatMessageRow(
     message: AiChatMessage,
+    status: ProposalStatus,
+    onApply: () -> Unit,
+    onUndo: () -> Unit,
     onOpenCanvas: (String) -> Unit,
 ) {
     val colors = KaivoTheme.colors
@@ -660,6 +686,9 @@ private fun ChatMessageRow(
             Spacer(Modifier.height(10.dp))
             WorkflowPreviewCard(
                 flow = message.flowProposal,
+                status = status,
+                onApply = onApply,
+                onUndo = onUndo,
                 onOpenCanvas = { onOpenCanvas(message.flowProposal.id) },
             )
         }
@@ -748,6 +777,9 @@ private fun ToolCallsTraceCard(
 @Composable
 private fun WorkflowPreviewCard(
     flow: Flow,
+    status: ProposalStatus,
+    onApply: () -> Unit,
+    onUndo: () -> Unit,
     onOpenCanvas: () -> Unit,
 ) {
     val colors = KaivoTheme.colors
@@ -782,7 +814,7 @@ private fun WorkflowPreviewCard(
                         color = colors.inkPrimary,
                     )
                     Text(
-                        text = "Workflow Active · ${flow.steps.size} Steps, ${flow.streams.size} Connections",
+                        text = "${if (status == ProposalStatus.Pending) "Proposal, not applied yet" else "Workflow"} · ${flow.steps.size} Steps, ${flow.streams.size} Connections",
                         style = androidx.compose.material3.MaterialTheme.typography.labelSmall,
                         color = colors.inkSecondary,
                     )
@@ -844,12 +876,13 @@ private fun WorkflowPreviewCard(
                 }
             }
 
-            // Live status & Quick Canvas Link
+            // Status line and actions. A proposal changes nothing until Apply; Undo puts the previous Flow back.
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically,
             ) {
+                val applied = status == ProposalStatus.Applied || status == ProposalStatus.AppliedNoUndo
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(6.dp),
@@ -857,28 +890,57 @@ private fun WorkflowPreviewCard(
                     Icon(
                         imageVector = KaivoIcons.icon("checkCircle"),
                         contentDescription = null,
-                        tint = Color(0xFF10B981),
+                        tint = if (applied) Color(0xFF10B981) else colors.royalGold,
                         modifier = Modifier.size(16.dp),
                     )
                     Text(
-                        text = "Updated Live on Canvas",
+                        text = when (status) {
+                            ProposalStatus.Pending -> "Not applied yet"
+                            ProposalStatus.Applied, ProposalStatus.AppliedNoUndo -> "Applied"
+                            ProposalStatus.Older -> "Older proposal"
+                        },
                         style = androidx.compose.material3.MaterialTheme.typography.labelMedium,
                         fontWeight = FontWeight.SemiBold,
-                        color = Color(0xFF10B981),
+                        color = if (applied) Color(0xFF10B981) else colors.royalGold,
                     )
                 }
 
-                Button(
-                    onClick = onOpenCanvas,
-                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF282834), contentColor = colors.inkPrimary),
-                    shape = KaivoShapes.chip,
-                ) {
-                    Text("Open Canvas ↗", fontSize = 12.sp)
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    if (status == ProposalStatus.Pending) {
+                        Button(
+                            onClick = onApply,
+                            colors = ButtonDefaults.buttonColors(containerColor = colors.royalGold, contentColor = Color.Black),
+                            shape = KaivoShapes.chip,
+                        ) {
+                            Text("Apply", fontSize = 12.sp)
+                        }
+                    }
+                    if (status == ProposalStatus.Applied) {
+                        Button(
+                            onClick = onUndo,
+                            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF282834), contentColor = colors.inkPrimary),
+                            shape = KaivoShapes.chip,
+                        ) {
+                            Text("Undo", fontSize = 12.sp)
+                        }
+                    }
+                    if (applied) {
+                        Button(
+                            onClick = onOpenCanvas,
+                            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF282834), contentColor = colors.inkPrimary),
+                            shape = KaivoShapes.chip,
+                        ) {
+                            Text("Open Canvas ↗", fontSize = 12.sp)
+                        }
+                    }
                 }
             }
         }
     }
 }
+
+/** Where a proposed Flow stands in the chat. Only [Pending] can be applied. */
+private enum class ProposalStatus { Pending, Applied, AppliedNoUndo, Older }
 
 @Composable
 private fun GeneratingIndicator() {

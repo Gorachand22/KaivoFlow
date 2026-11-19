@@ -1,5 +1,7 @@
 package com.kaivoflow.feature.flows.ai
 
+import com.kaivoflow.core.ai.ProviderKind
+
 /**
  * AI Providers supported for KaivoFlow's Sovereign Workflow Assistant and Agent Builder.
  * Matches KaivoFlow's architecture:
@@ -47,6 +49,14 @@ enum class AiProvider(
 
     val key: String get() = name.lowercase()
 
+    /** The provider adapter in `:core:ai` that speaks this provider's wire format. */
+    fun toKind(): ProviderKind = when (this) {
+        Gemini -> ProviderKind.Gemini
+        OpenAI -> ProviderKind.OpenAiCompatible
+        Claude -> ProviderKind.Anthropic
+        Ollama -> ProviderKind.Ollama
+    }
+
     companion object {
         fun fromKey(key: String?): AiProvider =
             entries.firstOrNull { it.name.equals(key, ignoreCase = true) }
@@ -87,15 +97,23 @@ data class AiProviderConfig(
             }
         }
 
+    /**
+     * What is stored in the `ai_provider_config` row. The key is NOT stored here: it lives only in the named
+     * credential, which [credentialId] points to, so rotating it in one place cannot leave a stale copy behind.
+     * [fromMap] still reads an old row that carries a key.
+     */
     fun toMap(): Map<String, String> = buildMap {
         put("provider", provider.name)
         put("model", model)
-        put("apiKey", apiKey)
         put("baseUrl", baseUrl)
         put("discoveredModels", discoveredModels.joinToString(","))
         credentialId?.let { put("credentialId", it) }
         credentialName?.let { put("credentialName", it) }
     }
+
+    /** A generated data-class toString would print the key into any log line or crash report. */
+    override fun toString(): String =
+        "AiProviderConfig(provider=$provider, model=$model, apiKey=${if (apiKey.isBlank()) "<none>" else "***"}, baseUrl=$baseUrl, credentialId=$credentialId)"
 
     companion object {
         fun fromMap(map: Map<String, String>?): AiProviderConfig {

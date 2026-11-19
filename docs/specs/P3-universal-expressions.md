@@ -63,6 +63,6 @@ Decision: X = Expression-capable, F = Fixed only, N = Never.
 `KaivoInputField(value: ParamValue?, onValueChange, label, fieldId, scope: ExpressionScopeProvider?, ...)`. Fixed mode is a plain field; fx mode is `ExpressionField`. `scope = null` means no switch. `ExpressionScopeProvider` supplies `assist`, `scope`, `preview(text)`, an optional `onOpenMapper`, and `mapperItems` for the built-in tap tray. `GlobalExpressionScope` is the provider for every non-node screen. Never use it for rows marked N or F.
 
 ## 8. Not done here
-- Node notes and behaviour fields (inspector host), sticky notes stay F.
-- `CanvasViewModel` preview of variables reads raw values; route it through `VariableResolution`.
+- Done later (reasoned only, not compiled): Step notes are X (`step.notes`) through `KaivoInputField`; behaviour-tab fields are F (`step.behaviour`); Step name is N (`step.name`). Sticky notes stay F.
+- Done later (reasoned only): `CanvasViewModel` shows variables through `VariableResolution` for preview; the stored Flow keeps the raw expressions, so saving never overwrites them.
 - Agent triggers and tools have no runtime yet; their per-call resolution must call `UniversalResolver` when added. Webhook response body and headers should be X (per request).

@@ -49,6 +49,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -208,6 +209,7 @@ fun AgentBuilderScreen(
             onPromptChange = viewModel::setTestPrompt,
             onRun = { viewModel.runTestAgent(state.testPrompt) },
             onDismiss = { viewModel.toggleTestSheet(false) },
+            approvals = viewModel.approvalRelay,
         )
     }
 
@@ -1612,8 +1614,12 @@ private fun AgentTestSheet(
     onPromptChange: (String) -> Unit,
     onRun: () -> Unit,
     onDismiss: () -> Unit,
+    approvals: com.kaivoflow.core.ai.ApprovalRelay,
 ) {
     val colors = KaivoTheme.colors
+    // A tool that acts on the phone asks here, inside the sheet, before it runs (Test Run is a single-Step test).
+    com.kaivoflow.feature.flows.ai.AttachApprovalPresenter(approvals, inline = true)
+    val pendingApproval by approvals.pending.collectAsStateWithLifecycle()
     ModalBottomSheet(
         onDismissRequest = onDismiss,
         sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
@@ -1627,6 +1633,13 @@ private fun AgentTestSheet(
                 .imePadding(),
             verticalArrangement = Arrangement.spacedBy(14.dp),
         ) {
+            pendingApproval?.let { request ->
+                com.kaivoflow.feature.flows.ai.ApprovalCard(
+                    request = request,
+                    onApprove = { approvals.respond(true) },
+                    onDeny = { approvals.respond(false) },
+                )
+            }
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically,

@@ -1,5 +1,6 @@
 package com.kaivoflow.core.nodes
 
+import com.kaivoflow.core.ai.ApprovalCallback
 import com.kaivoflow.core.engine.NodeRegistry
 import com.kaivoflow.core.engine.StepExecutor
 import com.kaivoflow.core.model.StepCategory
@@ -83,11 +84,16 @@ import com.kaivoflow.core.nodes.spark.start.ScheduleTriggerNode
  */
 object NodeCatalog {
 
-    fun executors(devices: DeviceGateway = NoopDeviceGateway): List<StepExecutor> {
+    /**
+     * [approvals] is who may answer "may the agent do this?" for tools that act on the world. It is asked only in
+     * a Test Step or a hand-started Run (never in Production, never from the always-on engine), and a callback that
+     * has no screen to show a card denies at once, so passing one cannot make a Run hang.
+     */
+    fun executors(devices: DeviceGateway = NoopDeviceGateway, approvals: ApprovalCallback? = null): List<StepExecutor> {
         // The Agent offers existing Steps as tools, so it needs to find them by id. It looks them up in
         // the placed list (specs with lifecycle), which only exists once the list is built: bind it after.
         val late = LateToolResolver()
-        val placed = rawExecutors(devices, late).map { PlacedExecutor(it) }
+        val placed = rawExecutors(devices, late, approvals).map { PlacedExecutor(it) }
         late.bind(placed)
         return placed
     }
@@ -98,7 +104,7 @@ object NodeCatalog {
         override fun executor(type: String): StepExecutor? = byId[type]
     }
 
-    private fun rawExecutors(devices: DeviceGateway, tools: ToolStepResolver): List<StepExecutor> = listOf(
+    private fun rawExecutors(devices: DeviceGateway, tools: ToolStepResolver, approvals: ApprovalCallback?): List<StepExecutor> = listOf(
         // Sparks
         ManualTriggerNode(),
         ScheduleTriggerNode(),
@@ -148,7 +154,7 @@ object NodeCatalog {
         AiChatNode(),
         AiExtractNode(),
         AiClassifyNode(),
-        AgentNode(tools),
+        AgentNode(tools, approvals = approvals),
         ChatModelNode(),
         BasicLlmNode(),
         StructuredParserNode(),
@@ -178,7 +184,7 @@ object NodeCatalog {
         CalendarEventNode(devices),
     )
 
-    fun registry(devices: DeviceGateway = NoopDeviceGateway): NodeRegistry = NodeRegistry(executors(devices))
+    fun registry(devices: DeviceGateway = NoopDeviceGateway, approvals: ApprovalCallback? = null): NodeRegistry = NodeRegistry(executors(devices, approvals))
 
     /** Used by tests and by the "is my catalog complete?" check. */
     fun countByCategory(devices: DeviceGateway = NoopDeviceGateway): Map<StepCategory, Int> =

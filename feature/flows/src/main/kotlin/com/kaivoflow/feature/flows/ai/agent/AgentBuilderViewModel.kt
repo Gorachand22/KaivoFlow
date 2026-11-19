@@ -7,15 +7,18 @@ import com.kaivoflow.core.data.CredentialRepository
 import com.kaivoflow.core.data.WorkflowVariableRepository
 import com.kaivoflow.core.engine.CredentialExpr
 import com.kaivoflow.core.engine.GlobalScope
+import com.kaivoflow.core.ai.ApprovalRelay
 import com.kaivoflow.core.engine.HttpGateway
 import com.kaivoflow.core.engine.UniversalResolver
 import com.kaivoflow.core.engine.VariableResolution
 import com.kaivoflow.core.expressions.KaivoExpressionEvaluator
 import com.kaivoflow.core.model.CredentialItem
+import com.kaivoflow.core.model.StepRunStatus
+import com.kaivoflow.core.work.FlowEngine
 import com.kaivoflow.feature.flows.ai.AiChatMessage
 import com.kaivoflow.feature.flows.ai.AiProvider
 import com.kaivoflow.feature.flows.ai.AiProviderConfig
-import com.kaivoflow.feature.flows.ai.AiWorkflowAgent
+import com.kaivoflow.feature.flows.ai.CredentialVaultBridge
 import com.kaivoflow.feature.flows.ai.ModelDiscoveryService
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.CancellationException
@@ -175,11 +178,14 @@ class AgentBuilderViewModel @Inject constructor(
     private val credentialRepository: CredentialRepository,
     private val http: HttpGateway,
     private val variableRepository: WorkflowVariableRepository,
+    private val vault: CredentialVaultBridge,
+    private val flowEngine: FlowEngine,
+    /** The Test Run sheet attaches to this to show approve/deny cards before a tool acts on the phone. */
+    val approvalRelay: ApprovalRelay,
     savedStateHandle: SavedStateHandle,
 ) : ViewModel() {
 
     private val agentId: String? = savedStateHandle["agentId"]
-    private val workflowAgent = AiWorkflowAgent(http)
     private val modelDiscovery = ModelDiscoveryService(http)
     private val evaluator = KaivoExpressionEvaluator()
     private val resolver = UniversalResolver(evaluator)
@@ -237,20 +243,17 @@ class AgentBuilderViewModel @Inject constructor(
     fun selectCredential(credentialId: String) {
         viewModelScope.launch {
             val cred = _uiState.value.credentials.find { it.id == credentialId } ?: return@launch
-            val resolvedCred = CredentialExpr.resolveFields(
-                cred.type,
-                credentialRepository.getFields(cred.id).orEmpty(),
-                evaluator,
-                GlobalScope.build(_uiState.value.workspaceVars),
-            )
-            resolvedCred.errors.values.firstOrNull()?.let { msg ->
-                _uiState.update { it.copy(credentialError = msg) }
+            val loaded = vault.load(cred.id, cred.type, cred.name) { type, stored ->
+                CredentialExpr.resolveFields(type, stored, evaluator, GlobalScope.build(_uiState.value.workspaceVars))
+            }
+            if (loaded is CredentialVaultBridge.Loaded.Failed) {
+                _uiState.update { it.copy(credentialError = loaded.message) }
                 return@launch
             }
-            val fields = resolvedCred.fields
-            val apiKey = fields["apiKey"] ?: fields["token"] ?: ""
-            val baseUrl = fields["baseUrl"] ?: ""
-            val provider = AiProvider.fromKey(cred.type)
+            val c = (loaded as CredentialVaultBridge.Loaded.Ok).credential
+            val apiKey = c.apiKey
+            val baseUrl = c.baseUrl
+            val provider = c.provider
 
             _uiState.update { state ->
                 state.copy(
@@ -267,13 +270,10 @@ class AgentBuilderViewModel @Inject constructor(
             result.fold(
                 onSuccess = { models ->
                     _uiState.update { state ->
-                        val preferred = models.firstOrNull { it.contains("nemotron-3.5-bolt", ignoreCase = true) }
-                            ?: models.firstOrNull { it.contains("nemotron", ignoreCase = true) }
-                            ?: models.firstOrNull { it.contains("gpt-4o", ignoreCase = true) }
                         val chosenModel = if (models.contains(state.agent.model) && state.agent.model.isNotBlank()) {
                             state.agent.model
                         } else {
-                            preferred ?: models.firstOrNull() ?: state.agent.model
+                            models.firstOrNull() ?: state.agent.model
                         }
                         state.copy(
                             discoveredModels = models,
@@ -436,6 +436,11 @@ class AgentBuilderViewModel @Inject constructor(
         _uiState.update { it.copy(testPrompt = prompt) }
     }
 
+    /**
+     * Test Run follows the Test Step rule (audit 8.3): the agent is compiled to a one-Step in-memory Flow and only that
+     * Step runs, in test mode, with the person's test message as its own input. It is never a production Run, no
+     * Spark exists, nothing is saved or armed, and a tool that acts on the phone asks first (approve/deny card).
+     */
     fun runTestAgent(userPrompt: String) {
         val prompt = userPrompt.trim()
         if (prompt.isBlank() || _uiState.value.isTesting) return
@@ -450,47 +455,35 @@ class AgentBuilderViewModel @Inject constructor(
                 ?: _uiState.value.credentials.firstOrNull { it.id == _uiState.value.providerConfig.credentialId }
                 ?: _uiState.value.credentials.firstOrNull { it.type.contains("openai", ignoreCase = true) }
                 ?: _uiState.value.credentials.firstOrNull()
+            if (targetCred == null) { failTest(prompt, "Add an AI credential first.", startTime); return@launch }
+            if (currentAgent.model.isBlank()) { failTest(prompt, "Choose a model first.", startTime); return@launch }
 
-            var activeApiKey = _uiState.value.providerConfig.apiKey
-            var activeBaseUrl = _uiState.value.providerConfig.baseUrl
-            var activeProvider = targetCred?.let { AiProvider.fromKey(it.type) } ?: currentAgent.provider
-
-            if (targetCred != null) {
-                val stored = credentialRepository.getFields(targetCred.id).orEmpty()
-                // Non-secret credential fields may be expressions (spec P3); a bad one ends the test with its message.
-                val resolvedCred = CredentialExpr.resolveFields(targetCred.type, stored, evaluator, agentScope(currentAgent))
-                resolvedCred.errors.values.firstOrNull()?.let { failTest(prompt, it, startTime); return@launch }
-                val fields = resolvedCred.fields
-                fields["apiKey"]?.takeIf { it.isNotBlank() }?.let { activeApiKey = it }
-                fields["baseUrl"]?.takeIf { it.isNotBlank() }?.let { activeBaseUrl = it }
-                activeProvider = AiProvider.fromKey(targetCred.type)
+            // Non-secret credential fields may be expressions (spec P3); a bad one ends the test with its message.
+            val loaded = vault.load(targetCred.id, targetCred.type, targetCred.name) { type, stored ->
+                CredentialExpr.resolveFields(type, stored, evaluator, agentScope(currentAgent))
             }
-
-            if (currentAgent.model.contains("/") || currentAgent.model.contains("nemotron", ignoreCase = true) || currentAgent.model.contains("gpt", ignoreCase = true)) {
-                activeProvider = AiProvider.OpenAI
+            val cred = when (loaded) {
+                is CredentialVaultBridge.Loaded.Failed -> { failTest(prompt, loaded.message, startTime); return@launch }
+                is CredentialVaultBridge.Loaded.Ok -> loaded.credential
             }
-
-            val config = AiProviderConfig(
-                provider = activeProvider,
-                model = currentAgent.model.ifBlank { "nvidia/nemotron-3.5-bolt-e4b" },
-                apiKey = activeApiKey,
-                baseUrl = activeBaseUrl,
-            )
 
             // Instructions and knowledge may hold expressions; they are resolved here, on every call (spec P3).
-            val built = AgentPrompt.build(currentAgent, prompt, resolver, agentScope(currentAgent))
-            val fullPrompt = when (built) {
+            val system = when (val built = AgentPrompt.buildSystem(currentAgent, resolver, agentScope(currentAgent))) {
                 is AgentPrompt.Built.Ok -> built.text
                 is AgentPrompt.Built.Failed -> { failTest(prompt, built.message, startTime); return@launch }
             }
 
-            val response = try {
-                workflowAgent.executeTurn(
-                    prompt = fullPrompt,
-                    currentFlow = null,
-                    config = config,
-                    chatHistory = emptyList(),
-                )
+            val compiled = AgentFlowCompiler.compile(
+                agent = currentAgent,
+                systemText = system,
+                task = prompt,
+                provider = cred.provider,
+                model = currentAgent.model,
+                credentialId = targetCred.id,
+                baseUrl = cred.baseUrl,
+            )
+            val run = try {
+                flowEngine.testStep(compiled.flow, compiled.stepId, compiled.input)
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
@@ -498,20 +491,29 @@ class AgentBuilderViewModel @Inject constructor(
                 return@launch
             }
 
-            val duration = System.currentTimeMillis() - startTime
+            val ok = run.status == StepRunStatus.Succeeded
+            val item = run.output.firstOrNull()?.json.orEmpty()
+            val answer = (item["answer"] as? String)?.takeIf { it.isNotBlank() }
+            val meta = item["_ai"] as? Map<*, *>
+            val text = buildString {
+                if (ok) append(answer ?: "The agent finished without an answer.") else append("Test failed.\n").append(run.error ?: "The agent could not finish.")
+                if (meta != null) append("\n\n").append("Steps: ${meta["iterations"]} · tool calls: ${meta["toolCalls"]} · tokens: ${meta["totalTokens"]}")
+                if (compiled.unavailableTools.isNotEmpty()) append("\n\nNot offered to the model: ").append(compiled.unavailableTools.joinToString("; "))
+            }.trim()
+
             val session = AgentSession(
                 id = UUID.randomUUID().toString(),
                 timestamp = System.currentTimeMillis(),
-                status = "Success",
+                status = if (ok) "Success" else "Error",
                 prompt = prompt,
-                response = response.text,
-                durationMs = duration,
+                response = text,
+                durationMs = System.currentTimeMillis() - startTime,
             )
 
             _uiState.update {
                 it.copy(
                     isTesting = false,
-                    testSessionOutput = response.text,
+                    testSessionOutput = text,
                     agent = it.agent.copy(sessions = listOf(session) + it.agent.sessions),
                 )
             }

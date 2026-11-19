@@ -16,7 +16,7 @@ Keep the Velvet Obsidian and Champagne Gold design identity.
 | 0 | Audit of the existing code base against n8n behaviour | Done (8 reports, top P0s verified in code) |
 | 1 | Stop the bleeding: data loss, secrets, per-item params, scheduler, run persistence (see [ROADMAP.md](ROADMAP.md)) | Code complete, waiting for owner build and phone gate ([PHASE1_CHECKLIST.md](PHASE1_CHECKLIST.md)) |
 | 2 | Perfect base app, see [PHASE2_PLAN.md](PHASE2_PLAN.md): 2A structure and picker, 2B data and expression core, 2E always-on engine, 2C node clean-up, 2D inspector and data panels, 2F proof | 2A to 2E code complete (JVM tests green, Android never compiled); 2F (device matrix, soak, targetSdk) waits for the owner build and [PHASE2_CHECKLIST.md](PHASE2_CHECKLIST.md) |
-| 3 | Node set rebuild: n8n-class logic nodes, HTTP depth, declarative integration spec | Not started; starts after the Phase 2 gate |
+| 3 | Node set rebuild, universal expressions, AI agent on `core:ai` | Partly done, see "Phase 3 status"; owner checks in [PHASE3_CHECKLIST.md](PHASE3_CHECKLIST.md) |
 | 4 | Editor UX: schema-driven inspector, data views, pin data, re-run from step | Not started |
 | 5 | Reliability and Android edge: scheduling, reliability center, backup, device nodes | Not started |
 | 6 | AI agent, n8n workflow import, polish and release | Not started |
@@ -57,6 +57,21 @@ Keep the Velvet Obsidian and Champagne Gold design identity.
   fixed two definite build errors: Kotlin opt-in flags sat in the root project so they never reached modules (now in `subprojects`),
   and `core:data` hid `room-runtime` from `core:work`, which reads `KaivoDatabase.NAME` (now `api`).
   Owner gate: [PHASE2_CHECKLIST.md](PHASE2_CHECKLIST.md). targetSdk is still 34.
+
+## Phase 3 status
+
+Done and JVM-tested offline (scratch suites): `core:ai` approval relay, provider endpoint rules, model discovery; the assistant
+draft/proposal engine (`flowedit`: catalog-generated prompt and Step list, parser, draft tools, `ProposalApply` with conflict
+check, undo copy); AI key only in headers and never stored in provider rows; agent compiler and prompt; universal expressions policy.
+
+Done but only reasoned (Compose, Hilt, ViewModel, FlowEngine, MainActivity, canvas never compiled here): Ask AI works on a draft
+and only saves on Apply, with Undo; approve/deny cards in chat and a global dialog host; Agent Builder Test Run compiles to a one-Step
+`ai.agent` Flow and runs through `FlowEngine.testStep`; `AiModule` Hilt wiring and vault bridge; Step notes through `KaivoInputField`;
+variables through `VariableResolution`; `MotionSettingsSection` in Settings.
+
+Remaining: Code Step QuickJS sandbox, HTTP depth, declarative integrations and OAuth2 PKCE, Loop done port, persistent agent memory,
+streaming, legacy `ai.*` port. Known gaps: "Test from here" uses automatic input (no per-Run input override); proposals are not
+persisted across a restored chat; Production Runs never prompt for approval (tools need `allowUnattended`).
 
 ## What remains
 

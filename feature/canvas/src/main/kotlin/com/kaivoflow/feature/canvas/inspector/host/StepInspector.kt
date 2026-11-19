@@ -98,6 +98,10 @@ class StepInspectorActions(
     val onEditStep: ((StepNode) -> StepNode) -> Unit,
     val onAddCredential: () -> Unit,
     val onDismiss: () -> Unit,
+    /** The workspace and Flow variables as `$vars` reads them (expression variables already evaluated), for the notes preview. */
+    val vars: Map<String, Any?> = emptyMap(),
+    val flowId: String = "",
+    val flowName: String = "",
 )
 
 /**

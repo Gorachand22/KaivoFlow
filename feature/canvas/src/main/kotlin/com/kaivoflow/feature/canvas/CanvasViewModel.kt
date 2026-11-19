@@ -82,6 +82,9 @@ class CanvasViewModel @Inject constructor(
     val credentialRefs: StateFlow<List<com.kaivoflow.core.model.CredentialRef>?> = _credentialRefs.asStateFlow()
 
     private val assist = KaivoExpressionAssist()
+    private val varEvaluator = com.kaivoflow.core.expressions.KaivoExpressionEvaluator()
+    private var varsRaw: Any? = null
+    private var varsResolved: kotlinx.collections.immutable.ImmutableMap<String, Any?> = kotlinx.collections.immutable.persistentMapOf()
     private val _inspectorSession = MutableStateFlow<InspectorSession?>(null)
     /** The open Step inspector (state holder, data source, expression scope); null when closed. */
     val inspectorSession: StateFlow<InspectorSession?> = _inspectorSession.asStateFlow()
@@ -89,6 +92,24 @@ class CanvasViewModel @Inject constructor(
 
     private val _promptEvents = Channel<String>(Channel.BUFFERED)
     private var flow: Flow = Flow(id = flowId, name = "Flow")
+
+    /**
+     * `$vars` as a Run will see it (spec P3): expression variables are evaluated once, here, with the same
+     * [com.kaivoflow.core.engine.VariableResolution] the engine uses; a failed one is left out. Used only for what the
+     * screen previews and tests with. [flow] keeps the stored values, so saving never writes a result over an expression.
+     */
+    private fun resolvedVars(): kotlinx.collections.immutable.ImmutableMap<String, Any?> {
+        if (varsRaw !== flow.vars) {
+            varsRaw = flow.vars
+            varsResolved = com.kaivoflow.core.engine.VariableResolution
+                .resolve(flow.vars, varEvaluator, flow.id, flow.name, flow.settings.timezone)
+                .vars.toImmutableMap()
+        }
+        return varsResolved
+    }
+
+    /** The Flow as the inspector and Test Step see it: stored Steps, evaluated variables. */
+    private fun previewFlow(): Flow = flow.copy(vars = resolvedVars())
     private var runJob: Job? = null
     private var pendingSave: Job? = null
 
@@ -132,7 +153,7 @@ class CanvasViewModel @Inject constructor(
                 val resolved = list.associate { it.key to it.value }
                 if (resolved.isNotEmpty()) {
                     flow = flow.copy(vars = (resolved + flow.vars).toImmutableMap())
-                    _state.update { it.copy(vars = flow.vars) }
+                    _state.update { it.copy(vars = resolvedVars()) }
                 }
             }
         }
@@ -229,7 +250,7 @@ class CanvasViewModel @Inject constructor(
             stepId = stepId,
             replayRunId = replayRunId,
             scope = viewModelScope,
-            currentFlow = { flow },
+            currentFlow = { previewFlow() },
             spec = registry.spec(step.type),
             registrySpec = { registry.spec(it) },
             stepData = stepData,
@@ -855,7 +876,7 @@ class CanvasViewModel @Inject constructor(
                 groups = flow.groups,
                 notes = flow.notes,
                 isActive = flow.isActive,
-                vars = flow.vars,
+                vars = resolvedVars(),
                 inspector = it.inspector?.let { ins -> flow.step(ins.stepId)?.let { n -> ins.copy(node = n) } },
                 positions = flow.steps.associate { it.id to (it.x to it.y) }.toImmutableMap(),
             )

@@ -898,6 +898,9 @@ fun CanvasScreen(
                     onEditStep = { edit -> viewModel.editStep(node.id, "behaviour", edit) },
                     onAddCredential = onOpenCredentials,
                     onDismiss = viewModel::closeInspector,
+                    vars = state.vars,
+                    flowId = state.flowId,
+                    flowName = state.flowName,
                 ),
             )
         }

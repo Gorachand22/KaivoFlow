@@ -20,6 +20,7 @@ android {
 kotlin { jvmToolchain(21) }
 
 dependencies {
+    implementation(project(":core:ai"))
     implementation(project(":core:design"))
     implementation(project(":core:model"))
     implementation(project(":core:engine"))

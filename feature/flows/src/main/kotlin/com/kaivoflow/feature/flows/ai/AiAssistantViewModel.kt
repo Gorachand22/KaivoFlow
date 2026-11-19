@@ -5,7 +5,10 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.kaivoflow.core.data.CredentialRepository
 import com.kaivoflow.core.data.FlowRepository
-import com.kaivoflow.core.data.WorkflowVariableRepository
+import com.kaivoflow.core.ai.ApprovalRelay
+import com.kaivoflow.core.ai.flowedit.ApplyPlan
+import com.kaivoflow.core.ai.flowedit.AssistantCatalog
+import com.kaivoflow.core.ai.flowedit.ProposalApply
 import com.kaivoflow.core.engine.HttpGateway
 import com.kaivoflow.core.model.CredentialItem
 import com.kaivoflow.core.model.Flow
@@ -38,7 +41,15 @@ data class AiAssistantUiState(
     val savedSessions: List<AiSession> = emptyList(),
     val savedCredentials: List<CredentialItem> = emptyList(),
     val activeSessionId: String = UUID.randomUUID().toString(),
+    /** The last proposal the person applied, so the card can offer Undo. Null after Undo or when nothing was applied. */
+    val lastApplied: AppliedRevision? = null,
 )
+
+/**
+ * One applied proposal. [before] is the exact Flow that was replaced; Undo writes it back. Null when the proposal
+ * created a new Flow: there is nothing to restore, and deleting a Flow is never done on the person's behalf.
+ */
+data class AppliedRevision(val messageId: String, val flowId: String, val before: Flow?, val after: Flow)
 
 @HiltViewModel
 class AiAssistantViewModel @Inject constructor(
@@ -46,13 +57,15 @@ class AiAssistantViewModel @Inject constructor(
     private val credentialRepository: CredentialRepository,
     private val aiSessionRepository: AiSessionRepository,
     private val http: HttpGateway,
-    variableRepository: WorkflowVariableRepository,
+    private val agent: AiWorkflowAgent,
+    private val catalog: AssistantCatalog,
+    private val vault: CredentialVaultBridge,
+    /** Screens attach to this to show approve/deny cards for tools that act on the world. */
+    val approvalRelay: ApprovalRelay,
     savedStateHandle: SavedStateHandle,
 ) : ViewModel() {
 
-    private val agent = AiWorkflowAgent(http)
     private val modelDiscovery = ModelDiscoveryService(http)
-    private val credentialFields = CredentialFieldResolver(variableRepository)
     private val flowId: String? = savedStateHandle["flowId"]
 
     private val _uiState = MutableStateFlow(AiAssistantUiState())
@@ -102,21 +115,15 @@ class AiAssistantViewModel @Inject constructor(
 
             val credId = config.credentialId
             if (!credId.isNullOrBlank()) {
-                val storedFields = credentialRepository.getFields(credId)
-                // Non-secret fields may be expressions (spec P3); a bad one is shown, the config keeps its last good values.
                 val credType = _uiState.value.savedCredentials.firstOrNull { it.id == credId }?.type
                     ?: runCatching { credentialRepository.list().firstOrNull { it.id == credId }?.type }.getOrNull()
-                val resolvedCred = storedFields?.let { credentialFields.resolve(credType, it) }
-                resolvedCred?.errors?.values?.firstOrNull()?.let { msg ->
-                    _uiState.update { it.copy(modelDiscoveryMessage = msg, modelDiscoveryIsError = true) }
-                }
-                val credFields = resolvedCred?.takeIf { it.errors.isEmpty() }?.fields
-                if (credFields != null) {
-                    val apiKey = credFields["apiKey"] ?: credFields["token"] ?: ""
-                    val baseUrl = credFields["baseUrl"] ?: ""
-                    config = config.copy(
-                        apiKey = if (apiKey.isNotBlank()) apiKey else config.apiKey,
-                        baseUrl = if (baseUrl.isNotBlank()) baseUrl else config.baseUrl,
+                // Non-secret fields may be expressions (spec P3); a bad one is shown, the config keeps its last good values.
+                when (val loaded = vault.load(credId, credType)) {
+                    is CredentialVaultBridge.Loaded.Failed ->
+                        _uiState.update { it.copy(modelDiscoveryMessage = loaded.message, modelDiscoveryIsError = true) }
+                    is CredentialVaultBridge.Loaded.Ok -> config = config.copy(
+                        apiKey = loaded.credential.apiKey.ifBlank { config.apiKey },
+                        baseUrl = loaded.credential.baseUrl.ifBlank { config.baseUrl },
                     )
                 }
             }
@@ -266,24 +273,21 @@ class AiAssistantViewModel @Inject constructor(
     fun selectCredential(credentialId: String) {
         viewModelScope.launch {
             val cred = _uiState.value.savedCredentials.find { it.id == credentialId } ?: return@launch
-            val resolvedCred = credentialFields.resolve(cred.type, credentialRepository.getFields(credentialId).orEmpty())
-            resolvedCred.errors.values.firstOrNull()?.let { msg ->
-                _uiState.update { it.copy(modelDiscoveryMessage = msg, modelDiscoveryIsError = true) }
+            val loaded = vault.load(credentialId, cred.type, cred.name)
+            if (loaded is CredentialVaultBridge.Loaded.Failed) {
+                _uiState.update { it.copy(modelDiscoveryMessage = loaded.message, modelDiscoveryIsError = true) }
                 return@launch
             }
-            val fields = resolvedCred.fields
-            val apiKey = fields["apiKey"] ?: fields["token"] ?: ""
-            val baseUrl = fields["baseUrl"] ?: ""
-            val provider = AiProvider.fromKey(cred.type)
-
+            val c = (loaded as CredentialVaultBridge.Loaded.Ok).credential
             val updatedConfig = _uiState.value.providerConfig.copy(
-                provider = provider,
-                apiKey = apiKey,
-                baseUrl = baseUrl,
+                provider = c.provider,
+                apiKey = c.apiKey,
+                baseUrl = c.baseUrl,
                 credentialId = credentialId,
                 credentialName = cred.name,
             )
 
+            // Only the pointer is stored (toMap leaves the key out); the key stays in the named credential.
             credentialRepository.save(
                 id = "ai_provider_config",
                 type = "ai_assistant",
@@ -294,7 +298,7 @@ class AiAssistantViewModel @Inject constructor(
             _uiState.update { state ->
                 state.copy(providerConfig = updatedConfig)
             }
-            discoverModels(provider, baseUrl, apiKey)
+            discoverModels(c.provider, c.baseUrl, c.apiKey)
         }
     }
 
@@ -365,26 +369,25 @@ class AiAssistantViewModel @Inject constructor(
                 isGenerating = true,
             )
         }
+        // The question survives a crash or a killed app even if the answer never arrives.
+        persistCurrentSession()
 
         viewModelScope.launch {
+            val base = _uiState.value.currentFlow
             val response = agent.executeTurn(
                 prompt = trimmed,
-                currentFlow = _uiState.value.currentFlow,
+                currentFlow = base,
                 config = _uiState.value.providerConfig,
                 chatHistory = updatedMessages,
-            )
+            ).let { if (it.flowProposal != null) it.copy(baseUpdatedAt = base?.updatedAt) else it }
 
-            val proposed = response.flowProposal
-            if (proposed != null) {
-                flowRepository.save(proposed)
-            }
-
+            // P0: the answer is a PROPOSAL held in memory. Nothing is written to the repository here;
+            // only applyProposedFlow (the person's explicit Apply) saves, and it keeps an Undo copy.
             _uiState.update {
                 it.copy(
                     messages = it.messages + response,
                     isGenerating = false,
-                    currentFlow = proposed ?: it.currentFlow,
-                    activeProposedFlow = null,
+                    activeProposedFlow = response.flowProposal,
                 )
             }
             persistCurrentSession()
@@ -413,23 +416,73 @@ class AiAssistantViewModel @Inject constructor(
         }
     }
 
+    /**
+     * The person's explicit Apply. Checks the proposal against the catalog again, refuses it when the Flow changed
+     * since it was made, saves, and remembers the replaced Flow for [undoLastApply]. A [flow] that is not a pending
+     * proposal (the Flow is already what is saved) only calls [onApplied].
+     */
     fun applyProposedFlow(flow: Flow, onApplied: (String) -> Unit) {
         viewModelScope.launch {
-            flowRepository.save(flow)
-            val ackMessage = AiChatMessage(
-                sender = MessageSender.Assistant,
-                text = "Applied \"${flow.name}\" to your local workflows! You can inspect and run it directly on the canvas.",
-            )
+            val message = _uiState.value.messages.lastOrNull { it.flowProposal == flow }
+            if (message == null) {
+                onApplied(flow.id)
+                return@launch
+            }
+            val current = flowRepository.flow(flow.id)
+            when (val plan = ProposalApply.plan(flow, message.baseUpdatedAt, current, catalog, System.currentTimeMillis())) {
+                is ApplyPlan.Ready -> {
+                    flowRepository.save(plan.save)
+                    val ack = AiChatMessage(
+                        sender = MessageSender.Assistant,
+                        text = buildString {
+                            append("Applied \"${plan.save.name}\". ")
+                            append(if (plan.undoTo != null) "Tap **Undo** to put your previous version back." else "It is a new Flow in your list.")
+                            plan.warnings.forEach { append("\n\n").append(it) }
+                        },
+                    )
+                    _uiState.update {
+                        it.copy(
+                            currentFlow = plan.save,
+                            activeProposedFlow = null,
+                            messages = it.messages + ack,
+                            viewMode = AssistantViewMode.Chat,
+                            lastApplied = AppliedRevision(message.id, plan.save.id, plan.undoTo, plan.save),
+                        )
+                    }
+                    persistCurrentSession()
+                    onApplied(plan.save.id)
+                }
+                is ApplyPlan.Conflict -> postNotice(plan.message)
+                is ApplyPlan.Invalid -> postNotice("I did not apply it, because:\n" + plan.errors.take(5).joinToString("\n") { "- $it" })
+            }
+        }
+    }
+
+    /** Puts back the Flow that the last Apply replaced. Not offered when that Apply created a new Flow. */
+    fun undoLastApply() {
+        val applied = _uiState.value.lastApplied ?: return
+        val before = applied.before ?: return
+        viewModelScope.launch {
+            val current = flowRepository.flow(applied.flowId)
+            if (current == null || current.updatedAt != applied.after.updatedAt) {
+                postNotice("The Flow was changed after you applied the proposal, so I did not undo it. Use the canvas to change it back.")
+                return@launch
+            }
+            val restored = before.copy(updatedAt = System.currentTimeMillis())
+            flowRepository.save(restored)
             _uiState.update {
                 it.copy(
-                    currentFlow = flow,
-                    activeProposedFlow = null,
-                    messages = it.messages + ackMessage,
-                    viewMode = AssistantViewMode.Chat,
+                    currentFlow = restored,
+                    lastApplied = null,
+                    messages = it.messages + AiChatMessage(sender = MessageSender.Assistant, text = "Undone. \"${restored.name}\" is back to how it was before."),
                 )
             }
             persistCurrentSession()
-            onApplied(flow.id)
         }
+    }
+
+    private fun postNotice(text: String) {
+        _uiState.update { it.copy(messages = it.messages + AiChatMessage(sender = MessageSender.Assistant, text = text)) }
+        persistCurrentSession()
     }
 }

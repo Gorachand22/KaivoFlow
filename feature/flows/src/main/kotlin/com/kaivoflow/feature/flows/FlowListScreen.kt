@@ -219,7 +219,8 @@ class FlowListViewModel @Inject constructor(
         credentialRepository.observeCredentials(),
         flowRepository.observeSummaries(),
     ) { credList, flows ->
-        credList.map { cred ->
+        // "ai_provider_config" is the assistant's own pointer row, not a credential the person made.
+        credList.filter { it.id != "ai_provider_config" }.map { cred ->
             cred.copy(usedInFlowCount = 0)
         }
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())

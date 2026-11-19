@@ -10,6 +10,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.text.AnnotatedString
@@ -22,6 +23,7 @@ import com.kaivoflow.core.model.ParamValue
 import com.kaivoflow.core.model.SchemaInference
 import com.kaivoflow.core.model.StepNode
 import com.kaivoflow.feature.canvas.inspector.logic.ErrorSurface
+import com.kaivoflow.feature.canvas.input.GlobalExpressionScope
 import com.kaivoflow.feature.canvas.inspector.mapper.DragMapController
 import com.kaivoflow.feature.canvas.inspector.mapper.MapperTray
 import com.kaivoflow.feature.canvas.inspector.mapper.TraySection
@@ -120,7 +122,13 @@ fun ParamsPane(
         Box(Modifier.weight(1f).fillMaxWidth()) {
             when (state.paramsTab) {
                 ParamsTab.Parameters -> ParametersPage(session, state, node, credentials, actions, controller, dockTray, showTest, onMapTo)
-                ParamsTab.Behaviour -> BehaviourTab(node, enabled = !state.readOnly, onEdit = actions.onEditStep)
+                ParamsTab.Behaviour -> {
+                    // Notes take expressions with the global scope ($vars, $now, $today, flow info); see ExprSurfaces "step.notes".
+                    val notesScope = remember(actions.vars, actions.flowId, actions.flowName) {
+                        GlobalExpressionScope(vars = actions.vars, flowId = actions.flowId, flowName = actions.flowName)
+                    }
+                    BehaviourTab(node, enabled = !state.readOnly, onEdit = actions.onEditStep, notesScope = notesScope)
+                }
                 ParamsTab.About -> AboutTab(spec, state.schema)
             }
         }

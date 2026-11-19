@@ -40,9 +40,13 @@ import com.kaivoflow.core.design.KaivoShapes
 import com.kaivoflow.core.design.KaivoTheme
 import com.kaivoflow.core.design.SectionHeader
 import com.kaivoflow.core.design.StatusBadge
+import com.kaivoflow.core.model.ExprFieldCodec
+import com.kaivoflow.core.model.ExprSurfaces
 import com.kaivoflow.core.model.NodeSpec
 import com.kaivoflow.core.model.ParamSchema
 import com.kaivoflow.core.model.StepNode
+import com.kaivoflow.feature.canvas.input.ExpressionScopeProvider
+import com.kaivoflow.feature.canvas.input.KaivoInputField
 import com.kaivoflow.feature.canvas.inspector.logic.AboutModel
 import com.kaivoflow.feature.canvas.inspector.logic.OnErrorChoice
 import com.kaivoflow.feature.canvas.inspector.logic.StepBehaviour
@@ -159,10 +163,11 @@ private fun <T> ChoiceRow(title: String, options: List<Pair<String, T>>, selecte
  * "Always output data", "Execute once" and "Show note on canvas" need new Step fields and engine support and are not offered yet.
  */
 @Composable
-fun BehaviourTab(node: StepNode, enabled: Boolean, onEdit: ((StepNode) -> StepNode) -> Unit) {
+fun BehaviourTab(node: StepNode, enabled: Boolean, onEdit: ((StepNode) -> StepNode) -> Unit, notesScope: ExpressionScopeProvider? = null) {
     val colors = KaivoTheme.colors
     val retryOn = StepBehaviour.retryOn(node)
-    var notes by remember(node.id) { mutableStateOf(node.notes) }
+    // Notes are stored with ExprFieldCodec: old plain text reads as a fixed value, an expression is the {"kx":..} form.
+    var notes by remember(node.id) { mutableStateOf(ExprFieldCodec.decode(node.notes)) }
     Column(Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).padding(horizontal = 16.dp, vertical = 8.dp)) {
         SectionHeader("When something goes wrong")
         ChoiceRow("On error", OnErrorChoice.entries.map { it.label to it }, StepBehaviour.onErrorOf(node), enabled) { c -> onEdit { StepBehaviour.setOnError(it, c) } }
@@ -182,13 +187,15 @@ fun BehaviourTab(node: StepNode, enabled: Boolean, onEdit: ((StepNode) -> StepNo
         ) { s -> onEdit { StepBehaviour.setTimeoutSeconds(it, s) } }
         Spacer(Modifier.height(12.dp))
         SectionHeader("Notes")
-        OutlinedTextField(
+        KaivoInputField(
             value = notes,
-            onValueChange = { notes = it; onEdit { n -> StepBehaviour.setNotes(n, it) } },
+            onValueChange = { notes = it; onEdit { n -> StepBehaviour.setNotes(n, ExprFieldCodec.encode(it)) } },
+            label = "What this Step is for",
+            fieldId = "step.notes",
+            scope = if (ExprSurfaces.allows("step.notes")) notesScope else null,
             enabled = enabled,
-            label = { Text("What this Step is for") },
+            multiline = true,
             minLines = 3,
-            modifier = Modifier.fillMaxWidth(),
         )
         Spacer(Modifier.height(24.dp))
     }

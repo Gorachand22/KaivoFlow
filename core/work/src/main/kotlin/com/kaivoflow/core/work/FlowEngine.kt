@@ -71,6 +71,8 @@ class FlowEngine @Inject constructor(
     private val variableRepository: WorkflowVariableRepository,
     private val stepData: StepDataStore,
     private val pinStore: PinStore,
+    /** Answers the agent's "may I do this?" questions; a screen that shows the card attaches to it. Denies when none is attached. */
+    private val approvals: com.kaivoflow.core.ai.ApprovalRelay,
 ) {
     // Step data capture: redacted, limited and written off the Run's thread (bounded channel).
     private val captureRecorder: ChannelStepExecutionRecorder by lazy {
@@ -86,7 +88,7 @@ class FlowEngine @Inject constructor(
         KaivoExpressionEvaluator()
     }
 
-    private val registry: NodeRegistry by lazy { NodeCatalog.registry(deviceGateway) }
+    private val registry: NodeRegistry by lazy { NodeCatalog.registry(deviceGateway, approvals) }
 
     suspend fun resolveEffectiveFlow(flow: Flow): Flow {
         val scopedVars = runCatching { variableRepository.resolveVariables(flow.groupId) }.getOrNull().orEmpty()

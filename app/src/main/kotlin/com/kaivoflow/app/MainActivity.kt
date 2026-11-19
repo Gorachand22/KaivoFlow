@@ -51,6 +51,7 @@ import javax.inject.Inject
 class MainActivity : ComponentActivity() {
 
     @Inject lateinit var scheduler: FlowScheduler
+    @Inject lateinit var approvals: com.kaivoflow.core.ai.ApprovalRelay
 
     private val dispatchScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
@@ -62,6 +63,8 @@ class MainActivity : ComponentActivity() {
             KaivoTheme {
                 Surface(color = KaivoTheme.colors.canvasVoid) {
                     KaivoNavHost()
+                    // Approve/deny for agent tools that start outside a chat (Test Step, hand-started Run).
+                    com.kaivoflow.feature.flows.ai.ApprovalDialogHost(approvals)
                 }
             }
         }

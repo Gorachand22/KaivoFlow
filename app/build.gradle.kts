@@ -92,6 +92,7 @@ dependencies {
     implementation(project(":core:model"))
     implementation(project(":core:engine"))
     implementation(project(":core:expressions"))
+    implementation(project(":core:ai"))
     implementation(project(":core:nodes"))
     implementation(project(":core:data"))
     implementation(project(":core:network"))
