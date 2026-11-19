@@ -2,6 +2,19 @@ package com.kaivoflow.feature.settings
 
 import android.content.Context
 import android.content.Intent
+import androidx.compose.animation.Crossfade
+import androidx.compose.animation.animateContentSize
+import androidx.compose.animation.core.tween
+import androidx.compose.ui.unit.IntSize
+import com.kaivoflow.core.design.AnimatedCounter
+import com.kaivoflow.core.design.AnimatedStatusBadge
+import com.kaivoflow.core.design.HealthRing
+import com.kaivoflow.core.design.KaivoMotionTokens
+import com.kaivoflow.core.design.MotionTokenValues
+import com.kaivoflow.core.design.SuccessCheck
+import com.kaivoflow.core.design.kaivoPressable
+import com.kaivoflow.core.design.staggeredEntrance
+import com.kaivoflow.core.design.tweenSpec
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.ui.draw.clip
@@ -141,12 +154,25 @@ fun ReliabilityCenterScreen(onBack: () -> Unit, viewModel: ReliabilityViewModel 
         SegmentedPill(listOf("Health", "Event log"), tab, { tab = it })
         Spacer(Modifier.height(16.dp))
         val s = snapshot
-        if (s == null) {
-            Text("Measuring…", color = colors.inkSecondary, style = MaterialTheme.typography.bodyMedium)
-        } else if (tab == 0) {
-            HealthTab(s, selfTests, viewModel, context)
-        } else {
-            EventsTab(events, viewModel)
+        val policy = KaivoTheme.motionPolicy
+        // 0 = measuring, 1 = health, 2 = event log. Each view is its own Column so Crossfade does not stack siblings.
+        val view = when {
+            s == null -> 0
+            tab == 0 -> 1
+            else -> 2
+        }
+        Crossfade(
+            targetState = view,
+            animationSpec = tween(policy.ms(MotionTokenValues.STANDARD_MS)),
+            label = "reliabilityView",
+        ) { current ->
+            Column(Modifier.fillMaxWidth()) {
+                when {
+                    s == null -> Text("Measuring…", color = colors.inkSecondary, style = MaterialTheme.typography.bodyMedium)
+                    current == 1 -> HealthTab(s, selfTests, viewModel, context)
+                    else -> EventsTab(events, viewModel)
+                }
+            }
         }
         Spacer(Modifier.height(24.dp))
         GhostButton("Back", onClick = onBack)
@@ -159,30 +185,39 @@ private fun fmtTime(ms: Long?): String = if (ms == null) "never" else SimpleDate
 private fun HealthTab(s: ReliabilitySnapshot, selfTests: Map<SelfTestId, SelfTestOutcome>, vm: ReliabilityViewModel, context: Context) {
     val colors = KaivoTheme.colors
     val kind = when (s.score.band.name) { "Reliable" -> BadgeKind.Success; "MostlyReliable" -> BadgeKind.Gold; "AtRisk" -> BadgeKind.Warning; else -> BadgeKind.Error }
+    val ringColor = when (kind) {
+        BadgeKind.Success -> colors.statusSuccess
+        BadgeKind.Warning -> colors.statusWarning
+        BadgeKind.Error -> colors.statusError
+        else -> colors.royalGold
+    }
     Column(Modifier.fillMaxWidth().clip(KaivoShapes.stepCard).background(colors.surfaceCard).border(1.dp, colors.hairline, KaivoShapes.stepCard).padding(16.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically) {
-            Text("${s.score.score}", style = MaterialTheme.typography.displayLarge, color = colors.royalGold)
-            Spacer(Modifier.width(12.dp))
-            StatusBadge(s.score.band.label, kind)
+            // The ring springs to the score; the number ticks up with it.
+            HealthRing(score = s.score.score, color = ringColor) {
+                AnimatedCounter(value = s.score.score, style = MaterialTheme.typography.displayLarge, color = colors.royalGold)
+            }
+            Spacer(Modifier.width(16.dp))
+            AnimatedStatusBadge(s.score.band.label, kind)
         }
         s.score.capReason?.let { Text(it, style = MaterialTheme.typography.bodyMedium, color = colors.inkSecondary) }
         Spacer(Modifier.height(8.dp))
         Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-            StatusBadge("Engine ${s.engineState}", if (s.engineState.equals("running", true)) BadgeKind.Success else BadgeKind.Warning)
+            AnimatedStatusBadge("Engine ${s.engineState}", if (s.engineState.equals("running", true)) BadgeKind.Success else BadgeKind.Warning)
             StatusBadge("Heartbeat ${fmtTime(s.lastHeartbeatAt)}", BadgeKind.Neutral)
             StatusBadge("${s.publishedFlows} live", BadgeKind.Neutral)
         }
     }
     if (s.fixFirst.isNotEmpty()) {
         Spacer(Modifier.height(20.dp)); SectionHeader("Fix first")
-        s.fixFirst.take(3).forEach { CheckRow(it, vm, context) }
+        s.fixFirst.take(3).forEachIndexed { i, c -> CheckRow(c, vm, context, i) }
     }
     CheckGroup.values().forEach { g ->
         val rows = s.checks.filter { it.group == g && it.state != CheckState.NotNeeded }
         if (rows.isNotEmpty()) {
             Spacer(Modifier.height(20.dp))
             SectionHeader(when (g) { CheckGroup.Critical -> "Critical"; CheckGroup.Recommended -> "Recommended"; CheckGroup.Informational -> "Good to know" })
-            rows.forEach { CheckRow(it, vm, context) }
+            rows.forEachIndexed { i, c -> CheckRow(c, vm, context, i) }
         }
     }
     if (s.flowHealth.isNotEmpty()) {
@@ -193,7 +228,7 @@ private fun HealthTab(s: ReliabilitySnapshot, selfTests: Map<SelfTestId, SelfTes
     Spacer(Modifier.height(8.dp))
     selfTests.values.sortedBy { it.id }.forEach {
         Row(Modifier.fillMaxWidth().padding(vertical = 4.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            StatusBadge(it.state.name, when (it.state) { SelfTestState.Pass -> BadgeKind.Success; SelfTestState.Fail -> BadgeKind.Error; else -> BadgeKind.Neutral })
+            AnimatedStatusBadge(it.state.name, when (it.state) { SelfTestState.Pass -> BadgeKind.Success; SelfTestState.Fail -> BadgeKind.Error; else -> BadgeKind.Neutral })
             Text("${it.id.title}: ${it.detail}", style = MaterialTheme.typography.bodyMedium, color = colors.inkSecondary, modifier = Modifier.weight(1f))
         }
     }
@@ -204,8 +239,9 @@ private fun HealthTab(s: ReliabilitySnapshot, selfTests: Map<SelfTestId, SelfTes
 }
 
 @Composable
-private fun CheckRow(c: CheckResult, vm: ReliabilityViewModel, context: Context) {
+private fun CheckRow(c: CheckResult, vm: ReliabilityViewModel, context: Context, index: Int = 0) {
     val colors = KaivoTheme.colors
+    val policy = KaivoTheme.motionPolicy
     var open by remember { mutableStateOf(false) }
     val (label, kind) = when (c.state) {
         CheckState.Ok -> "OK" to BadgeKind.Success
@@ -216,12 +252,21 @@ private fun CheckRow(c: CheckResult, vm: ReliabilityViewModel, context: Context)
         CheckState.NotNeeded -> "Not needed" to BadgeKind.Neutral
     }
     Column(
-        Modifier.fillMaxWidth().padding(top = 8.dp).clip(KaivoShapes.stepCard).background(colors.surfaceCard)
-            .border(1.dp, colors.hairline, KaivoShapes.stepCard).clickable { open = !open }.padding(14.dp),
+        Modifier.fillMaxWidth().padding(top = 8.dp)
+            .staggeredEntrance(index, key = c.title)
+            .animateContentSize(policy.tweenSpec<IntSize>(MotionTokenValues.STANDARD_MS, KaivoMotionTokens.flowing))
+            .kaivoPressable(onClick = { open = !open }, cornerRadius = 20.dp)
+            .clip(KaivoShapes.stepCard).background(colors.surfaceCard)
+            .border(1.dp, colors.hairline, KaivoShapes.stepCard).padding(14.dp),
     ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Text(c.title, style = MaterialTheme.typography.titleMedium, color = colors.inkPrimary, modifier = Modifier.weight(1f))
-            StatusBadge(label, kind)
+            // A check that turns OK draws its tick; every other state swaps through the badge crossfade.
+            if (c.state == CheckState.Ok) {
+                SuccessCheck(diameter = 18.dp)
+                Spacer(Modifier.width(8.dp))
+            }
+            AnimatedStatusBadge(label, kind)
         }
         Spacer(Modifier.height(4.dp))
         Text(c.plain, style = MaterialTheme.typography.bodyMedium, color = colors.inkSecondary)

@@ -1,10 +1,5 @@
 package com.kaivoflow.core.design
 
-import androidx.compose.animation.core.RepeatMode
-import androidx.compose.animation.core.animateFloat
-import androidx.compose.animation.core.infiniteRepeatable
-import androidx.compose.animation.core.rememberInfiniteTransition
-import androidx.compose.animation.core.tween
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -485,19 +480,10 @@ fun ErrorBlock(
     }
 }
 
-/** Skeleton rows in the shape of list content. Static when reduced motion is on. */
+/** Skeleton rows in the shape of list content. One shared shimmer clock; static when motion is reduced. */
 @Composable
 fun SkeletonRows(modifier: Modifier = Modifier, rows: Int = 6) {
-    val colors = KaivoTheme.colors
-    val reduce = KaivoTheme.motion.reduceMotion
-    val transition = rememberInfiniteTransition(label = "skeleton")
-    val pulse by transition.animateFloat(
-        initialValue = 0.35f,
-        targetValue = 0.75f,
-        animationSpec = infiniteRepeatable(tween(durationMillis = 900), RepeatMode.Reverse),
-        label = "skeletonAlpha",
-    )
-    val a = if (reduce) 0.5f else pulse
+    val phase = rememberShimmerPhase()
     Column(
         modifier = modifier
             .fillMaxWidth()
@@ -507,14 +493,13 @@ fun SkeletonRows(modifier: Modifier = Modifier, rows: Int = 6) {
     ) {
         repeat(rows) { i ->
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Box(Modifier.size(28.dp).clip(KaivoShapes.chip).background(colors.surfaceElevated.copy(alpha = a)))
+                SkeletonBlock(phase, Modifier.size(28.dp), KaivoShapes.chip)
                 Spacer(Modifier.width(10.dp))
-                Box(
+                SkeletonBlock(
+                    phase,
                     Modifier
                         .weight(if (i % 2 == 0) 0.7f else 0.5f)
-                        .height(14.dp)
-                        .clip(RoundedCornerShape(7.dp))
-                        .background(colors.surfaceElevated.copy(alpha = a)),
+                        .height(14.dp),
                 )
                 Spacer(Modifier.weight(if (i % 2 == 0) 0.3f else 0.5f))
             }

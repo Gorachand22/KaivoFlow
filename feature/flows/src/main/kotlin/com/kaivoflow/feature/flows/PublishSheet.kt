@@ -1,5 +1,21 @@
 package com.kaivoflow.feature.flows
 
+import androidx.compose.animation.Crossfade
+import androidx.compose.animation.animateContentSize
+import androidx.compose.animation.core.tween
+import androidx.compose.foundation.layout.Box
+import androidx.compose.ui.draw.clip
+import com.kaivoflow.core.design.AnimatedStatusBadge
+import com.kaivoflow.core.design.KaivoMotionTokens
+import com.kaivoflow.core.design.KaivoShapes
+import com.kaivoflow.core.design.MotionTokenValues
+import com.kaivoflow.core.design.SuccessCheck
+import com.kaivoflow.core.design.goldSweep
+import com.kaivoflow.core.design.rememberKaivoHaptics
+import com.kaivoflow.core.design.rememberShakeState
+import com.kaivoflow.core.design.shake
+import com.kaivoflow.core.design.staggeredEntrance
+import com.kaivoflow.core.design.tweenSpec
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -101,18 +117,45 @@ fun PublishSheet(
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
 
     ModalBottomSheet(onDismissRequest = onDismiss, sheetState = sheetState, containerColor = colors.surfaceAtelier, dragHandle = { SheetDragHandle(Modifier.padding(top = 12.dp, bottom = 8.dp)) }) {
-        Column(Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).padding(horizontal = 16.dp).padding(bottom = 24.dp)) {
-            val result = state.result
-            val preview = state.preview
-            when {
-                state.loading -> Text("Checking this Flow…", color = colors.inkSecondary, style = MaterialTheme.typography.bodyMedium)
-                preview == null -> Text("This Flow no longer exists.", color = colors.inkSecondary)
-                result != null && result.ok -> PublishedResult(result, onDismiss)
-                else -> Checklist(state, preview, onFix, onAck = viewModel::acknowledge, onPublish = { viewModel.publish(flowId) }, result = result)
+        val result = state.result
+        val preview = state.preview
+        val phase = when {
+            state.loading -> PublishPhase.Loading
+            preview == null -> PublishPhase.Missing
+            result != null && result.ok -> PublishPhase.Published
+            else -> PublishPhase.Checklist
+        }
+        val policy = KaivoTheme.motionPolicy
+        Column(
+            Modifier
+                .fillMaxWidth()
+                .verticalScroll(rememberScrollState())
+                .padding(horizontal = 16.dp)
+                .padding(bottom = 24.dp)
+                .animateContentSize(policy.tweenSpec(MotionTokenValues.STANDARD_MS, KaivoMotionTokens.flowing)),
+        ) {
+            // Checking, checklist and the Live result crossfade; the sheet height eases between them.
+            Crossfade(
+                targetState = phase,
+                animationSpec = tween(policy.ms(MotionTokenValues.STANDARD_MS)),
+                label = "publishPhase",
+            ) { current ->
+                Column(Modifier.fillMaxWidth()) {
+                    when (current) {
+                        PublishPhase.Loading -> Text("Checking this Flow…", color = colors.inkSecondary, style = MaterialTheme.typography.bodyMedium)
+                        PublishPhase.Missing -> Text("This Flow no longer exists.", color = colors.inkSecondary)
+                        PublishPhase.Published -> if (result != null) PublishedResult(result, onDismiss)
+                        PublishPhase.Checklist -> if (preview != null) {
+                            Checklist(state, preview, onFix, onAck = viewModel::acknowledge, onPublish = { viewModel.publish(flowId) }, result = result)
+                        }
+                    }
+                }
             }
         }
     }
 }
+
+private enum class PublishPhase { Loading, Missing, Checklist, Published }
 
 @Composable
 private fun Checklist(
@@ -124,7 +167,19 @@ private fun Checklist(
     result: ActivationResult?,
 ) {
     val colors = KaivoTheme.colors
+    val policy = KaivoTheme.motionPolicy
+    val haptics = rememberKaivoHaptics()
+    val shake = rememberShakeState()
     val report = preview.report
+    val armFailed = result != null && result.status == ActivationStatus.ArmFailed
+    // A failed arm shakes the sheet content once and gives a rejecting haptic.
+    LaunchedEffect(armFailed) {
+        if (armFailed) {
+            haptics.reject()
+            shake.shake(policy)
+        }
+    }
+    Column(Modifier.shake(shake)) {
     Text(if (preview.isPublished) "Publish changes" else "Publish this Flow", style = MaterialTheme.typography.titleLarge, color = colors.inkPrimary)
     Spacer(Modifier.height(4.dp))
     Text(
@@ -133,11 +188,11 @@ private fun Checklist(
     )
     if (report.errors.isNotEmpty()) {
         Spacer(Modifier.height(16.dp)); SectionHeader("Must fix")
-        report.errors.forEach { IssueRow(it, BadgeKind.Error, "Fix", onFix) }
+        report.errors.forEachIndexed { i, issue -> Box(Modifier.staggeredEntrance(i, key = issue.message)) { IssueRow(issue, BadgeKind.Error, "Fix", onFix) } }
     }
     if (report.warnings.isNotEmpty()) {
         Spacer(Modifier.height(16.dp)); SectionHeader("Worth knowing")
-        report.warnings.forEach { IssueRow(it, BadgeKind.Warning, null, onFix) }
+        report.warnings.forEachIndexed { i, issue -> Box(Modifier.staggeredEntrance(i, key = issue.message)) { IssueRow(issue, BadgeKind.Warning, null, onFix) } }
     }
     if (result != null && result.status == ActivationStatus.ArmFailed) {
         Spacer(Modifier.height(16.dp)); SectionHeader("Could not start")
@@ -155,9 +210,13 @@ private fun Checklist(
         },
         onClick = { if (needsAck) onAck() else onPublish() },
         enabled = report.canPublish && !state.busy,
-        modifier = Modifier.fillMaxWidth(),
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(KaivoShapes.pill)
+            .goldSweep(trigger = if (state.busy) "busy" else null),
         icon = "bolt",
     )
+    }
 }
 
 @Composable
@@ -178,7 +237,7 @@ private fun SparkLines(result: ActivationResult) {
     val colors = KaivoTheme.colors
     result.sparks.forEach { (id, st) ->
         Row(Modifier.fillMaxWidth().padding(top = 8.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            StatusBadge(if (st.isArmed) "Armed" else if (st.kind.name == "Pending") "Waiting" else "Needs attention", if (st.isArmed) BadgeKind.Success else if (st.kind.name == "Pending") BadgeKind.Neutral else BadgeKind.Error)
+            AnimatedStatusBadge(if (st.isArmed) "Armed" else if (st.kind.name == "Pending") "Waiting" else "Needs attention", if (st.isArmed) BadgeKind.Success else if (st.kind.name == "Pending") BadgeKind.Neutral else BadgeKind.Error)
             Text(RegistrationRows.resultLine(st), style = MaterialTheme.typography.bodyMedium, color = colors.inkPrimary, modifier = Modifier.weight(1f))
         }
     }
@@ -187,13 +246,22 @@ private fun SparkLines(result: ActivationResult) {
 @Composable
 private fun PublishedResult(result: ActivationResult, onDone: () -> Unit) {
     val colors = KaivoTheme.colors
-    Text("Live", style = MaterialTheme.typography.titleLarge, color = colors.statusSuccess)
-    Spacer(Modifier.height(4.dp))
-    Text("Live. KaivoFlow will keep this running in the background.", style = MaterialTheme.typography.bodyMedium, color = colors.inkSecondary)
-    Spacer(Modifier.height(12.dp))
-    SparkLines(result)
-    Spacer(Modifier.height(20.dp))
-    GoldButton("Done", onClick = onDone, modifier = Modifier.fillMaxWidth())
+    val haptics = rememberKaivoHaptics()
+    // The premium moment: the check draws itself, a gold sweep crosses the card, one confirm haptic.
+    LaunchedEffect(Unit) { haptics.confirm() }
+    Column(Modifier.fillMaxWidth().clip(KaivoShapes.stepCard).goldSweep(trigger = Unit)) {
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+            SuccessCheck(diameter = 40.dp, color = colors.statusSuccess)
+            Column {
+                Text("Live", style = MaterialTheme.typography.titleLarge, color = colors.statusSuccess)
+                Text("Live. KaivoFlow will keep this running in the background.", style = MaterialTheme.typography.bodyMedium, color = colors.inkSecondary)
+            }
+        }
+        Spacer(Modifier.height(12.dp))
+        SparkLines(result)
+        Spacer(Modifier.height(20.dp))
+        GoldButton("Done", onClick = onDone, modifier = Modifier.fillMaxWidth())
+    }
 }
 
 /**

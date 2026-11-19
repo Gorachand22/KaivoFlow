@@ -1,7 +1,12 @@
 package com.kaivoflow.feature.canvas.render
 
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -25,6 +30,8 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.State
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -32,10 +39,11 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.draw.drawWithCache
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.input.pointer.pointerInput
@@ -49,10 +57,25 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
+import com.kaivoflow.core.design.AccentRole
+import com.kaivoflow.core.design.AnimatedStatusBadge
 import com.kaivoflow.core.design.BadgeKind
+import com.kaivoflow.core.design.KaivoMotionTokens
 import com.kaivoflow.core.design.KaivoIcons
 import com.kaivoflow.core.design.KaivoShapes
 import com.kaivoflow.core.design.KaivoTheme
+import com.kaivoflow.core.design.MotionTokenValues
+import com.kaivoflow.core.design.StepEffect
+import com.kaivoflow.core.design.StepMotion
+import com.kaivoflow.core.design.StepVisual
+import com.kaivoflow.core.design.floatSpring
+import com.kaivoflow.core.design.pulsingRing
+import com.kaivoflow.core.design.rememberKaivoHaptics
+import com.kaivoflow.core.design.rememberSettleState
+import com.kaivoflow.core.design.rememberShakeState
+import com.kaivoflow.core.design.settleScale
+import com.kaivoflow.core.design.shake
+import com.kaivoflow.core.design.tweenSpec
 import com.kaivoflow.core.design.StatusBadge
 import com.kaivoflow.core.design.StepMedallion
 import com.kaivoflow.core.model.StepRunStatus
@@ -94,27 +117,89 @@ fun JewelStepCard(
         label = "cardBorder",
     )
 
-    val running = step.status == StepRunStatus.Running
-    val glowAlpha = if ((running || isHighlighted) && !motion.reduceMotion) {
-        val infinite = androidx.compose.animation.core.rememberInfiniteTransition(label = "cardGlow")
-        infinite.animateFloat(
-            initialValue = if (isPressed) 0.6f else 0.25f,
-            targetValue = if (isPressed) 1f else 0.75f,
-            animationSpec = androidx.compose.animation.core.infiniteRepeatable(
-                animation = androidx.compose.animation.core.tween(
-                    motion.breathingDurationMs.toInt(),
-                    easing = androidx.compose.animation.core.FastOutSlowInEasing,
-                ),
-                repeatMode = androidx.compose.animation.core.RepeatMode.Reverse,
+    val policy = KaivoTheme.motionPolicy
+    val visual = StepMotion.visual(step.status)
+    val look = StepMotion.look(visual)
+    val running = visual == StepVisual.Running
+    val stateColor = when (look.accent) {
+        AccentRole.Gold -> colors.royalGold
+        AccentRole.Success -> colors.statusSuccess
+        AccentRole.Error -> colors.statusError
+        AccentRole.Muted -> colors.inkMuted
+        AccentRole.None -> colors.hairline
+    }
+    val animatedStateColor by animateColorAsState(
+        targetValue = stateColor,
+        animationSpec = policy.tweenSpec<Color>(MotionTokenValues.STANDARD_MS),
+        label = "cardStateColor",
+    )
+    val stateBorderAlpha by animateFloatAsState(
+        targetValue = look.borderAlpha,
+        animationSpec = policy.tweenSpec<Float>(MotionTokenValues.STANDARD_MS),
+        label = "cardStateBorder",
+    )
+    val contentAlpha by animateFloatAsState(
+        targetValue = look.contentAlpha,
+        animationSpec = policy.tweenSpec<Float>(MotionTokenValues.EMPHASIZED_MS),
+        label = "cardContentAlpha",
+    )
+    val pressScale by animateFloatAsState(
+        targetValue = if (isPressed && policy.animationsEnabled) 1.025f else 1f,
+        animationSpec = policy.floatSpring(KaivoMotionTokens.pressSpring),
+        label = "cardPressScale",
+    )
+    val glowTarget = when {
+        isPressed -> 0.8f
+        running -> KaivoMotionTokens.glowRunning
+        isHighlighted -> 0.55f
+        look.glow -> 0.4f
+        else -> 0f
+    }
+    val glowAlpha by animateFloatAsState(
+        targetValue = glowTarget,
+        animationSpec = policy.tweenSpec<Float>(MotionTokenValues.STANDARD_MS),
+        label = "cardGlow",
+    )
+    // Breathing exists only while this card is running; a Flow never has more than a few running.
+    val breath: State<Float> = if (running && policy.runLoops && policy.ambientLoops) {
+        rememberInfiniteTransition(label = "cardBreath").animateFloat(
+            initialValue = 0.7f,
+            targetValue = 1f,
+            animationSpec = infiniteRepeatable(
+                animation = tween(MotionTokenValues.BREATHING_PERIOD_MS, easing = KaivoMotionTokens.silk),
+                repeatMode = RepeatMode.Reverse,
             ),
-            label = "cardGlowAlpha",
-        ).value
-    } else if (isPressed) 0.8f else 0f
+            label = "cardBreathPhase",
+        )
+    } else {
+        remember { mutableStateOf(1f) }
+    }
+
+    // One-shot effects on state transitions. The first composition never replays one.
+    val shake = rememberShakeState()
+    val settle = rememberSettleState()
+    val haptics = rememberKaivoHaptics()
+    var lastVisual by remember { mutableStateOf(visual) }
+    LaunchedEffect(visual) {
+        val effect = StepMotion.effect(lastVisual, visual)
+        lastVisual = visual
+        when (effect) {
+            StepEffect.Settle -> settle.settle(policy)
+            StepEffect.Shake -> {
+                haptics.reject()
+                shake.shake(policy)
+            }
+            else -> Unit
+        }
+    }
 
     Box(
         modifier
+            .shake(shake)
+            .settleScale(settle)
             .width(sizes.stepCardWidth)
             .defaultMinSize(minHeight = sizes.stepCardMinHeight)
+            .pulsingRing(active = look.ring, color = colors.royalGold, cornerRadius = 20.dp)
             .onSizeChanged { cardSize = it },
     ) {
         Column(
@@ -122,32 +207,38 @@ fun JewelStepCard(
                 .fillMaxWidth()
                 .defaultMinSize(minHeight = sizes.stepCardMinHeight)
                 .graphicsLayer {
-                    val s = if (isPressed) 1.025f else 1f
-                    scaleX = s
-                    scaleY = s
+                    scaleX = pressScale
+                    scaleY = pressScale
+                    alpha = contentAlpha
                 }
                 .clip(KaivoShapes.stepCard)
                 .background(colors.surfaceCard)
                 .border(
-                    width = if (isHighlighted) 1.5.dp else 1.dp,
+                    width = if (isHighlighted || (look.accent != AccentRole.None && look.accent != AccentRole.Muted)) 1.5.dp else 1.dp,
                     brush = if (isHighlighted) {
                         Brush.linearGradient(listOf(colors.royalGold, colors.imperialAmethyst, colors.royalGold))
                     } else {
-                        Brush.linearGradient(listOf(colors.hairline, colors.hairline))
+                        SolidColor(
+                            if (look.accent == AccentRole.None) animatedStateColor
+                            else animatedStateColor.copy(alpha = stateBorderAlpha),
+                        )
                     },
                     shape = KaivoShapes.stepCard,
                 )
-                .drawBehind {
-                    if (glowAlpha > 0f) {
-                        drawCircle(
-                            brush = Brush.radialGradient(
-                                colors = listOf(colors.royalGold.copy(alpha = 0.22f * glowAlpha), Color.Transparent),
-                                center = Offset(0f, size.height / 2f),
-                                radius = size.width * 0.7f,
-                            ),
-                            radius = size.width * 0.7f,
-                            center = Offset(0f, size.height / 2f),
-                        )
+                .drawWithCache {
+                    // Gradient built once per size; the per-frame cost is one drawCircle with an alpha.
+                    val glowRadius = size.width * 0.7f
+                    val glowCenter = Offset(0f, size.height / 2f)
+                    val glowBrush = Brush.radialGradient(
+                        colors = listOf(colors.royalGold.copy(alpha = 0.22f), Color.Transparent),
+                        center = glowCenter,
+                        radius = glowRadius,
+                    )
+                    onDrawBehind {
+                        val g = glowAlpha * breath.value
+                        if (g > 0.01f) {
+                            drawCircle(brush = glowBrush, radius = glowRadius, center = glowCenter, alpha = g.coerceIn(0f, 1f))
+                        }
                     }
                 }
                 .semantics {
@@ -208,20 +299,20 @@ fun JewelStepCard(
             }
             Spacer(Modifier.height(8.dp))
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                when {
-                    step.isFrozen -> StatusBadge("❄ Frozen", BadgeKind.Gold)
-                    step.hasError -> StatusBadge("Needs a fix", BadgeKind.Error)
-                    step.isDisabled -> StatusBadge("Off", BadgeKind.Neutral)
-                    step.status == StepRunStatus.Skipped -> StatusBadge("Skipped", BadgeKind.Neutral)
-                    step.status == StepRunStatus.Running -> StatusBadge("Running", BadgeKind.Gold)
-                    step.status == StepRunStatus.Succeeded -> StatusBadge(
-                        "✓ ${step.itemCount ?: 0} • ${step.latencyMs ?: 0}ms",
-                        BadgeKind.Success,
-                    )
-                    step.status == StepRunStatus.Failed -> StatusBadge("Failed", BadgeKind.Error)
-                    step.hasWarning -> StatusBadge("Check setup", BadgeKind.Warning)
-                    else -> StatusBadge(step.category.label, BadgeKind.Neutral)
+                val badge: Pair<String, BadgeKind> = when {
+                    step.isFrozen -> "❄ Frozen" to BadgeKind.Gold
+                    step.hasError -> "Needs a fix" to BadgeKind.Error
+                    step.isDisabled -> "Off" to BadgeKind.Neutral
+                    step.status == StepRunStatus.Skipped -> "Skipped" to BadgeKind.Neutral
+                    step.status == StepRunStatus.Running -> "Running" to BadgeKind.Gold
+                    step.status == StepRunStatus.Succeeded ->
+                        "✓ ${step.itemCount ?: 0} • ${step.latencyMs ?: 0}ms" to BadgeKind.Success
+                    step.status == StepRunStatus.Failed -> "Failed" to BadgeKind.Error
+                    step.hasWarning -> "Check setup" to BadgeKind.Warning
+                    else -> step.category.label to BadgeKind.Neutral
                 }
+                // One call site, so a change of text or kind crossfades instead of swapping.
+                AnimatedStatusBadge(badge.first, badge.second)
                 Spacer(Modifier.weight(1f))
                 if (step.attempts > 1) {
                     StatusBadge("${step.attempts} tries", BadgeKind.Warning)

@@ -28,6 +28,7 @@ import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -45,7 +46,12 @@ import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import com.kaivoflow.core.design.AnimatedCounter
 import com.kaivoflow.core.design.BadgeKind
+import com.kaivoflow.core.design.SuccessCheck
+import com.kaivoflow.core.design.rememberKaivoHaptics
+import com.kaivoflow.core.design.rememberShakeState
+import com.kaivoflow.core.design.shake
 import com.kaivoflow.core.design.GlassPill
 import com.kaivoflow.core.design.GoldButton
 import com.kaivoflow.core.design.KaivoIcons
@@ -71,9 +77,24 @@ fun RunHud(
     modifier: Modifier = Modifier,
 ) {
     val colors = KaivoTheme.colors
+    val policy = KaivoTheme.motionPolicy
     val progress by animateFloatAsState(run.progress, label = "runProgress")
+    val haptics = rememberKaivoHaptics()
+    val shake = rememberShakeState()
+    // Finish moment: confirm on success, reject plus shake on failure. Fires once per finished Run.
+    LaunchedEffect(run.runId, run.isRunning, run.status) {
+        if (run.runId == null || run.isRunning) return@LaunchedEffect
+        when (run.status) {
+            com.kaivoflow.core.model.RunStatus.Succeeded -> haptics.confirm()
+            com.kaivoflow.core.model.RunStatus.Failed -> {
+                haptics.reject()
+                shake.shake(policy)
+            }
+            else -> Unit
+        }
+    }
 
-    Box(modifier) {
+    Box(modifier.shake(shake)) {
         GlassPill {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 if (run.isRunning) {
@@ -82,18 +103,18 @@ fun RunHud(
                         strokeWidth = 2.dp,
                         modifier = Modifier.size(18.dp),
                     )
+                } else if (run.status == com.kaivoflow.core.model.RunStatus.Succeeded) {
+                    SuccessCheck(diameter = 18.dp, color = colors.statusSuccess)
                 } else {
                     Icon(
                         imageVector = KaivoIcons.icon(
                             when (run.status) {
-                                com.kaivoflow.core.model.RunStatus.Succeeded -> "checkCircle"
                                 com.kaivoflow.core.model.RunStatus.Failed -> "error"
                                 else -> "info"
                             }
                         ),
                         contentDescription = null,
                         tint = when (run.status) {
-                            com.kaivoflow.core.model.RunStatus.Succeeded -> colors.statusSuccess
                             com.kaivoflow.core.model.RunStatus.Failed -> colors.statusError
                             else -> colors.inkSecondary
                         },
@@ -109,15 +130,28 @@ fun RunHud(
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
                     )
-                    Text(
-                        text = if (run.isRunning) {
-                            "${(progress * 100).toInt()}% • ${run.elapsedMs / 1000}s"
-                        } else {
-                            "${run.elapsedMs / 1000}s • ${run.completedSteps}/${run.totalSteps} Steps"
-                        },
-                        style = androidx.compose.material3.MaterialTheme.typography.labelMedium,
-                        color = colors.inkSecondary,
-                    )
+                    if (run.isRunning) {
+                        Row {
+                            // Ticker on the percentage; elapsed time is read once per recomposition.
+                            AnimatedCounter(
+                                value = (progress * 100).toInt(),
+                                style = androidx.compose.material3.MaterialTheme.typography.labelMedium,
+                                color = colors.inkSecondary,
+                                format = { "$it%" },
+                            )
+                            Text(
+                                text = " • ${run.elapsedMs / 1000}s",
+                                style = androidx.compose.material3.MaterialTheme.typography.labelMedium,
+                                color = colors.inkSecondary,
+                            )
+                        }
+                    } else {
+                        Text(
+                            text = "${run.elapsedMs / 1000}s • ${run.completedSteps}/${run.totalSteps} Steps",
+                            style = androidx.compose.material3.MaterialTheme.typography.labelMedium,
+                            color = colors.inkSecondary,
+                        )
+                    }
                 }
                 Spacer(Modifier.width(12.dp))
                 Box(

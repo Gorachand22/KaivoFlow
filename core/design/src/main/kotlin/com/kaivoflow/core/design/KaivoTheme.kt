@@ -6,6 +6,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Typography
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.TextStyle
@@ -18,6 +19,8 @@ enum class KaivoThemeMode { RoyalVelvet, IvorySilk, System }
 fun KaivoTheme(
     mode: KaivoThemeMode = KaivoThemeMode.RoyalVelvet,
     forceReducedMotion: Boolean? = null,
+    /** Overrides the stored motion level (previews, tests). Null reads the owner's setting. */
+    motionLevelOverride: MotionLevel? = null,
     content: @Composable () -> Unit,
 ) {
     val dark = when (mode) {
@@ -33,7 +36,22 @@ fun KaivoTheme(
             Settings.Global.getFloat(context.contentResolver, Settings.Global.ANIMATOR_DURATION_SCALE, 1f) == 0f
         }.getOrDefault(false)
     }
-    val reduceMotion = forceReducedMotion ?: systemReduceMotion
+
+    // Owner's motion level (Settings), lowered by the system setting and battery saver, plus a device tier.
+    val storedLevel = remember(context) { mutableStateOf(MotionPrefs.read(context)) }
+    val profile = remember(context) { readDeviceProfile(context) }
+    val userLevel = motionLevelOverride ?: storedLevel.value
+    val level = if (forceReducedMotion == true) MotionLevel.Off
+    else MotionDecisions.effectiveLevel(userLevel, systemReduceMotion, profile.powerSave)
+    val tier = remember(profile) { MotionDecisions.qualityTier(profile) }
+    val policy = remember(level, tier) { MotionPolicy(level = level, tier = tier) }
+    val controller = remember(storedLevel.value) {
+        MotionController(storedLevel.value) { next ->
+            MotionPrefs.write(context, next)
+            storedLevel.value = next
+        }
+    }
+    val reduceMotion = !policy.animationsEnabled
 
     val typography = KaivoTypography.Standard
     val materialTypography = Typography(
@@ -69,6 +87,8 @@ fun KaivoTheme(
         LocalKaivoSizes provides KaivoSizes(),
         LocalKaivoMotion provides if (reduceMotion) KaivoMotion.Reduced else KaivoMotion.Standard,
         LocalKaivoTypography provides typography,
+        LocalMotionPolicy provides policy,
+        LocalMotionController provides controller,
     ) {
         MaterialTheme(
             colorScheme = colors.toMaterialColors(),
@@ -99,4 +119,6 @@ object KaivoTheme {
         @Composable get() = LocalKaivoMotion.current
     val type: KaivoTypography
         @Composable get() = LocalKaivoTypography.current
+    val motionPolicy: MotionPolicy
+        @Composable get() = LocalMotionPolicy.current
 }

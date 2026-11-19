@@ -31,6 +31,7 @@ import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.semantics.Role
@@ -73,9 +74,19 @@ fun GoldButton(
     val interaction = remember { MutableInteractionSource() }
     val pressed by interaction.collectIsPressedAsState()
     val alpha by animateFloatAsState(if (enabled) 1f else 0.4f, label = "goldButtonAlpha")
+    val policy = LocalMotionPolicy.current
+    val pressScale by animateFloatAsState(
+        targetValue = if (pressed && policy.animationsEnabled) KaivoMotionTokens.pressScale else 1f,
+        animationSpec = policy.floatSpring(KaivoMotionTokens.pressSpring),
+        label = "goldButtonPress",
+    )
 
     Row(
         modifier = modifier
+            .graphicsLayer {
+                scaleX = pressScale
+                scaleY = pressScale
+            }
             .defaultMinSize(minHeight = 48.dp)
             .clip(KaivoShapes.pill)
             .background(
@@ -130,11 +141,11 @@ fun GhostButton(
     val colors = KaivoTheme.colors
     Row(
         modifier = modifier
+            .kaivoPressable(onClick = onClick, role = Role.Button, cornerRadius = 999.dp)
             .defaultMinSize(minHeight = 48.dp)
             .clip(KaivoShapes.pill)
             .background(colors.surfaceElevated.copy(alpha = 0.55f))
             .border(1.dp, colors.hairline, KaivoShapes.pill)
-            .clickable(role = Role.Button, onClick = onClick)
             .padding(horizontal = 16.dp, vertical = 10.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
