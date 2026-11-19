@@ -45,6 +45,27 @@ enum class AiProvider(
         availableModels = listOf("llama3.2", "qwen2.5:7b", "mistral", "deepseek-r1:7b"),
         defaultBaseUrl = "http://10.0.2.2:11434",
         requiresApiKey = false,
+    ),
+    Groq(
+        displayName = "Groq",
+        defaultModel = "llama-3.3-70b-versatile",
+        availableModels = listOf("llama-3.3-70b-versatile", "llama-3.1-8b-instant", "deepseek-r1-distill-llama-70b"),
+        defaultBaseUrl = "https://api.groq.com/openai/v1",
+        requiresApiKey = true,
+    ),
+    DeepSeek(
+        displayName = "DeepSeek",
+        defaultModel = "deepseek-chat",
+        availableModels = listOf("deepseek-chat", "deepseek-reasoner"),
+        defaultBaseUrl = "https://api.deepseek.com/v1",
+        requiresApiKey = true,
+    ),
+    OpenRouter(
+        displayName = "OpenRouter",
+        defaultModel = "openai/gpt-4o-mini",
+        availableModels = listOf("openai/gpt-4o-mini", "anthropic/claude-3.5-sonnet", "meta-llama/llama-3.3-70b-instruct", "deepseek/deepseek-r1"),
+        defaultBaseUrl = "https://openrouter.ai/api/v1",
+        requiresApiKey = true,
     );
 
     val key: String get() = name.lowercase()
@@ -52,7 +73,7 @@ enum class AiProvider(
     /** The provider adapter in `:core:ai` that speaks this provider's wire format. */
     fun toKind(): ProviderKind = when (this) {
         Gemini -> ProviderKind.Gemini
-        OpenAI -> ProviderKind.OpenAiCompatible
+        OpenAI, Groq, DeepSeek, OpenRouter -> ProviderKind.OpenAiCompatible
         Claude -> ProviderKind.Anthropic
         Ollama -> ProviderKind.Ollama
     }
@@ -61,7 +82,10 @@ enum class AiProvider(
         fun fromKey(key: String?): AiProvider =
             entries.firstOrNull { it.name.equals(key, ignoreCase = true) }
                 ?: when (key?.lowercase()) {
-                    "openai", "openaiapi", "nvidianim", "groq", "openrouter", "mistral", "customopenai" -> OpenAI
+                    "groq", "groqapi" -> Groq
+                    "deepseek", "deepseekapi" -> DeepSeek
+                    "openrouter", "openrouterapi" -> OpenRouter
+                    "openai", "openaiapi", "customopenai", "nvidianim" -> OpenAI
                     "gemini", "geminiapi", "googlegemini" -> Gemini
                     "claude", "anthropic", "anthropicapi" -> Claude
                     "ollama", "ollamaapi" -> Ollama

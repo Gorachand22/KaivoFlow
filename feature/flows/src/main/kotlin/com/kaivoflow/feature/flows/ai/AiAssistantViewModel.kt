@@ -13,6 +13,8 @@ import com.kaivoflow.core.engine.HttpGateway
 import com.kaivoflow.core.model.CredentialItem
 import com.kaivoflow.core.model.Flow
 import dagger.hilt.android.lifecycle.HiltViewModel
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -32,7 +34,10 @@ data class AiAssistantUiState(
     val isGenerating: Boolean = false,
     val providerConfig: AiProviderConfig = AiProviderConfig(),
     val showSettingsSheet: Boolean = false,
+    val settingsInitialTabIndex: Int = 0,
     val showHistorySheet: Boolean = false,
+    val showActionMenuSheet: Boolean = false,
+    val attachedContextSnippet: String? = null,
     val activeProposedFlow: Flow? = null,
     val isDiscoveringModels: Boolean = false,
     val modelDiscoveryMessage: String? = null,
@@ -388,13 +393,51 @@ class AiAssistantViewModel @Inject constructor(
         return credentialRepository.getFields(credentialId).orEmpty()
     }
 
-    fun toggleSettingsSheet(show: Boolean) {
+    fun toggleSettingsSheet(show: Boolean, initialTabIndex: Int = 0) {
         _uiState.update {
             it.copy(
                 showSettingsSheet = show,
+                settingsInitialTabIndex = initialTabIndex,
                 modelDiscoveryMessage = if (!show) null else it.modelDiscoveryMessage,
             )
         }
+    }
+
+    fun toggleActionMenuSheet(show: Boolean) {
+        _uiState.update { it.copy(showActionMenuSheet = show) }
+    }
+
+    fun openPreferences() {
+        _uiState.update {
+            it.copy(
+                showActionMenuSheet = false,
+                showSettingsSheet = true,
+                settingsInitialTabIndex = 3,
+            )
+        }
+    }
+
+    fun openConnectServices() {
+        _uiState.update {
+            it.copy(
+                showActionMenuSheet = false,
+                showSettingsSheet = true,
+                settingsInitialTabIndex = 0,
+            )
+        }
+    }
+
+    fun attachContextSnippet(label: String, content: String) {
+        _uiState.update {
+            it.copy(
+                attachedContextSnippet = "[$label]\n$content",
+                showActionMenuSheet = false,
+            )
+        }
+    }
+
+    fun clearAttachedContext() {
+        _uiState.update { it.copy(attachedContextSnippet = null) }
     }
 
     fun detachFlow() {
@@ -426,41 +469,149 @@ class AiAssistantViewModel @Inject constructor(
         val trimmed = userText.trim()
         if (trimmed.isBlank() || _uiState.value.isGenerating) return
 
+        val attached = _uiState.value.attachedContextSnippet
+        val fullPrompt = if (!attached.isNullOrBlank()) "$attached\n\n$trimmed" else trimmed
+
         val userMessage = AiChatMessage(
             sender = MessageSender.User,
-            text = trimmed,
+            text = fullPrompt,
         )
 
-        val updatedMessages = _uiState.value.messages + userMessage
+        val streamingAssistantId = UUID.randomUUID().toString()
+        val initialAssistantMessage = AiChatMessage(
+            id = streamingAssistantId,
+            sender = MessageSender.Assistant,
+            text = "",
+            thought = AiThoughtTrace(
+                durationSec = 0,
+                steps = emptyList(),
+                reasoningText = null,
+                isActive = true,
+                currentActivity = "Starting agent...",
+            ),
+            isStreaming = true,
+        )
+
+        val updatedMessages = _uiState.value.messages + userMessage + initialAssistantMessage
         _uiState.update {
             it.copy(
                 messages = updatedMessages,
                 isGenerating = true,
+                attachedContextSnippet = null,
             )
         }
 
         viewModelScope.launch {
-            // The question survives a crash or a killed app even if the answer never arrives.
             saveCurrentSessionSnapshot()
 
-            val base = _uiState.value.currentFlow
-            val response = agent.executeTurn(
-                prompt = trimmed,
-                currentFlow = base,
-                config = _uiState.value.providerConfig,
-                chatHistory = updatedMessages,
-            ).let { if (it.flowProposal != null) it.copy(baseUpdatedAt = base?.updatedAt) else it }
-
-            // P0: the answer is a PROPOSAL held in memory. Nothing is written to the repository here;
-            // only applyProposedFlow (the person's explicit Apply) saves, and it keeps an Undo copy.
-            _uiState.update {
-                it.copy(
-                    messages = it.messages + response,
-                    isGenerating = false,
-                    activeProposedFlow = response.flowProposal,
-                )
+            val startTime = System.currentTimeMillis()
+            val tickerJob = launch {
+                while (isActive) {
+                    delay(1000L)
+                    val elapsed = ((System.currentTimeMillis() - startTime) / 1000).toInt()
+                    _uiState.update { state ->
+                        val msgs = state.messages.map { msg ->
+                            if (msg.id == streamingAssistantId && msg.thought != null) {
+                                msg.copy(thought = msg.thought.copy(durationSec = elapsed))
+                            } else msg
+                        }
+                        state.copy(messages = msgs)
+                    }
+                }
             }
-            saveCurrentSessionSnapshot()
+
+            try {
+                val base = _uiState.value.currentFlow
+                val activitySteps = mutableListOf<AiActivityStep>()
+
+                agent.executeTurnStream(
+                    prompt = fullPrompt,
+                    currentFlow = base,
+                    config = _uiState.value.providerConfig,
+                    chatHistory = updatedMessages.dropLast(1),
+                ).collect { event ->
+                    when (event) {
+                        is AgentStreamEvent.Status -> {
+                            _uiState.update { state ->
+                                val msgs = state.messages.map { msg ->
+                                    if (msg.id == streamingAssistantId && msg.thought != null) {
+                                        msg.copy(thought = msg.thought.copy(currentActivity = event.message))
+                                    } else msg
+                                }
+                                state.copy(messages = msgs)
+                            }
+                        }
+                        is AgentStreamEvent.ActivityStepAdded -> {
+                            activitySteps.add(event.step)
+                            _uiState.update { state ->
+                                val msgs = state.messages.map { msg ->
+                                    if (msg.id == streamingAssistantId && msg.thought != null) {
+                                        msg.copy(thought = msg.thought.copy(steps = activitySteps.toList()))
+                                    } else msg
+                                }
+                                state.copy(messages = msgs)
+                            }
+                        }
+                        is AgentStreamEvent.TextChunk -> {
+                            _uiState.update { state ->
+                                val msgs = state.messages.map { msg ->
+                                    if (msg.id == streamingAssistantId) {
+                                        msg.copy(text = msg.text + event.textDelta)
+                                    } else msg
+                                }
+                                state.copy(messages = msgs)
+                            }
+                        }
+                        is AgentStreamEvent.Finished -> {
+                            tickerJob.cancel()
+                            val response = event.finalMessage.let {
+                                if (it.flowProposal != null) it.copy(baseUpdatedAt = base?.updatedAt) else it
+                            }
+                            _uiState.update { state ->
+                                val msgs = state.messages.map { msg ->
+                                    if (msg.id == streamingAssistantId) response else msg
+                                }
+                                state.copy(
+                                    messages = msgs,
+                                    isGenerating = false,
+                                    activeProposedFlow = response.flowProposal,
+                                )
+                            }
+                            saveCurrentSessionSnapshot()
+                        }
+                        is AgentStreamEvent.Error -> {
+                            tickerJob.cancel()
+                            _uiState.update { state ->
+                                val msgs = state.messages.map { msg ->
+                                    if (msg.id == streamingAssistantId) event.errorMessage else msg
+                                }
+                                state.copy(
+                                    messages = msgs,
+                                    isGenerating = false,
+                                )
+                            }
+                            saveCurrentSessionSnapshot()
+                        }
+                    }
+                }
+            } catch (e: Exception) {
+                tickerJob.cancel()
+                _uiState.update { state ->
+                    val msgs = state.messages.map { msg ->
+                        if (msg.id == streamingAssistantId) {
+                            AiChatMessage(
+                                sender = MessageSender.Assistant,
+                                text = "⚠️ Assistant interrupted: ${e.message ?: "Unknown error"}",
+                            )
+                        } else msg
+                    }
+                    state.copy(messages = msgs, isGenerating = false)
+                }
+                saveCurrentSessionSnapshot()
+            } finally {
+                tickerJob.cancel()
+                _uiState.update { it.copy(isGenerating = false) }
+            }
         }
     }
 

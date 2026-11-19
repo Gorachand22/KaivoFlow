@@ -149,6 +149,9 @@ fun AiAssistantScreen(
                     flowContext = state.currentFlow,
                     onDetachFlow = { viewModel.detachFlow() },
                     enabled = !state.isGenerating,
+                    onOpenActionMenu = { viewModel.toggleActionMenuSheet(true) },
+                    attachedSnippet = state.attachedContextSnippet,
+                    onClearAttachedSnippet = { viewModel.clearAttachedContext() },
                 )
             } else if (isChatEmpty) {
                 // ---------------- Clean Floating Hero State (Screenshot 2) ----------------
@@ -168,6 +171,7 @@ fun AiAssistantScreen(
                         onSuggestionClick = { prompt ->
                             viewModel.sendMessage(prompt)
                         },
+                        onOpenActionMenu = { viewModel.toggleActionMenuSheet(true) },
                     )
                 }
             } else {
@@ -214,6 +218,9 @@ fun AiAssistantScreen(
                     flowContext = state.currentFlow,
                     onDetachFlow = { viewModel.detachFlow() },
                     enabled = !state.isGenerating,
+                    onOpenActionMenu = { viewModel.toggleActionMenuSheet(true) },
+                    attachedSnippet = state.attachedContextSnippet,
+                    onClearAttachedSnippet = { viewModel.clearAttachedContext() },
                 )
             }
         }
@@ -232,15 +239,34 @@ fun AiAssistantScreen(
             )
         }
 
-        // ---------------- AI Credentials Sheet ----------------
+        // ---------------- AI Preferences, Skills & Connectors Sheet (Tab-wise) ----------------
         if (state.showSettingsSheet) {
-            AiCredentialPickerSheet(
+            AiSettingsSheet(
+                credentials = state.savedCredentials,
                 currentConfig = state.providerConfig,
-                savedCredentials = state.savedCredentials,
-                isDiscovering = state.isDiscoveringModels,
-                onSelectCredential = { id -> viewModel.selectCredential(id) },
+                onSelectCredential = { cred -> viewModel.selectCredential(cred.id) },
                 onSelectModel = { model -> viewModel.selectModel(model) },
                 onDismiss = { viewModel.toggleSettingsSheet(false) },
+                initialTabIndex = state.settingsInitialTabIndex,
+            )
+        }
+
+        // ---------------- Action Menu Sheet (+ button) ----------------
+        if (state.showActionMenuSheet) {
+            AiActionMenuSheet(
+                onDismiss = { viewModel.toggleActionMenuSheet(false) },
+                onAttachFiles = {
+                    viewModel.attachContextSnippet(
+                        label = "Workflow Spec & Diagnostics",
+                        content = "Attached workflow specifications, error traces, and execution context.",
+                    )
+                },
+                onConnectServices = {
+                    viewModel.openConnectServices()
+                },
+                onOpenPreferences = {
+                    viewModel.openPreferences()
+                },
             )
         }
 
@@ -451,6 +477,7 @@ private fun EmptyStateCenteredPrompt(
     onTextChange: (String) -> Unit,
     onSend: () -> Unit,
     onSuggestionClick: (String) -> Unit,
+    onOpenActionMenu: () -> Unit = {},
 ) {
     val colors = KaivoTheme.colors
     Column(
@@ -520,12 +547,12 @@ private fun EmptyStateCenteredPrompt(
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
                     IconButton(
-                        onClick = { /* attachments or tools */ },
+                        onClick = onOpenActionMenu,
                         modifier = Modifier.size(32.dp),
                     ) {
                         Icon(
                             KaivoIcons.icon("add"),
-                            contentDescription = "Add context",
+                            contentDescription = "Add context or tools",
                             tint = colors.inkSecondary,
                             modifier = Modifier.size(20.dp),
                         )
@@ -646,35 +673,43 @@ private fun ChatMessageRow(
                     color = colors.inkSecondary,
                 )
             }
+
+            // Collapsible reasoning trace matching screenshot
+            if (message.thought != null) {
+                AiThoughtBlock(thought = message.thought)
+                Spacer(Modifier.height(4.dp))
+            }
         }
 
-        Box(
-            Modifier
-                .clip(
-                    RoundedCornerShape(
-                        topStart = 16.dp,
-                        topEnd = 16.dp,
-                        bottomStart = if (isUser) 16.dp else 4.dp,
-                        bottomEnd = if (isUser) 4.dp else 16.dp,
+        if (message.text.isNotBlank() || isUser) {
+            Box(
+                Modifier
+                    .clip(
+                        RoundedCornerShape(
+                            topStart = 16.dp,
+                            topEnd = 16.dp,
+                            bottomStart = if (isUser) 16.dp else 4.dp,
+                            bottomEnd = if (isUser) 4.dp else 16.dp,
+                        )
                     )
-                )
-                .background(if (isUser) Color(0xFF24242C) else Color(0xFF1A1A20))
-                .border(
-                    1.dp,
-                    if (isUser) colors.royalGold.copy(alpha = 0.4f) else Color(0xFF2A2A32),
-                    RoundedCornerShape(
-                        topStart = 16.dp,
-                        topEnd = 16.dp,
-                        bottomStart = if (isUser) 16.dp else 4.dp,
-                        bottomEnd = if (isUser) 4.dp else 16.dp,
+                    .background(if (isUser) Color(0xFF24242C) else Color(0xFF1A1A20))
+                    .border(
+                        1.dp,
+                        if (isUser) colors.royalGold.copy(alpha = 0.4f) else Color(0xFF2A2A32),
+                        RoundedCornerShape(
+                            topStart = 16.dp,
+                            topEnd = 16.dp,
+                            bottomStart = if (isUser) 16.dp else 4.dp,
+                            bottomEnd = if (isUser) 4.dp else 16.dp,
+                        )
                     )
+                    .padding(14.dp),
+            ) {
+                MarkdownChatText(
+                    text = message.text,
+                    isUser = isUser,
                 )
-                .padding(14.dp),
-        ) {
-            MarkdownChatText(
-                text = message.text,
-                isUser = isUser,
-            )
+            }
         }
 
         // Tool Execution Traces (Sovereign agent tools)
@@ -962,6 +997,9 @@ private fun DockedBottomInputBar(
     flowContext: Flow?,
     onDetachFlow: () -> Unit,
     enabled: Boolean,
+    onOpenActionMenu: () -> Unit = {},
+    attachedSnippet: String? = null,
+    onClearAttachedSnippet: () -> Unit = {},
 ) {
     val colors = KaivoTheme.colors
     Card(
@@ -1008,6 +1046,38 @@ private fun DockedBottomInputBar(
                 }
             }
 
+            // Attached context snippet chip
+            if (!attachedSnippet.isNullOrBlank()) {
+                Row(
+                    Modifier
+                        .clip(RoundedCornerShape(8.dp))
+                        .background(Color(0xFF2A2A34))
+                        .padding(horizontal = 8.dp, vertical = 4.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                ) {
+                    Icon(
+                        KaivoIcons.icon("attachment"),
+                        contentDescription = null,
+                        tint = colors.royalGold,
+                        modifier = Modifier.size(13.dp),
+                    )
+                    Text(
+                        text = attachedSnippet.take(35) + if (attachedSnippet.length > 35) "..." else "",
+                        style = androidx.compose.material3.MaterialTheme.typography.labelSmall,
+                        color = colors.inkPrimary,
+                    )
+                    Icon(
+                        KaivoIcons.icon("close"),
+                        contentDescription = "Remove attachment",
+                        tint = colors.inkSecondary,
+                        modifier = Modifier
+                            .size(14.dp)
+                            .clickable { onClearAttachedSnippet() },
+                    )
+                }
+            }
+
             BasicTextField(
                 value = text,
                 onValueChange = onTextChange,
@@ -1035,12 +1105,12 @@ private fun DockedBottomInputBar(
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 IconButton(
-                    onClick = { /* attachments / context */ },
+                    onClick = onOpenActionMenu,
                     modifier = Modifier.size(28.dp),
                 ) {
                     Icon(
                         KaivoIcons.icon("add"),
-                        contentDescription = "Add context",
+                        contentDescription = "Add context or tools",
                         tint = colors.inkSecondary,
                         modifier = Modifier.size(18.dp),
                     )

@@ -8,6 +8,7 @@ import com.kaivoflow.core.ai.ApprovalHost
 import com.kaivoflow.core.ai.ApprovalPolicy
 import com.kaivoflow.core.ai.ChatMessage
 import com.kaivoflow.core.ai.ChatModelClient
+import com.kaivoflow.core.ai.ConversationCompactor
 import com.kaivoflow.core.ai.InMemoryStore
 import com.kaivoflow.core.ai.Redactor
 import com.kaivoflow.core.ai.ToolRegistry
@@ -44,13 +45,27 @@ class AssistantTurn(
 ) {
     /** [history] is the earlier conversation as plain text turns, oldest first. */
     suspend fun run(prompt: String, base: Flow?, history: List<ChatMessage>): AssistantResult {
+        val intent = AiTriageClassifier.classify(prompt)
+        if (intent == PromptIntent.Greeting && base == null && history.isEmpty()) {
+            return AssistantResult(
+                text = "Hello! I am your visual automation assistant. Tell me what workflow you would like to build (for example: *\"Alert me when battery drops below 20%\"* or *\"Show a notification when a webhook triggers\"*), or ask any question about steps and expressions.",
+                proposal = null,
+                edits = emptyList(),
+                trace = emptyList(),
+                usage = Usage(),
+                failure = null,
+            )
+        }
+
         val start = base ?: Flow(id = newId(), name = "New Flow", createdAt = clock(), updatedAt = clock())
         val draft = FlowDraft(base, start, newId, clock)
         val tools = FlowEditTools(draft, catalog, redactor, paramCheck).all
         val store = InMemoryStore()
-        val memory = WindowMemory(store, maxMessages = 12, redactor = redactor)
+        val memory = WindowMemory(store, maxMessages = 16, redactor = redactor)
         val key = "assistant"
-        store.write(key, history.filter { it.role != com.kaivoflow.core.ai.Role.Tool }.takeLast(12))
+        val compactedHistory = ConversationCompactor.compact(history, keepRecent = 8)
+        store.write(key, compactedHistory)
+
         val loop = AgentLoop(
             model = model,
             tools = ToolRegistry(tools),
@@ -60,7 +75,30 @@ class AssistantTurn(
             redactor = redactor,
             temperature = 0.2,
         )
-        val result = loop.run(AssistantPrompt.instructions(catalog), prompt, AssistantPrompt.flowContext(base, redactor), key)
+
+        val instructions = if (intent == PromptIntent.Knowledge) {
+            "${AssistantPrompt.instructions(catalog)}\n\nNOTE: The user is asking a conceptual, explanatory, or diagnostic question. Answer clearly and informatively in plain language. Do not make unwanted workflow edits unless the user explicitly requested them."
+        } else {
+            AssistantPrompt.instructions(catalog)
+        }
+
+        var result = loop.run(instructions, prompt, AssistantPrompt.flowContext(base, redactor), key)
+
+        // Self-Healing Validation Loop:
+        // If the draft was modified but has schema/validation errors, give the LLM structured feedback to self-heal
+        if (draft.changed) {
+            var errors = FlowProposalValidator.validate(draft.flow, base, catalog)
+            var attempts = 0
+            while (errors.isNotEmpty() && attempts < 2) {
+                attempts++
+                val feedback = "Self-Correction Required: The proposed workflow draft has validation errors:\n" +
+                    errors.joinToString("\n") { "- $it" } +
+                    "\nPlease use your edit tools (update_step_params, connect_steps, add_step) to resolve these errors."
+                result = loop.run(instructions, feedback, AssistantPrompt.flowContext(draft.flow, redactor), key)
+                errors = FlowProposalValidator.validate(draft.flow, base, catalog)
+            }
+        }
+
         if (result.outcome != AgentOutcome.Completed && result.text.isBlank() && !draft.changed) {
             return AssistantResult("", null, draft.edits, result.trace, result.usage, result.error?.message ?: "The assistant could not answer.")
         }

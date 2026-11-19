@@ -32,5 +32,8 @@ class AiProviderConfigTest {
         assertEquals(ProviderKind.OpenAiCompatible, AiProvider.OpenAI.toKind())
         assertEquals(ProviderKind.Anthropic, AiProvider.Claude.toKind())
         assertEquals(ProviderKind.Ollama, AiProvider.Ollama.toKind())
+        assertEquals(ProviderKind.OpenAiCompatible, AiProvider.Groq.toKind())
+        assertEquals(ProviderKind.OpenAiCompatible, AiProvider.DeepSeek.toKind())
+        assertEquals(ProviderKind.OpenAiCompatible, AiProvider.OpenRouter.toKind())
     }
 }

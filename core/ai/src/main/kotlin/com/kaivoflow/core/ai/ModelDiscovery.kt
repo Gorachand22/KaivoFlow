@@ -52,7 +52,8 @@ class ModelDiscovery(private val http: HttpGateway) {
                 .ifEmpty { J.list(json?.get("data")).mapNotNull { J.str(J.obj(it)?.get("id")) } }
             else -> J.list(json?.get("data")).mapNotNull { J.str(J.obj(it)?.get("id")) ?: J.str(it) }
         }.filter { it.isNotBlank() }
-        val chat = ids.filter(::isChatModelId).ifEmpty { ids }
+        val official = config.provider == ProviderKind.OpenAiCompatible && base.contains("://api.openai.com")
+        val chat = if (official) ids.filter(::isChatModelId) else ids
         if (chat.isEmpty()) throw ModelException(ModelErrorKind.Empty, "No chat models were found at that address.")
         return chat.distinct().sorted()
     }
