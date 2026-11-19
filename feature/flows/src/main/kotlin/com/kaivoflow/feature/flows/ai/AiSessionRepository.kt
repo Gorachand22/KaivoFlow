@@ -7,6 +7,8 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import org.json.JSONArray
 import org.json.JSONObject
@@ -43,6 +45,7 @@ class FileAiSessionRepository @Inject constructor(
 ) : AiSessionRepository {
 
     private val io: CoroutineDispatcher = Dispatchers.IO
+    private val mutex = Mutex()
 
     private val sessionsDir: File
         get() = context.filesDir.resolve("ai_sessions").apply { mkdirs() }
@@ -56,37 +59,57 @@ class FileAiSessionRepository @Inject constructor(
     override fun observeSessions(): Flow<List<AiSession>> = _sessionsFlow.asStateFlow()
 
     override suspend fun getSession(id: String): AiSession? = withContext(io) {
-        _sessionsFlow.value.firstOrNull { it.id == id } ?: loadSessionFile(id)
+        mutex.withLock {
+            _sessionsFlow.value.firstOrNull { it.id == id } ?: loadSessionFile(id)
+        }
     }
 
     override suspend fun saveSession(session: AiSession): Unit = withContext(io) {
-        val updated = session.copy(updatedAt = System.currentTimeMillis())
-        val file = sessionsDir.resolve("${updated.id}.json")
-        file.writeText(serializeSession(updated))
+        mutex.withLock {
+            val updated = session.copy(updatedAt = System.currentTimeMillis())
+            val tempFile = sessionsDir.resolve("${updated.id}.json.tmp")
+            val targetFile = sessionsDir.resolve("${updated.id}.json")
+            try {
+                tempFile.writeText(serializeSession(updated))
+                if (targetFile.exists()) {
+                    targetFile.delete()
+                }
+                tempFile.renameTo(targetFile)
+            } catch (e: Exception) {
+                targetFile.writeText(serializeSession(updated))
+            } finally {
+                if (tempFile.exists()) tempFile.delete()
+            }
 
-        val current = _sessionsFlow.value.toMutableList()
-        val index = current.indexOfFirst { it.id == updated.id }
-        if (index >= 0) {
-            current[index] = updated
-        } else {
-            current.add(0, updated)
+            val current = _sessionsFlow.value.toMutableList()
+            val index = current.indexOfFirst { it.id == updated.id }
+            if (index >= 0) {
+                current[index] = updated
+            } else {
+                current.add(0, updated)
+            }
+            current.sortByDescending { it.updatedAt }
+            _sessionsFlow.value = current
         }
-        current.sortByDescending { it.updatedAt }
-        _sessionsFlow.value = current
     }
 
     override suspend fun deleteSession(id: String): Unit = withContext(io) {
-        sessionsDir.resolve("$id.json").delete()
-        _sessionsFlow.value = _sessionsFlow.value.filterNot { it.id == id }
+        mutex.withLock {
+            sessionsDir.resolve("$id.json").delete()
+            sessionsDir.resolve("$id.json.tmp").delete()
+            _sessionsFlow.value = _sessionsFlow.value.filterNot { it.id == id }
+        }
     }
 
     override suspend fun clearAll(): Unit = withContext(io) {
-        sessionsDir.listFiles()?.forEach { it.delete() }
-        _sessionsFlow.value = emptyList()
+        mutex.withLock {
+            sessionsDir.listFiles()?.forEach { it.delete() }
+            _sessionsFlow.value = emptyList()
+        }
     }
 
     private fun loadFromDisk() {
-        val files = sessionsDir.listFiles { _, name -> name.endsWith(".json") } ?: emptyArray()
+        val files = sessionsDir.listFiles { _, name -> name.endsWith(".json") && !name.endsWith(".tmp") } ?: emptyArray()
         val list = files.mapNotNull { file ->
             runCatching { deserializeSession(file.readText()) }.getOrNull()
         }.sortedByDescending { it.updatedAt }
@@ -136,7 +159,22 @@ class FileAiSessionRepository @Inject constructor(
     }
 
     private fun deserializeSession(raw: String): AiSession {
-        val root = JSONObject(raw)
+        val cleanJson = if (raw.contains("}{")) {
+            // Self-heal: extract the second/complete JSON object if multiple concatenated
+            val lastOpen = raw.lastIndexOf('{')
+            val matchingClose = raw.lastIndexOf('}')
+            if (lastOpen in 1..matchingClose) {
+                // Find matching boundary of last full object
+                raw.substring(raw.indexOf("}{") + 1)
+            } else {
+                raw.substringBefore("}{") + "}"
+            }
+        } else {
+            raw
+        }
+        val root = runCatching { JSONObject(cleanJson) }.getOrElse {
+            JSONObject(raw.substringBefore("}{") + "}")
+        }
         val id = root.optString("id", UUID.randomUUID().toString())
         val title = root.optString("title", "Conversation")
         val flowId = if (root.has("flowId") && !root.isNull("flowId")) root.getString("flowId") else null

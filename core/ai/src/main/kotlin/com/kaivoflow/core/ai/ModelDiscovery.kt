@@ -52,17 +52,20 @@ class ModelDiscovery(private val http: HttpGateway) {
                 .ifEmpty { J.list(json?.get("data")).mapNotNull { J.str(J.obj(it)?.get("id")) } }
             else -> J.list(json?.get("data")).mapNotNull { J.str(J.obj(it)?.get("id")) ?: J.str(it) }
         }.filter { it.isNotBlank() }
-        val official = config.provider == ProviderKind.OpenAiCompatible && base.contains("://api.openai.com")
-        val chat = if (official) ids.filter(::isChatModelId) else ids
+        val chat = ids.filter(::isChatModelId).ifEmpty { ids }
         if (chat.isEmpty()) throw ModelException(ModelErrorKind.Empty, "No chat models were found at that address.")
         return chat.distinct().sorted()
     }
 
     companion object {
-        private val NOT_CHAT = listOf("babbage", "davinci", "dall-e", "text-embedding", "tts", "-tts", "whisper", "omni-moderation", "sora")
+        private val NOT_CHAT = listOf(
+            "babbage", "davinci", "dall-e", "text-embedding", "tts", "-tts", "whisper",
+            "omni-moderation", "sora", "embed", "embedding", "clip", "detector", "starcoder",
+            "rerank", "calibration", "transcribe", "diarize"
+        )
         fun isChatModelId(id: String): Boolean {
             val l = id.lowercase()
-            return NOT_CHAT.none { if (it.startsWith("-")) l.contains(it) else l.startsWith(it) }
+            return NOT_CHAT.none { l.contains(it) }
         }
     }
 }

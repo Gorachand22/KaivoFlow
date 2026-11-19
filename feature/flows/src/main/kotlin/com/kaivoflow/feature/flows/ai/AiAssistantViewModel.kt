@@ -71,6 +71,9 @@ class AiAssistantViewModel @Inject constructor(
     private val _uiState = MutableStateFlow(AiAssistantUiState())
     val uiState: StateFlow<AiAssistantUiState> = _uiState.asStateFlow()
 
+    @Volatile
+    private var isConfigLoaded = false
+
     init {
         observeCredentials()
         loadProviderConfig()
@@ -95,6 +98,8 @@ class AiAssistantViewModel @Inject constructor(
                             it.copy(providerConfig = it.providerConfig.copy(credentialName = matching.name))
                         }
                     }
+                } else if (isConfigLoaded && filtered.isNotEmpty() && !_uiState.value.providerConfig.isConfigured) {
+                    selectCredential(filtered.first().id)
                 }
             }
         }
@@ -121,15 +126,30 @@ class AiAssistantViewModel @Inject constructor(
                 when (val loaded = vault.load(credId, credType)) {
                     is CredentialVaultBridge.Loaded.Failed ->
                         _uiState.update { it.copy(modelDiscoveryMessage = loaded.message, modelDiscoveryIsError = true) }
-                    is CredentialVaultBridge.Loaded.Ok -> config = config.copy(
-                        apiKey = loaded.credential.apiKey.ifBlank { config.apiKey },
-                        baseUrl = loaded.credential.baseUrl.ifBlank { config.baseUrl },
-                    )
+                    is CredentialVaultBridge.Loaded.Ok -> {
+                        val credFields = credentialRepository.getFields(credId).orEmpty()
+                        val credModel = credFields["model"]?.takeIf { it.isNotBlank() }
+                        config = config.copy(
+                            apiKey = loaded.credential.apiKey.ifBlank { config.apiKey },
+                            baseUrl = loaded.credential.baseUrl.ifBlank { config.baseUrl.ifBlank { loaded.credential.provider.defaultBaseUrl } },
+                            model = if (config.model.isBlank() || config.model == AiProvider.OpenAI.defaultModel) {
+                                credModel ?: config.model
+                            } else {
+                                config.model
+                            },
+                        )
+                    }
                 }
             }
             _uiState.update { it.copy(providerConfig = config) }
+            isConfigLoaded = true
             if (config.isConfigured) {
                 discoverModels(config.provider, config.baseUrl, config.apiKey)
+            } else {
+                val saved = _uiState.value.savedCredentials
+                if (saved.isNotEmpty()) {
+                    selectCredential(saved.first().id)
+                }
             }
         }
     }
@@ -193,18 +213,44 @@ class AiAssistantViewModel @Inject constructor(
             val result = modelDiscovery.discoverModels(provider, baseUrl, apiKey)
             result.fold(
                 onSuccess = { discovered ->
+                    val currentModel = _uiState.value.providerConfig.model
+                    val selectedModel = if (discovered.contains(currentModel)) {
+                        currentModel
+                    } else if (currentModel.isNotBlank() && currentModel != AiProvider.OpenAI.defaultModel) {
+                        currentModel
+                    } else {
+                        discovered.firstOrNull { m ->
+                            val l = m.lowercase()
+                            l.contains("bolt") || l.contains("instruct") || l.contains("chat")
+                        } ?: discovered.firstOrNull() ?: currentModel
+                    }
+                    val updatedConfig = _uiState.value.providerConfig.copy(
+                        provider = provider,
+                        baseUrl = baseUrl,
+                        apiKey = apiKey,
+                        discoveredModels = discovered,
+                        model = selectedModel,
+                    )
+                    credentialRepository.save(
+                        id = "ai_provider_config",
+                        type = "ai_assistant",
+                        label = "AI Assistant Config",
+                        fields = updatedConfig.toMap(),
+                    )
+                    val credId = updatedConfig.credentialId
+                    if (!credId.isNullOrBlank() && selectedModel.isNotBlank()) {
+                        val credFields = credentialRepository.getFields(credId).orEmpty()
+                        val credItem = _uiState.value.savedCredentials.find { it.id == credId }
+                        if (credItem != null && credFields["model"] != selectedModel) {
+                            credentialRepository.save(
+                                id = credId,
+                                type = credItem.type,
+                                label = credItem.name,
+                                fields = credFields + ("model" to selectedModel),
+                            )
+                        }
+                    }
                     _uiState.update { state ->
-                        val updatedConfig = state.providerConfig.copy(
-                            provider = provider,
-                            baseUrl = baseUrl,
-                            apiKey = apiKey,
-                            discoveredModels = discovered,
-                            model = if (discovered.contains(state.providerConfig.model)) {
-                                state.providerConfig.model
-                            } else {
-                                discovered.firstOrNull() ?: state.providerConfig.model
-                            },
-                        )
                         state.copy(
                             isDiscoveringModels = false,
                             providerConfig = updatedConfig,
@@ -279,12 +325,22 @@ class AiAssistantViewModel @Inject constructor(
                 return@launch
             }
             val c = (loaded as CredentialVaultBridge.Loaded.Ok).credential
+            val effectiveBaseUrl = c.baseUrl.ifBlank { c.provider.defaultBaseUrl }
+
+            val credFields = credentialRepository.getFields(credentialId).orEmpty()
+            val credSavedModel = credFields["model"]?.takeIf { it.isNotBlank() }
+            val existingModel = _uiState.value.providerConfig.model.takeIf {
+                it.isNotBlank() && it != AiProvider.OpenAI.defaultModel
+            }
+            val effectiveModel = credSavedModel ?: existingModel ?: c.provider.defaultModel
+
             val updatedConfig = _uiState.value.providerConfig.copy(
                 provider = c.provider,
                 apiKey = c.apiKey,
-                baseUrl = c.baseUrl,
+                baseUrl = effectiveBaseUrl,
                 credentialId = credentialId,
                 credentialName = cred.name,
+                model = effectiveModel,
             )
 
             // Only the pointer is stored (toMap leaves the key out); the key stays in the named credential.
@@ -298,7 +354,7 @@ class AiAssistantViewModel @Inject constructor(
             _uiState.update { state ->
                 state.copy(providerConfig = updatedConfig)
             }
-            discoverModels(c.provider, c.baseUrl, c.apiKey)
+            discoverModels(c.provider, effectiveBaseUrl, c.apiKey)
         }
     }
 
@@ -311,6 +367,19 @@ class AiAssistantViewModel @Inject constructor(
                 label = "AI Assistant Config",
                 fields = updated.toMap(),
             )
+            val credId = updated.credentialId
+            if (!credId.isNullOrBlank()) {
+                val credFields = credentialRepository.getFields(credId).orEmpty()
+                val credItem = _uiState.value.savedCredentials.find { it.id == credId }
+                if (credItem != null) {
+                    credentialRepository.save(
+                        id = credId,
+                        type = credItem.type,
+                        label = credItem.name,
+                        fields = credFields + ("model" to model),
+                    )
+                }
+            }
             _uiState.update { it.copy(providerConfig = updated) }
         }
     }
@@ -369,10 +438,11 @@ class AiAssistantViewModel @Inject constructor(
                 isGenerating = true,
             )
         }
-        // The question survives a crash or a killed app even if the answer never arrives.
-        persistCurrentSession()
 
         viewModelScope.launch {
+            // The question survives a crash or a killed app even if the answer never arrives.
+            saveCurrentSessionSnapshot()
+
             val base = _uiState.value.currentFlow
             val response = agent.executeTurn(
                 prompt = trimmed,
@@ -390,11 +460,17 @@ class AiAssistantViewModel @Inject constructor(
                     activeProposedFlow = response.flowProposal,
                 )
             }
-            persistCurrentSession()
+            saveCurrentSessionSnapshot()
         }
     }
 
     private fun persistCurrentSession() {
+        viewModelScope.launch {
+            saveCurrentSessionSnapshot()
+        }
+    }
+
+    private suspend fun saveCurrentSessionSnapshot() {
         val state = _uiState.value
         if (state.messages.isEmpty()) return
 
@@ -411,9 +487,7 @@ class AiAssistantViewModel @Inject constructor(
             updatedAt = System.currentTimeMillis(),
         )
 
-        viewModelScope.launch {
-            aiSessionRepository.saveSession(session)
-        }
+        aiSessionRepository.saveSession(session)
     }
 
     /**

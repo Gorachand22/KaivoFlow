@@ -125,7 +125,10 @@ fun CredentialEditSheet(
     fun runTest() {
         scope.launch {
             testState = ConnectionTestState.Testing
-            val res = onTestConnection(credential.type, fields.toMap())
+            val sanitized = fields.mapValues { (k, v) ->
+                if (k == "apiKey" || k == "token" || k == "baseUrl") v.trim() else v
+            }
+            val res = onTestConnection(credential.type, sanitized)
             testState = if (res.isSuccess) {
                 val models = res.getOrNull().orEmpty()
                 val summary = if (models.isNotEmpty()) "Connection tested successfully (${models.size} models discovered)"
@@ -642,7 +645,10 @@ fun CredentialEditSheet(
                 Button(
                     onClick = {
                         isSaving = true
-                        onSave(credentialName.trim(), fields.toMap())
+                        val sanitized = fields.mapValues { (k, v) ->
+                            if (k == "apiKey" || k == "token" || k == "baseUrl") v.trim() else v
+                        }
+                        onSave(credentialName.trim(), sanitized)
                         isSaving = false
                         isSavedDirty = false
                         onDismiss()

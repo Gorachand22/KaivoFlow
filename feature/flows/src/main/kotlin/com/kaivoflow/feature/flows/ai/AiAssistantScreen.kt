@@ -43,6 +43,7 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.rememberModalBottomSheetState
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -392,6 +393,7 @@ private fun TopBar(
                     style = androidx.compose.material3.MaterialTheme.typography.labelSmall,
                     color = colors.inkSecondary,
                     maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
                 )
             }
         }
@@ -1186,7 +1188,7 @@ private fun AiCredentialPickerSheet(
                                     if (isSelected) colors.royalGold else colors.hairline,
                                     KaivoShapes.stepCard,
                                 )
-                                .clickable { onSelectCredential(cred.id) }
+                                .clickable { if (!isSelected) onSelectCredential(cred.id) }
                                 .padding(14.dp),
                         ) {
                             Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {

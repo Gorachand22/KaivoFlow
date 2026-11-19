@@ -7,7 +7,6 @@ import com.kaivoflow.core.ai.ProviderEndpoints
 import com.kaivoflow.core.ai.Redactor
 import com.kaivoflow.core.ai.flowedit.AssistantCatalog
 import com.kaivoflow.core.ai.flowedit.AssistantTurn
-import com.kaivoflow.core.ai.flowedit.OfflineFlows
 import com.kaivoflow.core.engine.IssueSeverity as EngineSeverity
 import com.kaivoflow.core.model.Flow
 import kotlinx.coroutines.CancellationException
@@ -97,17 +96,36 @@ class AiWorkflowAgent @Inject constructor(
         return AiDiagnosisReport(flow.id, flow.name, flow.steps.size, issues)
     }
 
-    /** Asks the configured model; with no usable model, or when the call fails, falls back to the offline helper. */
+    /**
+     * Executes an AI assistant turn using the configured model and tools.
+     * With no configured model or on provider error, returns an honest diagnostic message.
+     */
     suspend fun executeTurn(
         prompt: String,
         currentFlow: Flow?,
         config: AiProviderConfig,
         chatHistory: List<AiChatMessage>,
     ): AiChatMessage {
-        if (!config.isConfigured) return runOfflineHelper(prompt, currentFlow)
+        if (!config.isConfigured) {
+            val providerName = config.provider.displayName
+            return AiChatMessage(
+                sender = MessageSender.Assistant,
+                text = "⚠️ **AI Provider Not Configured**\n\n" +
+                    "To generate workflows, chat with the AI, and plan automations, please configure an API key for **$providerName**.\n\n" +
+                    "👉 Tap the **key / credential icon** at the top right to select or create a credential (supports OpenAI, NVIDIA NIM, Groq, Google Gemini, Anthropic Claude, or Local Ollama).",
+            )
+        }
+
         val redactor = Redactor(listOf(config.apiKey))
         return try {
-            val client = clients.create(ProviderEndpoints.config(config.provider.toKind(), config.model, config.baseUrl, config.apiKey))
+            val client = clients.create(
+                ProviderEndpoints.config(
+                    config.provider.toKind(),
+                    config.model,
+                    config.baseUrl,
+                    config.apiKey,
+                )
+            )
             val history = chatHistory.dropLast(1).takeLast(8).map {
                 if (it.sender == MessageSender.User) ChatMessage.user(it.text) else ChatMessage.assistant(it.text)
             }
@@ -116,15 +134,52 @@ class AiWorkflowAgent @Inject constructor(
             })
             val r = turn.run(prompt, currentFlow, history)
             val failure = r.failure
-            if (failure != null) return offlineAfterFailure(failure, prompt, currentFlow)
+            if (failure != null) {
+                return formatFailureMessage(failure, config)
+            }
             toMessage(r)
         } catch (e: CancellationException) {
             throw e
         } catch (e: ModelException) {
-            offlineAfterFailure(redactor.redact(e.message.orEmpty()), prompt, currentFlow)
+            formatModelExceptionMessage(e, config, redactor)
         } catch (e: Exception) {
-            offlineAfterFailure("The assistant could not finish: " + redactor.redact(e.message ?: e::class.java.simpleName).take(160), prompt, currentFlow)
+            val safeMsg = redactor.redact(e.message ?: e::class.java.simpleName).take(250)
+            AiChatMessage(
+                sender = MessageSender.Assistant,
+                text = "❌ **AI Assistant Communication Error**\n\n" +
+                    "The model could not finish the request:\n\n" +
+                    "```\n$safeMsg\n```\n\n" +
+                    "Please verify your connection and provider settings.",
+            )
         }
+    }
+
+    private fun formatModelExceptionMessage(e: ModelException, config: AiProviderConfig, redactor: Redactor): AiChatMessage {
+        val safeMsg = redactor.redact(e.message.orEmpty())
+        val isNvidia = config.baseUrl.contains("nvidia.com", ignoreCase = true) || config.model.contains("nvidia", ignoreCase = true)
+        val text = buildString {
+            append("❌ **AI Provider Error (HTTP ${e.status})**\n\n")
+            append("The configured AI provider returned:\n")
+            append("> $safeMsg\n\n")
+            if (e.status == 403 && isNvidia) {
+                append("**NVIDIA NIM Troubleshooting:**\n")
+                append("- On NVIDIA Build / NIM, Personal accounts require **Public API Endpoints** access provisioned for chat inference, even if model discovery (`/v1/models`) succeeded.\n")
+                append("- Alternatively, you can connect an OpenAI, Google Gemini, Anthropic Claude, or Groq API key, or use local Ollama.\n\n")
+            } else if (e.status == 401 || e.status == 403) {
+                append("**Troubleshooting:**\n")
+                append("1. Tap the **key icon** at the top right to verify your API key and base URL.\n")
+                append("2. Ensure your API account has active credits and permission to access model `${config.model}`.\n\n")
+            }
+            append("👉 You can manage your AI providers anytime from **Overview > Credentials**.")
+        }
+        return AiChatMessage(sender = MessageSender.Assistant, text = text)
+    }
+
+    private fun formatFailureMessage(failure: String, config: AiProviderConfig): AiChatMessage {
+        return AiChatMessage(
+            sender = MessageSender.Assistant,
+            text = "⚠️ **AI Assistant Stopped Early**\n\n$failure\n\n*Try rephrasing your prompt or switching models in Settings.*",
+        )
     }
 
     private fun toMessage(r: com.kaivoflow.core.ai.flowedit.AssistantResult): AiChatMessage {
@@ -143,71 +198,5 @@ class AiWorkflowAgent @Inject constructor(
             }
         }.trim()
         return AiChatMessage(sender = MessageSender.Assistant, text = text.ifBlank { "I have nothing to change." }, flowProposal = usable, toolCalls = records)
-    }
-
-    private fun offlineAfterFailure(reason: String, prompt: String, flow: Flow?): AiChatMessage {
-        val fallback = runOfflineHelper(prompt, flow)
-        return fallback.copy(text = "*(Offline helper: $reason)*\n\n" + fallback.text)
-    }
-
-    /** Keyword helper that runs on the phone. Its Flows are built from catalog ids (golden-tested) and are proposals only. */
-    private fun runOfflineHelper(prompt: String, currentFlow: Flow?): AiChatMessage {
-        val lower = prompt.lowercase()
-        val now = System.currentTimeMillis()
-        fun newId() = UUID.randomUUID().toString()
-
-        if (currentFlow != null && (lower.contains("diagnose") || lower.contains("issue") || lower.contains("error") || lower.contains("fix") || lower.contains("check"))) {
-            val report = diagnose(currentFlow)
-            val text = buildString {
-                append("### Check of \"${currentFlow.name}\"\n\n")
-                if (report.issues.isEmpty()) append("All ${report.stepCount} steps are configured and connected.\n")
-                else report.issues.forEach { i ->
-                    val tag = when (i.severity) { IssueSeverity.Error -> "Problem"; IssueSeverity.Warning -> "Warning"; IssueSeverity.Info -> "Note" }
-                    append("- **$tag** \"${i.stepName}\": ${i.message}")
-                    if (i.suggestedFix.isNotBlank()) append(" _${i.suggestedFix}_")
-                    append('\n')
-                }
-            }
-            return AiChatMessage(sender = MessageSender.Assistant, text = text, diagnosisReport = report, toolCalls = listOf(ToolExecution("check_flow", report.summaryText, !report.hasErrors)))
-        }
-
-        if (currentFlow != null && (lower.contains("notify") || lower.contains("notification") || lower.contains("alert"))) {
-            val proposal = OfflineFlows.withNotification(currentFlow, "step_${newId().take(6)}", "stream_${newId().take(6)}", now)
-            return AiChatMessage(
-                sender = MessageSender.Assistant,
-                text = "I prepared a **Send Notification** step after your last step. Review it, then tap **Apply to Canvas**. Your Flow is not changed until you do.",
-                flowProposal = proposal,
-                toolCalls = listOf(ToolExecution("add_step", "Added \"Send Notification\" (device.notify)"), ToolExecution("connect_steps", "Connected it after the last step")),
-            )
-        }
-
-        if (lower.contains("battery") || lower.contains("charge")) {
-            return AiChatMessage(
-                sender = MessageSender.Assistant,
-                text = "Here is a **Low Battery Alert**. It starts when the battery drops below 20% and sends a notification.",
-                flowProposal = OfflineFlows.batteryAlert(newId(), now),
-                toolCalls = listOf(ToolExecution("add_step", "Battery Low (spark.battery)"), ToolExecution("add_step", "Low Battery Warning (device.notify)"), ToolExecution("connect_steps", "Connected the two steps")),
-            )
-        }
-
-        if (lower.contains("webhook") || lower.contains("http") || lower.contains("api")) {
-            return AiChatMessage(
-                sender = MessageSender.Assistant,
-                text = "Here is an **Incoming Webhook to Notification** Flow. It listens for a webhook on your phone and shows the message.",
-                flowProposal = OfflineFlows.webhookToNotification(newId(), now),
-                toolCalls = listOf(ToolExecution("add_step", "Webhook (spark.webhook)"), ToolExecution("add_step", "Show Alert (device.notify)"), ToolExecution("connect_steps", "Connected the two steps")),
-            )
-        }
-
-        val reply = if (currentFlow != null) {
-            "I am ready to help with **\"${currentFlow.name}\"** (${currentFlow.steps.size} steps). You can ask me to:\n" +
-                "- **Check this flow** for problems\n- **Add a notification** step\n\n" +
-                "To unlock full planning, tap the settings icon at the top right and add an API key for Gemini, Claude, OpenAI or a local Ollama."
-        } else {
-            "Welcome to **Ask AI**! What would you like to automate?\n\n" +
-                "Try asking:\n- *\"Create a flow that alerts me when the battery is low\"*\n- *\"Build a webhook that shows a notification\"*\n\n" +
-                "Add your AI provider any time with the settings button at the top right."
-        }
-        return AiChatMessage(sender = MessageSender.Assistant, text = reply)
     }
 }

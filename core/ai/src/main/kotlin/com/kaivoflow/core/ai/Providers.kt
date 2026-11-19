@@ -62,7 +62,7 @@ internal abstract class HttpModelClient(private val http: HttpGateway, protected
                 HttpRequestSpec(
                     method = "POST",
                     url = url,
-                    headers = headers + ("Content-Type" to "application/json"),
+                    headers = headers + ("Content-Type" to "application/json") + ("Accept" to "application/json"),
                     body = body,
                     timeoutMs = config.timeoutMs,
                     followRedirects = false,
