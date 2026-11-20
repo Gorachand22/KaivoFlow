@@ -69,32 +69,18 @@ object StarterTemplates {
             name = "Morning News Brief",
             emoji = "☀️",
             colorHex = 0xFFFF8A00,
-            description = "Searches web daily at 9am for top headlines",
-            instructions = "You are a news brief agent. Every morning at 9am, search the web for today's top headlines and compile a concise summary. For each story include a headline, a one-sentence summary, and a source link. Limit the brief to five stories.",
+            description = "A short brief delivered every morning at 9am",
+            instructions = "You are a morning brief agent. Compile a short morning brief for the person: a greeting, today's date, and up to five points worth their attention. You have no web access, so say plainly when you do not know something instead of guessing.",
             triggers = listOf(
                 AgentTrigger(
                     type = "schedule",
                     name = "Daily 9:00 AM Spark",
                     description = "Runs automatically every morning at 9am",
-                    config = mapOf("cron" to "0 9 * * *"),
+                    config = AgentTriggerConfig.dailyAt("09:00"),
                     isEnabled = true,
                 )
             ),
-            tools = listOf(
-                AgentTool(
-                    type = "web_search",
-                    name = "Web Search",
-                    description = "Searches the web for latest headlines and live articles",
-                    isEnabled = true,
-                ),
-                AgentTool(
-                    type = "device",
-                    name = "Phone Notification",
-                    description = "Sends the brief directly to phone notification bar",
-                    isEnabled = true,
-                )
-            ),
-            isWebSearchEnabled = true,
+            tools = emptyList(),
         ),
         AgentTemplate(
             id = "email_triage",
@@ -132,7 +118,7 @@ object StarterTemplates {
                     type = "schedule",
                     name = "Hourly Health Check",
                     description = "Runs every 60 minutes",
-                    config = mapOf("cron" to "0 * * * *"),
+                    config = mapOf("frequency" to "hourly"),
                     isEnabled = true,
                 )
             ),
@@ -167,7 +153,17 @@ data class AgentBuilderUiState(
     val workspaceVars: Map<String, Any?> = emptyMap(),
     /** A credential field expression that could not be evaluated, shown under the header. */
     val credentialError: String? = null,
+    /** What the Always-On engine says about this agent (never a stored flag). */
+    val liveState: AgentLiveState = AgentLiveState.NotPublished,
+    /** Production Runs of the published agent, newest first. */
+    val runSessions: List<AgentSession> = emptyList(),
+    val publishNotice: AgentNotice? = null,
+    val isPublishing: Boolean = false,
 ) {
+    /** Test sessions and production Runs together, newest first. */
+    val allSessions: List<AgentSession>
+        get() = (runSessions + agent.sessions).sortedByDescending { it.timestamp }
+
     val effectiveModels: List<String>
         get() = if (discoveredModels.isNotEmpty()) discoveredModels else providerConfig.effectiveModels
 }
@@ -180,6 +176,8 @@ class AgentBuilderViewModel @Inject constructor(
     private val variableRepository: WorkflowVariableRepository,
     private val vault: CredentialVaultBridge,
     private val flowEngine: FlowEngine,
+    private val publication: AgentPublicationService,
+    private val runHistory: AgentRunHistorySource,
     /** The Test Run sheet attaches to this to show approve/deny cards before a tool acts on the phone. */
     val approvalRelay: ApprovalRelay,
     savedStateHandle: SavedStateHandle,
@@ -198,6 +196,16 @@ class AgentBuilderViewModel @Inject constructor(
         loadWorkspaceVars()
         loadProviderConfig()
         loadOrCreateAgent(agentId)
+    }
+
+    /** Live badge and Run history come from the engine and the Run store, for the agent this screen edits. */
+    private var watchJob: kotlinx.coroutines.Job? = null
+    private fun watch(agentId: String) {
+        watchJob?.cancel()
+        watchJob = viewModelScope.launch {
+            launch { publication.observe().collect { all -> _uiState.update { it.copy(liveState = all[agentId] ?: AgentLiveState.NotPublished) } } }
+            launch { runHistory.observe(agentId).collect { runs -> _uiState.update { it.copy(runSessions = runs) } } }
+        }
     }
 
     private fun observeCredentials() {
@@ -300,6 +308,7 @@ class AgentBuilderViewModel @Inject constructor(
                 val existing = agentRepository.agentById(id)
                 if (existing != null) {
                     _uiState.update { it.copy(agent = existing) }
+                    watch(existing.id)
                     existing.credentialId?.let { selectCredential(it) }
                     return@launch
                 }
@@ -317,9 +326,9 @@ class AgentBuilderViewModel @Inject constructor(
                 instructions = defaultTemplate.instructions,
                 triggers = defaultTemplate.triggers,
                 tools = defaultTemplate.tools,
-                isPublished = false,
             )
             _uiState.update { it.copy(agent = newAgent, selectedTemplateId = defaultTemplate.id) }
+            watch(newAgent.id)
         }
     }
 
@@ -543,18 +552,33 @@ class AgentBuilderViewModel @Inject constructor(
         }
     }
 
-    fun publishAgent(onSaved: () -> Unit = {}) {
+    /**
+     * Publish (Run 24/7): the draft is saved first (a refused publish must never lose edits), then compiled and handed to the
+     * Always-On engine through [AgentPublicationService]. The agent counts as live only when the engine says so; until then the
+     * screen shows why not ([AgentBuilderUiState.publishNotice]). A live agent is republished (publish changes).
+     */
+    fun publishAgent(acknowledge: Boolean = false, onPublished: () -> Unit = {}) {
+        if (_uiState.value.isPublishing) return
         viewModelScope.launch {
-            val published = _uiState.value.agent.copy(isPublished = true)
-            _uiState.update {
-                it.copy(
-                    isSaving = true,
-                    agent = published,
-                )
+            _uiState.update { it.copy(isPublishing = true, isSaving = true, publishNotice = null) }
+            val agent = _uiState.value.agent
+            val outcome = try {
+                agentRepository.saveAgent(agent)
+                publication.publish(agent.id, acknowledge)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                AgentPublishOutcome.Failed(e.message ?: "Publishing failed.")
             }
-            agentRepository.saveAgent(published)
-            _uiState.update { it.copy(isSaving = false, isSavedSuccess = true) }
-            onSaved()
+            _uiState.update { it.copy(isPublishing = false, isSaving = false, isSavedSuccess = true, publishNotice = outcome.toNotice()) }
+            if (outcome is AgentPublishOutcome.Done) onPublished()
         }
+    }
+
+    fun dismissPublishNotice() { _uiState.update { it.copy(publishNotice = null) } }
+
+    /** The author's consent for one tool to act in a published run. Off unless the person turns it on. */
+    fun setToolUnattended(toolId: String, allowed: Boolean) {
+        _uiState.update { st -> st.copy(agent = st.agent.copy(tools = st.agent.tools.map { if (it.id == toolId) it.copy(allowUnattended = allowed) else it })) }
     }
 }

@@ -61,6 +61,7 @@ import com.kaivoflow.core.design.KaivoIcons
 import com.kaivoflow.core.design.KaivoShapes
 import com.kaivoflow.core.design.KaivoTheme
 import com.kaivoflow.feature.flows.ai.agent.AgentSession
+import com.kaivoflow.feature.flows.ai.agent.AgentLiveState
 import com.kaivoflow.feature.flows.ai.agent.CustomAgent
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -83,6 +84,12 @@ fun AgentsDashboardView(
     onDuplicateAgent: (String) -> Unit,
     onTogglePublish: (String) -> Unit,
     modifier: Modifier = Modifier,
+    /** What the Always-On engine says per agent id. An agent without an entry is not published. */
+    liveStates: Map<String, AgentLiveState> = emptyMap(),
+    onPause: (String) -> Unit = {},
+    onResume: (String) -> Unit = {},
+    onRetry: (String) -> Unit = {},
+    onPublishChanges: (String) -> Unit = {},
 ) {
     val colors = KaivoTheme.colors
     val filtered = remember(agents, searchQuery) {
@@ -195,6 +202,11 @@ fun AgentsDashboardView(
                         onDelete = { onDeleteAgent(agent.id) },
                         onDuplicate = { onDuplicateAgent(agent.id) },
                         onTogglePublish = { onTogglePublish(agent.id) },
+                        liveState = liveStates[agent.id] ?: AgentLiveState.NotPublished,
+                        onPause = { onPause(agent.id) },
+                        onResume = { onResume(agent.id) },
+                        onRetry = { onRetry(agent.id) },
+                        onPublishChanges = { onPublishChanges(agent.id) },
                     )
                 }
             }
@@ -213,6 +225,11 @@ fun AgentCardItem(
     onDelete: () -> Unit,
     onDuplicate: () -> Unit,
     onTogglePublish: () -> Unit,
+    liveState: AgentLiveState = AgentLiveState.NotPublished,
+    onPause: () -> Unit = {},
+    onResume: () -> Unit = {},
+    onRetry: () -> Unit = {},
+    onPublishChanges: () -> Unit = {},
 ) {
     val colors = KaivoTheme.colors
     var showMenu by remember { mutableStateOf(false) }
@@ -231,7 +248,7 @@ fun AgentCardItem(
             .background(colors.surfaceCard)
             .border(
                 1.dp,
-                if (agent.isPublished) colors.royalGold.copy(alpha = 0.45f) else colors.hairline,
+                if (liveState is AgentLiveState.Live) colors.royalGold.copy(alpha = 0.45f) else colors.hairline,
                 KaivoShapes.stepCard,
             )
             .clickable { onClick() }
@@ -274,40 +291,28 @@ fun AgentCardItem(
                             overflow = TextOverflow.Ellipsis,
                             modifier = Modifier.weight(1f, fill = false),
                         )
-                        // Status Pill (Published vs Draft)
-                        if (agent.isPublished) {
-                            Box(
-                                Modifier
-                                    .clip(KaivoShapes.chip)
-                                    .background(colors.statusSuccess.copy(alpha = 0.15f))
-                                    .border(1.dp, colors.statusSuccess.copy(alpha = 0.4f), KaivoShapes.chip)
-                                    .padding(horizontal = 8.dp, vertical = 2.dp),
-                            ) {
-                                Text(
-                                    "✓ published",
-                                    style = MaterialTheme.typography.labelSmall,
-                                    fontWeight = FontWeight.Bold,
-                                    color = colors.statusSuccess,
-                                    maxLines = 1,
-                                    softWrap = false,
-                                )
-                            }
-                        } else {
-                            Box(
-                                Modifier
-                                    .clip(KaivoShapes.chip)
-                                    .background(colors.surfaceElevated)
-                                    .border(1.dp, colors.hairline, KaivoShapes.chip)
-                                    .padding(horizontal = 8.dp, vertical = 2.dp),
-                            ) {
-                                Text(
-                                    "Draft",
-                                    style = MaterialTheme.typography.labelSmall,
-                                    color = colors.inkSecondary,
-                                    maxLines = 1,
-                                    softWrap = false,
-                                )
-                            }
+                        // Status pill: always the engine's state for this agent, never a stored flag.
+                        val (pillText, pillColor) = when (liveState) {
+                            is AgentLiveState.Live -> (if (liveState.changesNotLive) "● Live · changes not live" else "● Live") to colors.statusSuccess
+                            is AgentLiveState.Paused -> "Paused" to colors.royalGold
+                            is AgentLiveState.Failing -> "Needs attention" to colors.statusError
+                            AgentLiveState.NotPublished -> "Draft" to colors.inkSecondary
+                        }
+                        Box(
+                            Modifier
+                                .clip(KaivoShapes.chip)
+                                .background(if (liveState == AgentLiveState.NotPublished) colors.surfaceElevated else pillColor.copy(alpha = 0.15f))
+                                .border(1.dp, if (liveState == AgentLiveState.NotPublished) colors.hairline else pillColor.copy(alpha = 0.4f), KaivoShapes.chip)
+                                .padding(horizontal = 8.dp, vertical = 2.dp),
+                        ) {
+                            Text(
+                                pillText,
+                                style = MaterialTheme.typography.labelSmall,
+                                fontWeight = if (liveState == AgentLiveState.NotPublished) FontWeight.Normal else FontWeight.Bold,
+                                color = pillColor,
+                                maxLines = 1,
+                                softWrap = false,
+                            )
                         }
                     }
 
@@ -362,23 +367,49 @@ fun AgentCardItem(
                                 onViewHistory()
                             },
                         )
-                        DropdownMenuItem(
-                            text = {
-                                Text(if (agent.isPublished) "Unpublish" else "Publish (Run 24/7)", color = colors.inkPrimary)
-                            },
-                            leadingIcon = {
-                                Icon(
-                                    KaivoIcons.icon(if (agent.isPublished) "pause" else "play"),
-                                    null,
-                                    tint = if (agent.isPublished) colors.inkSecondary else colors.royalGold,
-                                    modifier = Modifier.size(18.dp),
-                                )
-                            },
-                            onClick = {
-                                showMenu = false
-                                onTogglePublish()
-                            },
-                        )
+                        val isLive = liveState != AgentLiveState.NotPublished
+                        if (!isLive) {
+                            DropdownMenuItem(
+                                text = { Text("Publish (Run 24/7)", color = colors.inkPrimary) },
+                                leadingIcon = { Icon(KaivoIcons.icon("play"), null, tint = colors.royalGold, modifier = Modifier.size(18.dp)) },
+                                onClick = { showMenu = false; onTogglePublish() },
+                            )
+                        }
+                        if (liveState is AgentLiveState.Live && liveState.changesNotLive) {
+                            DropdownMenuItem(
+                                text = { Text("Publish changes", color = colors.inkPrimary) },
+                                leadingIcon = { Icon(KaivoIcons.icon("play"), null, tint = colors.royalGold, modifier = Modifier.size(18.dp)) },
+                                onClick = { showMenu = false; onPublishChanges() },
+                            )
+                        }
+                        if (liveState is AgentLiveState.Live) {
+                            DropdownMenuItem(
+                                text = { Text("Pause", color = colors.inkPrimary) },
+                                leadingIcon = { Icon(KaivoIcons.icon("pause"), null, tint = colors.inkSecondary, modifier = Modifier.size(18.dp)) },
+                                onClick = { showMenu = false; onPause() },
+                            )
+                        }
+                        if (liveState is AgentLiveState.Paused) {
+                            DropdownMenuItem(
+                                text = { Text("Resume", color = colors.inkPrimary) },
+                                leadingIcon = { Icon(KaivoIcons.icon("play"), null, tint = colors.royalGold, modifier = Modifier.size(18.dp)) },
+                                onClick = { showMenu = false; onResume() },
+                            )
+                        }
+                        if (liveState is AgentLiveState.Failing) {
+                            DropdownMenuItem(
+                                text = { Text("Retry now", color = colors.inkPrimary) },
+                                leadingIcon = { Icon(KaivoIcons.icon("play"), null, tint = colors.royalGold, modifier = Modifier.size(18.dp)) },
+                                onClick = { showMenu = false; onRetry() },
+                            )
+                        }
+                        if (isLive) {
+                            DropdownMenuItem(
+                                text = { Text("Unpublish (Stop 24/7)", color = colors.inkPrimary) },
+                                leadingIcon = { Icon(KaivoIcons.icon("pause"), null, tint = colors.inkSecondary, modifier = Modifier.size(18.dp)) },
+                                onClick = { showMenu = false; onTogglePublish() },
+                            )
+                        }
                         DropdownMenuItem(
                             text = { Text("Duplicate Agent", color = colors.inkPrimary) },
                             leadingIcon = {
@@ -468,7 +499,7 @@ fun AgentCardItem(
             title = { Text("Delete Agent", color = colors.inkPrimary) },
             text = {
                 Text(
-                    "Are you sure you want to delete \"${agent.name}\"? All instructions, trigger schedules, and execution history will be removed.",
+                    "Are you sure you want to delete \"${agent.name}\"? ${if (liveState != AgentLiveState.NotPublished) "It will stop running first. " else ""}All instructions, trigger schedules, and execution history will be removed.",
                     color = colors.inkSecondary,
                 )
             },

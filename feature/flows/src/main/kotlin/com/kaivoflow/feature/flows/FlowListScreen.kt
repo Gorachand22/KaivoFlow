@@ -4,8 +4,15 @@ import com.kaivoflow.core.engine.HttpGateway
 import com.kaivoflow.core.engine.LifecycleState
 import com.kaivoflow.feature.flows.ai.AiProvider
 import com.kaivoflow.feature.flows.ai.ModelDiscoveryService
+import com.kaivoflow.feature.flows.ai.agent.AgentIds
+import com.kaivoflow.feature.flows.ai.agent.AgentLiveState
+import com.kaivoflow.feature.flows.ai.agent.AgentNotice
+import com.kaivoflow.feature.flows.ai.agent.AgentPublicationService
+import com.kaivoflow.feature.flows.ai.agent.AgentPublishOutcome
 import com.kaivoflow.feature.flows.ai.agent.AgentRepository
+import com.kaivoflow.feature.flows.ai.agent.AgentRunHistory
 import com.kaivoflow.feature.flows.ai.agent.CustomAgent
+import com.kaivoflow.feature.flows.ai.agent.toNotice
 
 import androidx.compose.foundation.layout.defaultMinSize
 import androidx.compose.ui.semantics.Role
@@ -134,6 +141,7 @@ class FlowListViewModel @Inject constructor(
     private val credentialRepository: CredentialRepository,
     private val dataTableRepository: DataTableRepository,
     private val agentRepository: AgentRepository,
+    private val agentPublication: AgentPublicationService,
     private val scheduler: FlowScheduler,
     private val activation: com.kaivoflow.core.work.alwayson.ActivationManager,
     private val http: HttpGateway,
@@ -143,8 +151,23 @@ class FlowListViewModel @Inject constructor(
 
     private val credentialFields = CredentialFieldResolver(variableRepository)
 
-    val agents: StateFlow<List<CustomAgent>> = agentRepository.observeAgents()
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+    /** Agents with their production Runs merged into the history the cards and the inspector show (newest first). */
+    val agents: StateFlow<List<CustomAgent>> = combine(agentRepository.observeAgents(), runRepository.observeRecent(300)) { list, runs ->
+        val byAgent = runs.filter { AgentIds.isAgentFlow(it.flowId) }.groupBy { AgentIds.agentId(it.flowId) }
+        list.map { a ->
+            val production = byAgent[a.id].orEmpty().map(AgentRunHistory::toSession)
+            a.copy(sessions = (production + a.sessions).sortedByDescending { it.timestamp })
+        }
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+
+    /** What the Always-On engine says per agent. Derived from the lifecycle of each agent's hidden Flow, never from a flag. */
+    val agentLiveStates: StateFlow<Map<String, AgentLiveState>> = agentPublication.observe()
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyMap())
+
+    private val _agentNotice = MutableStateFlow<Pair<String, AgentNotice>?>(null)
+    /** Why the last publish, pause or unpublish did not simply work: agent id and the text to show. */
+    val agentNotice: StateFlow<Pair<String, AgentNotice>?> = _agentNotice.asStateFlow()
+    fun dismissAgentNotice() { _agentNotice.value = null }
 
     private val _activeEditingCredential = MutableStateFlow<CredentialItem?>(null)
     val activeEditingCredential: StateFlow<CredentialItem?> = _activeEditingCredential.asStateFlow()
@@ -163,7 +186,8 @@ class FlowListViewModel @Inject constructor(
 
     fun deleteAgent(id: String) {
         viewModelScope.launch {
-            agentRepository.deleteAgent(id)
+            // A live agent is disarmed and its runs purged first, so nothing keeps running without an owner.
+            runCatching { agentPublication.delete(id) }.onFailure { agentRepository.deleteAgent(id) }
             if (_inspectingAgent.value?.id == id) {
                 _inspectingAgent.value = null
             }
@@ -174,14 +198,27 @@ class FlowListViewModel @Inject constructor(
         viewModelScope.launch { agentRepository.duplicateAgent(id) }
     }
 
+    /** Draft: publish through the engine. Anything else (live, paused, failing): unpublish. */
     fun togglePublishAgent(id: String) {
+        val live = agentLiveStates.value[id] ?: AgentLiveState.NotPublished
+        if (live == AgentLiveState.NotPublished) publishAgent(id) else agentAction(id) { agentPublication.unpublish(id) }
+    }
+
+    fun publishAgent(id: String, acknowledge: Boolean = false) = agentAction(id) { agentPublication.publish(id, acknowledge) }
+    fun pauseAgent(id: String) = agentAction(id) { agentPublication.pause(id) }
+    fun resumeAgent(id: String) = agentAction(id) { agentPublication.resume(id) }
+    fun retryAgent(id: String) = agentAction(id) { agentPublication.retry(id) }
+
+    private fun agentAction(id: String, block: suspend () -> AgentPublishOutcome) {
         viewModelScope.launch {
-            val agent = agentRepository.agentById(id) ?: return@launch
-            val updated = agent.copy(isPublished = !agent.isPublished)
-            agentRepository.saveAgent(updated)
-            if (_inspectingAgent.value?.id == id) {
-                _inspectingAgent.value = updated
+            val outcome = try {
+                block()
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                AgentPublishOutcome.Failed(e.message ?: "That did not work.")
             }
+            _agentNotice.value = outcome.toNotice()?.let { id to it }
         }
     }
 
@@ -257,10 +294,14 @@ class FlowListViewModel @Inject constructor(
         flowRepository.observeSummaries(),
         runRepository.observeRecent(50),
     ) { flows, runs ->
+        // An agent's hidden Flow is not a Flow the person built: it stays out of this list and of the recent runs here
+        // (its runs show in the Agents tab history).
+        val visibleFlows = flows.filterNot { AgentIds.isAgentFlow(it.id) }
+        val visibleRuns = runs.filterNot { AgentIds.isAgentFlow(it.flowId) }
         FlowListUiState(
-            flows = flows,
-            recentRuns = runs,
-            lastRunByFlow = runs.groupBy { it.flowId }.mapValues { it.value.first() },
+            flows = visibleFlows,
+            recentRuns = visibleRuns,
+            lastRunByFlow = visibleRuns.groupBy { it.flowId }.mapValues { it.value.first() },
         )
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), FlowListUiState())
 
@@ -559,6 +600,8 @@ fun FlowListScreen(
     val groupVariables by viewModel.groupVariables.collectAsStateWithLifecycle()
     val allVariables by viewModel.allVariables.collectAsStateWithLifecycle()
     val agents by viewModel.agents.collectAsStateWithLifecycle()
+    val agentLiveStates by viewModel.agentLiveStates.collectAsStateWithLifecycle()
+    val agentNotice by viewModel.agentNotice.collectAsStateWithLifecycle()
     val agentSearchQuery by viewModel.agentSearchQuery.collectAsStateWithLifecycle()
     val inspectingAgent by viewModel.inspectingAgent.collectAsStateWithLifecycle()
     val credentials by viewModel.credentials.collectAsStateWithLifecycle()
@@ -579,6 +622,32 @@ fun FlowListScreen(
     val showCreateVariable by viewModel.showCreateVariableDialog.collectAsStateWithLifecycle()
     val movingFlowId by viewModel.movingFlowId.collectAsStateWithLifecycle()
     val colors = KaivoTheme.colors
+
+    agentNotice?.let { (agentId, notice) ->
+        AlertDialog(
+            onDismissRequest = viewModel::dismissAgentNotice,
+            title = { Text(notice.title, color = colors.inkPrimary) },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    notice.lines.forEach { Text(it, style = androidx.compose.material3.MaterialTheme.typography.bodySmall, color = colors.inkSecondary) }
+                }
+            },
+            confirmButton = {
+                if (notice.canAcknowledge) {
+                    Button(
+                        onClick = { viewModel.dismissAgentNotice(); viewModel.publishAgent(agentId, acknowledge = true) },
+                        colors = ButtonDefaults.buttonColors(containerColor = colors.royalGold, contentColor = Color.Black),
+                    ) { Text("Publish anyway") }
+                } else {
+                    TextButton(onClick = viewModel::dismissAgentNotice) { Text("OK", color = colors.royalGold) }
+                }
+            },
+            dismissButton = {
+                if (notice.canAcknowledge) TextButton(onClick = viewModel::dismissAgentNotice) { Text("Cancel", color = colors.inkSecondary) }
+            },
+            containerColor = colors.canvasVoid,
+        )
+    }
 
     val filteredFlows = remember(state.flows, selectedGroupId) {
         if (selectedGroupId == null) {
@@ -771,6 +840,11 @@ fun FlowListScreen(
                             onDuplicateAgent = viewModel::duplicateAgent,
                             onTogglePublish = viewModel::togglePublishAgent,
                             modifier = Modifier.weight(1f),
+                            liveStates = agentLiveStates,
+                            onPause = viewModel::pauseAgent,
+                            onResume = viewModel::resumeAgent,
+                            onRetry = viewModel::retryAgent,
+                            onPublishChanges = { id -> viewModel.publishAgent(id) },
                         )
                     }
 
@@ -2022,234 +2096,6 @@ private fun LifecycleChip(flow: FlowSummary) {
             flow.nextRetryAt?.takeIf { it > now }?.let {
                 val mins = ((it - now) / 60_000L).coerceAtLeast(1)
                 AnimatedStatusBadge("Retrying in ${mins} min", BadgeKind.Neutral)
-            }
-        }
-    }
-}
-
-@Composable
-private fun AgentsDashboardView(
-    agents: List<CustomAgent>,
-    onOpenAgentBuilder: (String?) -> Unit,
-    onDeleteAgent: (String) -> Unit,
-    onDuplicateAgent: (String) -> Unit,
-    modifier: Modifier = Modifier,
-) {
-    val colors = KaivoTheme.colors
-    LazyColumn(
-        modifier = modifier
-            .fillMaxWidth()
-            .padding(horizontal = 16.dp),
-        verticalArrangement = Arrangement.spacedBy(12.dp),
-        contentPadding = PaddingValues(top = 8.dp, bottom = 24.dp),
-    ) {
-        item {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.SpaceBetween,
-            ) {
-                Column {
-                    Text(
-                        text = "AI Agents",
-                        style = androidx.compose.material3.MaterialTheme.typography.titleMedium,
-                        fontWeight = FontWeight.Bold,
-                        color = colors.inkPrimary,
-                    )
-                    Text(
-                        text = "Dedicated autonomous agents with triggers & tools",
-                        style = androidx.compose.material3.MaterialTheme.typography.bodySmall,
-                        color = colors.inkSecondary,
-                    )
-                }
-
-                Button(
-                    onClick = { onOpenAgentBuilder(null) },
-                    shape = KaivoShapes.chip,
-                    colors = ButtonDefaults.buttonColors(
-                        containerColor = colors.royalGold,
-                        contentColor = Color.Black,
-                    ),
-                    contentPadding = PaddingValues(horizontal = 14.dp, vertical = 6.dp),
-                ) {
-                    Icon(
-                        KaivoIcons.icon("add"),
-                        contentDescription = null,
-                        modifier = Modifier.size(16.dp),
-                    )
-                    Spacer(Modifier.width(6.dp))
-                    Text(
-                        text = "Build Agent",
-                        style = androidx.compose.material3.MaterialTheme.typography.labelMedium,
-                        fontWeight = FontWeight.Bold,
-                    )
-                }
-            }
-        }
-
-        if (agents.isEmpty()) {
-            item {
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(vertical = 40.dp),
-                    contentAlignment = Alignment.Center,
-                ) {
-                    Column(
-                        horizontalAlignment = Alignment.CenterHorizontally,
-                        verticalArrangement = Arrangement.spacedBy(8.dp),
-                    ) {
-                        Text(
-                            text = "🤖",
-                            fontSize = 40.sp,
-                        )
-                        Text(
-                            text = "No custom agents yet",
-                            style = androidx.compose.material3.MaterialTheme.typography.titleMedium,
-                            fontWeight = FontWeight.Bold,
-                            color = colors.inkPrimary,
-                        )
-                        Text(
-                            text = "Build dedicated autonomous agents that run schedules, search web, and use custom tools.",
-                            style = androidx.compose.material3.MaterialTheme.typography.bodySmall,
-                            color = colors.inkSecondary,
-                            textAlign = androidx.compose.ui.text.style.TextAlign.Center,
-                        )
-                        Spacer(Modifier.height(8.dp))
-                        Button(
-                            onClick = { onOpenAgentBuilder(null) },
-                            shape = KaivoShapes.chip,
-                            colors = ButtonDefaults.buttonColors(
-                                containerColor = colors.royalGold,
-                                contentColor = Color.Black,
-                            ),
-                        ) {
-                            Text("Build First Agent", fontWeight = FontWeight.Bold)
-                        }
-                    }
-                }
-            }
-        } else {
-            items(agents, key = { it.id }) { agent ->
-                AgentCard(
-                    agent = agent,
-                    onClick = { onOpenAgentBuilder(agent.id) },
-                    onDelete = { onDeleteAgent(agent.id) },
-                    onDuplicate = { onDuplicateAgent(agent.id) },
-                )
-            }
-        }
-    }
-}
-
-@Composable
-private fun AgentCard(
-    agent: CustomAgent,
-    onClick: () -> Unit,
-    onDelete: () -> Unit,
-    onDuplicate: () -> Unit,
-) {
-    val colors = KaivoTheme.colors
-    var showMenu by remember { mutableStateOf(false) }
-
-    Box(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clip(KaivoShapes.medallion)
-            .background(colors.surfaceCard)
-            .border(1.dp, colors.hairline, KaivoShapes.medallion)
-            .clickable { onClick() }
-            .padding(14.dp),
-    ) {
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(12.dp),
-        ) {
-            // Icon Badge
-            Box(
-                modifier = Modifier
-                    .size(46.dp)
-                    .clip(androidx.compose.foundation.shape.RoundedCornerShape(12.dp))
-                    .background(Color(agent.iconColorHex)),
-                contentAlignment = Alignment.Center,
-            ) {
-                Text(agent.iconEmoji, fontSize = 24.sp)
-            }
-
-            // Details
-            Column(
-                modifier = Modifier.weight(1f),
-                verticalArrangement = Arrangement.spacedBy(4.dp),
-            ) {
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                ) {
-                    Text(
-                        text = agent.name,
-                        style = androidx.compose.material3.MaterialTheme.typography.titleMedium,
-                        fontWeight = FontWeight.Bold,
-                        color = colors.inkPrimary,
-                    )
-                    Box(
-                        modifier = Modifier
-                            .clip(KaivoShapes.chip)
-                            .background(if (agent.isPublished) colors.statusSuccess.copy(alpha = 0.2f) else colors.royalGold.copy(alpha = 0.2f))
-                            .padding(horizontal = 6.dp, vertical = 2.dp),
-                    ) {
-                        Text(
-                            text = if (agent.isPublished) "Live" else "Draft",
-                            style = androidx.compose.material3.MaterialTheme.typography.labelSmall,
-                            color = if (agent.isPublished) colors.statusSuccess else colors.royalGold,
-                            fontWeight = FontWeight.Bold,
-                        )
-                    }
-                }
-
-                Text(
-                    text = "${agent.model} • ${agent.triggers.size} Trigger(s) • ${agent.tools.size} Tool(s)",
-                    style = androidx.compose.material3.MaterialTheme.typography.bodySmall,
-                    color = colors.inkSecondary,
-                )
-            }
-
-            // Overflow Menu
-            Box {
-                IconButton(onClick = { showMenu = true }) {
-                    Icon(
-                        KaivoIcons.icon("moreVert"),
-                        contentDescription = "Options",
-                        tint = colors.inkSecondary,
-                    )
-                }
-                DropdownMenu(
-                    expanded = showMenu,
-                    onDismissRequest = { showMenu = false },
-                    modifier = Modifier.background(colors.surfaceCard),
-                ) {
-                    DropdownMenuItem(
-                        text = { Text("Edit Agent", color = colors.inkPrimary) },
-                        onClick = {
-                            showMenu = false
-                            onClick()
-                        },
-                    )
-                    DropdownMenuItem(
-                        text = { Text("Duplicate", color = colors.inkPrimary) },
-                        onClick = {
-                            showMenu = false
-                            onDuplicate()
-                        },
-                    )
-                    DropdownMenuItem(
-                        text = { Text("Delete", color = colors.statusError) },
-                        onClick = {
-                            showMenu = false
-                            onDelete()
-                        },
-                    )
-                }
             }
         }
     }

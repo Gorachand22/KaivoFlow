@@ -24,6 +24,11 @@ data class AgentTool(
     val name: String,
     val description: String = "",
     val isEnabled: Boolean = true,
+    /**
+     * Author's consent for this tool to act when nobody is there to approve it (a published, always-on run). Default
+     * false. A tool that is not listed here is not offered to the model in an unattended run (see AgentNode).
+     */
+    val allowUnattended: Boolean = false,
 )
 
 /**
@@ -53,7 +58,21 @@ data class AgentSettings(
     val toolCallConcurrency: Int = 1,
     val timeoutSeconds: Int = 60,
     val description: String = "",
-)
+    /** Hard budget of one run, in model tokens (prompt plus answer). Publish needs it inside [TOKEN_BUDGET_RANGE]. */
+    val maxTotalTokens: Int = 50_000,
+    /** Hard limit of tool calls in one run. */
+    val maxToolCalls: Int = 25,
+    /** How often one tool may run in one run when nobody is present (the AgentNode rate limit). */
+    val rateLimitPerTool: Int = 5,
+    /** What a published run does with the answer: "notification" (device.notify) or "none" (kept in the Run record only). */
+    val deliverResult: String = "notification",
+) {
+    companion object {
+        val TOKEN_BUDGET_RANGE = 1_000..1_000_000
+        const val DELIVER_NOTIFICATION = "notification"
+        const val DELIVER_NONE = "none"
+    }
+}
 
 /**
  * Execution history and test session traces.
@@ -88,7 +107,6 @@ data class CustomAgent(
     val crossSessionMemoryEnabled: Boolean = false,
     val settings: AgentSettings = AgentSettings(),
     val sessions: List<AgentSession> = emptyList(),
-    val isPublished: Boolean = false,
     val createdAt: Long = System.currentTimeMillis(),
     val updatedAt: Long = System.currentTimeMillis(),
 )

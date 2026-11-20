@@ -26,7 +26,7 @@ class PublishValidatorTest {
         FlowValidator(
             registry(
                 *(SparkTypes.all - SparkTypes.MANUAL).map { trig(it) }.toTypedArray(),
-                act("device.sms"), act("net.http"), act("device.clipboard"), act("device.open"), act("logic.approval"),
+                act("device.sms"), act("net.http"), act("ai.agent"), act("device.clipboard"), act("device.open"), act("logic.approval"),
             ),
         ),
     )
@@ -262,6 +262,17 @@ class PublishValidatorTest {
         assertFalse("side_effect_without_approval" in check(flow(sms, post, step("ok", "logic.approval"))).warningCodes())
         val hook = spark(SparkTypes.WEBHOOK, mapOf("path" to "x"))
         assertTrue("side_effect_without_approval" in check(flow(hook, post)).warningCodes())
+    }
+
+    @Test fun `an agent that may use tools unattended after an untrusted spark warns, a locked one does not`() {
+        val hook = spark(SparkTypes.WEBHOOK, mapOf("path" to "x"))
+        fun agent(allow: Boolean) = step("ag", "ai.agent", "Helper", mapOf("tools" to listOf(mapOf("step" to "device.notify", "name" to "notify", "allowUnattended" to allow))))
+        val edge = listOf(StreamEdge("e", "sp", "ag", 0))
+        val w = check(flow(hook, agent(true), streams = edge)).warnings.single { it.code == "agent_unattended_tools_from_untrusted_spark" }
+        assertTrue(w.message.contains("notify") && w.stepId == "ag")
+        assertFalse("agent_unattended_tools_from_untrusted_spark" in check(flow(hook, agent(false), streams = edge)).warningCodes())
+        assertFalse("agent_unattended_tools_from_untrusted_spark" in check(flow(schedule, agent(true), streams = edge)).warningCodes())
+        assertFalse("agent_unattended_tools_from_untrusted_spark" in check(flow(hook, agent(true), step("ok", "logic.approval"), streams = edge)).warningCodes())
     }
 
     @Test fun `sms flow that sends sms gets a loop warning`() {

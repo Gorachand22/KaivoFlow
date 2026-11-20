@@ -56,6 +56,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.geometry.CornerRadius
@@ -112,10 +113,10 @@ fun AgentBuilderScreen(
             AgentBuilderTopBar(
                 agent = state.agent,
                 isSaving = state.isSaving,
+                isLive = state.liveState.isLive,
                 onBack = onNavigateBack,
                 onTestClick = { viewModel.toggleTestSheet(true) },
-                onSaveClick = { viewModel.saveAgent(onNavigateBack) },
-                onPublishClick = { viewModel.publishAgent(onNavigateBack) },
+                onPublishClick = { viewModel.publishAgent(onPublished = onNavigateBack) },
             )
 
             // Agent Header (Icon & Editable Title)
@@ -166,6 +167,7 @@ fun AgentBuilderScreen(
                             onDeleteTrigger = viewModel::removeTrigger,
                             onAddTrigger = { showAddTriggerDialog = true },
                             onToggleTool = viewModel::toggleTool,
+                            onToggleToolUnattended = viewModel::setToolUnattended,
                             onDeleteTool = viewModel::removeTool,
                             onAddTool = { showAddToolDialog = true },
                             onAddSkill = { showAddSkillDialog = true },
@@ -183,7 +185,7 @@ fun AgentBuilderScreen(
                     }
                     AgentBuilderTab.Sessions -> {
                         AgentSessionsTabView(
-                            sessions = state.agent.sessions,
+                            sessions = state.allSessions,
                             onTestClick = { viewModel.toggleTestSheet(true) },
                         )
                     }
@@ -201,6 +203,35 @@ fun AgentBuilderScreen(
     }
 
     // Dialogs & Sheets
+    state.publishNotice?.let { notice ->
+        AlertDialog(
+            onDismissRequest = viewModel::dismissPublishNotice,
+            title = { Text(notice.title, color = colors.inkPrimary) },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    notice.lines.forEach { line ->
+                        Text(line, style = androidx.compose.material3.MaterialTheme.typography.bodySmall, color = colors.inkSecondary)
+                    }
+                }
+            },
+            confirmButton = {
+                if (notice.canAcknowledge) {
+                    Button(
+                        onClick = { viewModel.publishAgent(acknowledge = true, onPublished = onNavigateBack) },
+                        colors = ButtonDefaults.buttonColors(containerColor = colors.royalGold, contentColor = Color.Black),
+                        shape = KaivoShapes.chip,
+                    ) { Text("Publish anyway", fontWeight = FontWeight.Bold) }
+                } else {
+                    TextButton(onClick = viewModel::dismissPublishNotice) { Text("OK", color = colors.royalGold) }
+                }
+            },
+            dismissButton = {
+                if (notice.canAcknowledge) TextButton(onClick = viewModel::dismissPublishNotice) { Text("Cancel", color = colors.inkSecondary) }
+            },
+            containerColor = colors.canvasVoid,
+        )
+    }
+
     if (state.showTestSheet) {
         AgentTestSheet(
             isTesting = state.isTesting,
@@ -271,9 +302,9 @@ fun AgentBuilderScreen(
 private fun AgentBuilderTopBar(
     agent: CustomAgent,
     isSaving: Boolean,
+    isLive: Boolean,
     onBack: () -> Unit,
     onTestClick: () -> Unit,
-    onSaveClick: () -> Unit,
     onPublishClick: () -> Unit,
 ) {
     val colors = KaivoTheme.colors
@@ -314,7 +345,7 @@ private fun AgentBuilderTopBar(
 
             // Publish Action
             Button(
-                onClick = if (agent.isPublished) onSaveClick else onPublishClick,
+                onClick = onPublishClick,
                 shape = KaivoShapes.chip,
                 colors = ButtonDefaults.buttonColors(
                     containerColor = colors.royalGold,
@@ -328,7 +359,7 @@ private fun AgentBuilderTopBar(
                     horizontalArrangement = Arrangement.spacedBy(4.dp),
                 ) {
                     Text(
-                        text = if (isSaving) "Saving…" else if (agent.isPublished) "Save" else "Publish",
+                        text = if (isSaving) "Publishing…" else if (isLive) "Publish changes" else "Publish",
                         style = androidx.compose.material3.MaterialTheme.typography.labelMedium,
                         fontWeight = FontWeight.Bold,
                     )
@@ -481,6 +512,7 @@ private fun AgentBuildTabView(
     onDeleteTrigger: (String) -> Unit,
     onAddTrigger: () -> Unit,
     onToggleTool: (String) -> Unit,
+    onToggleToolUnattended: (String, Boolean) -> Unit,
     onDeleteTool: (String) -> Unit,
     onAddTool: () -> Unit,
     onAddSkill: () -> Unit,
@@ -652,7 +684,7 @@ private fun AgentBuildTabView(
                                 DropdownMenuItem(
                                     text = {
                                         Text(
-                                            "CONNECTED ACCOUNTS",
+                                            "SAVED CREDENTIALS",
                                             style = androidx.compose.material3.MaterialTheme.typography.labelSmall,
                                             fontWeight = FontWeight.Bold,
                                             color = colors.inkSecondary,
@@ -779,7 +811,8 @@ private fun AgentBuildTabView(
         item {
             CardSection(
                 title = "Skills",
-                subtitle = "How this agent handles specific tasks",
+                subtitle = "Coming soon. Skills you add are saved, but they do not change how the agent runs yet",
+                headerBadge = "Coming soon",
             ) {
                 if (agent.skills.isNotEmpty()) {
                     LazyRow(
@@ -816,6 +849,7 @@ private fun AgentBuildTabView(
 
                 OutlinedButton(
                     onClick = onAddSkill,
+                    enabled = false,
                     shape = KaivoShapes.chip,
                     border = BorderStroke(1.dp, colors.hairline),
                     colors = ButtonDefaults.outlinedButtonColors(contentColor = colors.inkPrimary),
@@ -917,21 +951,70 @@ private fun AgentBuildTabView(
                     }
                     OutlinedButton(
                         onClick = onAddTool,
+                        enabled = false,
                         shape = KaivoShapes.chip,
                         border = BorderStroke(1.dp, colors.hairline),
                         colors = ButtonDefaults.outlinedButtonColors(contentColor = colors.inkPrimary),
                         contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
                     ) {
-                        Text("+ Add workflow", style = androidx.compose.material3.MaterialTheme.typography.labelSmall)
+                        Text("+ Workflow · soon", style = androidx.compose.material3.MaterialTheme.typography.labelSmall)
                     }
                     OutlinedButton(
                         onClick = onAddTool,
+                        enabled = false,
                         shape = KaivoShapes.chip,
                         border = BorderStroke(1.dp, colors.hairline),
                         colors = ButtonDefaults.outlinedButtonColors(contentColor = colors.inkPrimary),
                         contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
                     ) {
-                        Text("+ Add sub-agent", style = androidx.compose.material3.MaterialTheme.typography.labelSmall)
+                        Text("+ Sub-agent · soon", style = androidx.compose.material3.MaterialTheme.typography.labelSmall)
+                    }
+                }
+
+                if (agent.tools.isNotEmpty()) {
+                    Spacer(Modifier.height(10.dp))
+                    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                        agent.tools.forEach { tool ->
+                            val real = tool.type in AgentFlowCompiler.STEP_FOR_TYPE
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clip(KaivoShapes.chip)
+                                    .background(colors.canvasVoid)
+                                    .padding(horizontal = 12.dp, vertical = 8.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            ) {
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text(tool.name, fontWeight = FontWeight.SemiBold, color = colors.inkPrimary)
+                                    Text(
+                                        text = when {
+                                            !real -> "Not available yet. Remove it to publish."
+                                            tool.allowUnattended -> "May act on its own when the agent runs 24/7"
+                                            else -> "Asks you first. Skipped when the agent runs 24/7"
+                                        },
+                                        style = androidx.compose.material3.MaterialTheme.typography.bodySmall,
+                                        color = if (real) colors.inkSecondary else colors.statusError,
+                                    )
+                                }
+                                if (real) {
+                                    Switch(
+                                        checked = tool.allowUnattended,
+                                        onCheckedChange = { onToggleToolUnattended(tool.id, it) },
+                                        colors = SwitchDefaults.colors(
+                                            checkedThumbColor = colors.royalGold,
+                                            checkedTrackColor = colors.royalGold.copy(alpha = 0.4f),
+                                        ),
+                                    )
+                                }
+                                Icon(
+                                    KaivoIcons.icon("close"),
+                                    contentDescription = "Remove tool",
+                                    tint = colors.inkSecondary,
+                                    modifier = Modifier.size(14.dp).clickable { onDeleteTool(tool.id) },
+                                )
+                            }
+                        }
                     }
                 }
 
@@ -955,7 +1038,7 @@ private fun AgentBuildTabView(
                             color = colors.inkPrimary,
                         )
                         Text(
-                            text = "Let the model search the web when it needs up-to-date information",
+                            text = "Coming soon. Web search is not available yet",
                             style = androidx.compose.material3.MaterialTheme.typography.bodySmall,
                             color = colors.inkSecondary,
                         )
@@ -966,12 +1049,12 @@ private fun AgentBuildTabView(
                             .clip(KaivoShapes.chip)
                             .background(if (agent.webSearchEnabled) colors.royalGold else colors.surfaceCard)
                             .border(1.dp, colors.hairline, KaivoShapes.chip)
-                            .clickable { onToggleWebSearch(!agent.webSearchEnabled) }
+                            .clickable(enabled = agent.webSearchEnabled) { onToggleWebSearch(false) }
                             .padding(horizontal = 10.dp, vertical = 4.dp),
                     ) {
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             Text(
-                                text = if (agent.webSearchEnabled) "On" else "Off",
+                                text = if (agent.webSearchEnabled) "On, not available. Tap to turn off" else "Coming soon",
                                 style = androidx.compose.material3.MaterialTheme.typography.labelSmall,
                                 fontWeight = FontWeight.Bold,
                                 color = if (agent.webSearchEnabled) Color.Black else colors.inkPrimary,
@@ -991,11 +1074,10 @@ private fun AgentBuildTabView(
         // Section 5: Session memory (matching Screenshot 1)
         item {
             CardSection(
-                title = "Session memory",
-                headerBadge = "Always on",
+                title = "Memory",
             ) {
                 Text(
-                    text = "Remembers the conversation within the current session",
+                    text = "Every run starts fresh unless cross-session memory is switched on",
                     style = androidx.compose.material3.MaterialTheme.typography.bodySmall,
                     color = colors.inkSecondary,
                 )
@@ -1052,7 +1134,7 @@ private fun AgentKnowledgeTabView(
         item {
             CardSection(
                 title = "Knowledge base",
-                subtitle = "Sovereign files uploaded to this agent so it can search and read their contents when answering",
+                subtitle = "Notes you add here are sent to the model with every run, as part of its instructions",
             ) {
                 // Dashed border upload area
                 Box(
@@ -1140,10 +1222,10 @@ private fun AgentKnowledgeTabView(
         item {
             CardSection(
                 title = "Memory",
-                subtitle = "What this agent remembers about each user across sessions",
+                subtitle = "Cross-session memory keeps recent messages while the app is running",
             ) {
                 Text(
-                    text = "No memories stored yet.",
+                    text = "Memory is not listed here yet. Coming soon.",
                     style = androidx.compose.material3.MaterialTheme.typography.bodyMedium,
                     color = colors.inkSecondary,
                 )
@@ -1164,12 +1246,7 @@ private fun AgentKnowledgeTabView(
                 ) {
                     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                         Text(
-                            text = "Vector indexing: HNSW cosine distance on device.",
-                            style = androidx.compose.material3.MaterialTheme.typography.bodySmall,
-                            color = colors.inkSecondary,
-                        )
-                        Text(
-                            text = "Chunk size: 512 tokens with 64 token overlap.",
+                            text = "Coming soon: searching long files instead of sending everything. For now every note is sent in full.",
                             style = androidx.compose.material3.MaterialTheme.typography.bodySmall,
                             color = colors.inkSecondary,
                         )
@@ -1321,6 +1398,8 @@ private fun AgentSettingsTabView(
     var maxParallelSubAgents by remember { mutableStateOf("10") }
     var toolConcurrency by remember { mutableStateOf("5") }
     var maxIterations by remember { mutableStateOf(settings.maxIterations.toString()) }
+    var tokenBudget by remember { mutableStateOf(settings.maxTotalTokens.toString()) }
+    var maxToolCalls by remember { mutableStateOf(settings.maxToolCalls.toString()) }
 
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
@@ -1331,18 +1410,18 @@ private fun AgentSettingsTabView(
         item {
             CardSection(
                 title = "Monthly usage",
-                headerBadge = "No monthly budget",
+                headerBadge = "Coming soon",
             ) {
                 SettingRowAction(
                     label = "Monthly budget",
                     subtitle = "Maximum this agent can spend across all sessions each month",
-                    actionText = "Not set >",
+                    actionText = "Coming soon",
                     onClick = {},
                 )
                 SettingRowAction(
                     label = "Cost cap per session",
-                    subtitle = "Maximum a single session can spend",
-                    actionText = "Not set >",
+                    subtitle = "Maximum a single session can spend. For now each run is limited by its token budget below",
+                    actionText = "Coming soon",
                     onClick = {},
                 )
             }
@@ -1352,31 +1431,35 @@ private fun AgentSettingsTabView(
         item {
             CardSection(
                 title = "Sub-agents",
-                subtitle = "Set how many sub-agents can run at once and which models they use",
+                subtitle = "Coming soon",
+                headerBadge = "Coming soon",
             ) {
                 SettingInputRow(
                     label = "Max parallel sub-agents",
                     subtitle = "How many sub-agents this agent can run at the same time (1-20)",
                     value = maxParallelSubAgents,
                     onValueChange = { maxParallelSubAgents = it },
+                    enabled = false,
                 )
                 SettingToggleRow(
                     label = "Custom model routing",
                     subtitle = "Use different models for low, medium, or high difficulty tasks",
                     checked = customModelRouting,
                     onCheckedChange = { customModelRouting = it },
+                    enabled = false,
                 )
             }
         }
 
         // Card 3: Available in MCP (matching Screenshot 3)
         item {
-            CardSection(title = "Available in MCP") {
+            CardSection(title = "Available in MCP", headerBadge = "Coming soon") {
                 SettingToggleRow(
                     label = "Make this agent visible to AI Agents through local MCP",
                     subtitle = "",
                     checked = availableInMcp,
                     onCheckedChange = { availableInMcp = it },
+                    enabled = false,
                 )
             }
         }
@@ -1396,7 +1479,7 @@ private fun AgentSettingsTabView(
                         color = colors.inkPrimary,
                     )
                     Text(
-                        text = "Choose the model that creates, reviews, and retrieves memories. Uses the agent model by default",
+                        text = "Coming soon. Memory always uses the agent model",
                         style = androidx.compose.material3.MaterialTheme.typography.bodySmall,
                         color = colors.inkSecondary,
                     )
@@ -1420,23 +1503,46 @@ private fun AgentSettingsTabView(
 
                 SettingToggleRow(
                     label = "Reasoning",
-                    subtitle = "Let the model reason before responding",
+                    subtitle = "Coming soon",
                     checked = reasoningEnabled,
                     onCheckedChange = { reasoningEnabled = it },
+                    enabled = false,
                 )
 
                 SettingToggleRow(
                     label = "Prompt caching",
-                    subtitle = "Cache repeated parts of the prompt to reduce latency and cost",
-                    checked = promptCachingEnabled,
+                    subtitle = "Coming soon",
+                    checked = false,
                     onCheckedChange = { promptCachingEnabled = it },
+                    enabled = false,
                 )
 
                 SettingInputRow(
                     label = "Tool call concurrency",
-                    subtitle = "How many tool calls the agent can run in parallel",
-                    value = toolConcurrency,
+                    subtitle = "Coming soon. Tool calls run one at a time",
+                    value = "1",
                     onValueChange = { toolConcurrency = it },
+                    enabled = false,
+                )
+
+                SettingInputRow(
+                    label = "Tokens per run",
+                    subtitle = "Hard limit for one run, prompt and answer together (1,000 to 1,000,000). Applies to tests and to 24/7 runs",
+                    value = tokenBudget,
+                    onValueChange = {
+                        tokenBudget = it
+                        it.toIntOrNull()?.let { n -> onSettingsChange(settings.copy(maxTotalTokens = n)) }
+                    },
+                )
+
+                SettingInputRow(
+                    label = "Max tool calls",
+                    subtitle = "Hard limit of tool calls in one run (0 to 200)",
+                    value = maxToolCalls,
+                    onValueChange = {
+                        maxToolCalls = it
+                        it.toIntOrNull()?.let { n -> onSettingsChange(settings.copy(maxToolCalls = n)) }
+                    },
                 )
 
                 SettingInputRow(
@@ -1544,6 +1650,7 @@ private fun SettingToggleRow(
     subtitle: String,
     checked: Boolean,
     onCheckedChange: (Boolean) -> Unit,
+    enabled: Boolean = true,
 ) {
     val colors = KaivoTheme.colors
     Row(
@@ -1562,6 +1669,7 @@ private fun SettingToggleRow(
         Switch(
             checked = checked,
             onCheckedChange = onCheckedChange,
+            enabled = enabled,
             colors = SwitchDefaults.colors(
                 checkedThumbColor = colors.royalGold,
                 checkedTrackColor = colors.royalGold.copy(alpha = 0.4f),
@@ -1576,6 +1684,7 @@ private fun SettingInputRow(
     subtitle: String,
     value: String,
     onValueChange: (String) -> Unit,
+    enabled: Boolean = true,
 ) {
     val colors = KaivoTheme.colors
     Row(
@@ -1592,6 +1701,7 @@ private fun SettingInputRow(
         OutlinedTextField(
             value = value,
             onValueChange = onValueChange,
+            enabled = enabled,
             singleLine = true,
             shape = KaivoShapes.chip,
             modifier = Modifier.width(70.dp),
@@ -1735,11 +1845,13 @@ private fun AddTriggerDialog(
     onAdd: (AgentTrigger) -> Unit,
 ) {
     val colors = KaivoTheme.colors
+    // Only types the engine can really arm are clickable. A manual trigger runs from the app only; it does not run 24/7.
+    data class Option(val type: String, val name: String, val desc: String, val config: Map<String, String> = emptyMap(), val real: Boolean = true)
     val triggerOptions = listOf(
-        Triple("schedule", "Daily News Brief Schedule", "Every morning at 9am"),
-        Triple("manual", "Manual Spark", "Runs whenever manually started from app"),
-        Triple("webhook", "Webhook Listener", "Triggers when incoming HTTP payload is received"),
-        Triple("phone_event", "Phone Trigger", "Triggers on battery level, wifi state, or incoming SMS"),
+        Option("schedule", "Daily schedule", "Every day at 09:00 (device time zone)", AgentTriggerConfig.dailyAt("09:00")),
+        Option("manual", "Manual", "Runs when you start it from the app. Does not run 24/7"),
+        Option("webhook", "Webhook", "Starts when an HTTP call reaches this phone"),
+        Option("phone_event", "Phone event", "Coming soon", real = false),
     )
 
     AlertDialog(
@@ -1747,21 +1859,22 @@ private fun AddTriggerDialog(
         title = { Text("Add Channel / Trigger", color = colors.inkPrimary) },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                triggerOptions.forEach { (type, name, desc) ->
+                triggerOptions.forEach { o ->
                     Box(
                         modifier = Modifier
                             .fillMaxWidth()
+                            .alpha(if (o.real) 1f else 0.5f)
                             .clip(KaivoShapes.medallion)
                             .background(colors.surfaceCard)
                             .border(1.dp, colors.hairline, KaivoShapes.medallion)
-                            .clickable {
-                                onAdd(AgentTrigger(type = type, name = name, description = desc))
+                            .clickable(enabled = o.real) {
+                                onAdd(AgentTrigger(type = o.type, name = o.name, description = o.desc, config = o.config))
                             }
                             .padding(12.dp),
                     ) {
                         Column {
-                            Text(name, fontWeight = FontWeight.Bold, color = colors.inkPrimary)
-                            Text(desc, style = androidx.compose.material3.MaterialTheme.typography.bodySmall, color = colors.inkSecondary)
+                            Text(o.name, fontWeight = FontWeight.Bold, color = colors.inkPrimary)
+                            Text(o.desc, style = androidx.compose.material3.MaterialTheme.typography.bodySmall, color = colors.inkSecondary)
                         }
                     }
                 }
@@ -1782,10 +1895,10 @@ private fun AddToolDialog(
 ) {
     val colors = KaivoTheme.colors
     val toolOptions = listOf(
-        Triple("web_search", "Web Search", "Searches the web for live articles, news, and queries"),
-        Triple("workflow", "Execute KaivoFlow Workflow", "Triggers an existing canvas automation flow"),
-        Triple("code", "JavaScript Code Transformation", "Runs sandboxed custom data transformations"),
-        Triple("device", "Phone Actions", "Interacts with phone notifications, clipboard, or SMS"),
+        Triple("device", "Phone notification", "Shows a notification on this phone"),
+        Triple("web_search", "Web Search", "Coming soon"),
+        Triple("workflow", "Execute KaivoFlow Workflow", "Coming soon"),
+        Triple("code", "JavaScript Code Transformation", "Coming soon"),
     )
 
     AlertDialog(
@@ -1794,13 +1907,15 @@ private fun AddToolDialog(
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 toolOptions.forEach { (type, name, desc) ->
+                    val real = type in AgentFlowCompiler.STEP_FOR_TYPE
                     Box(
                         modifier = Modifier
                             .fillMaxWidth()
+                            .alpha(if (real) 1f else 0.5f)
                             .clip(KaivoShapes.medallion)
                             .background(colors.surfaceCard)
                             .border(1.dp, colors.hairline, KaivoShapes.medallion)
-                            .clickable {
+                            .clickable(enabled = real) {
                                 onAdd(AgentTool(type = type, name = name, description = desc))
                             }
                             .padding(12.dp),

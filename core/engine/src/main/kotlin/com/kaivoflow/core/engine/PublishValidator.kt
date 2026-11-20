@@ -345,6 +345,17 @@ class PublishValidator(private val structure: FlowValidator) {
                 )
             }
         }
+        // An Agent that may use tools without asking, started by something an outsider can trigger: the caller can steer the model.
+        if (risky.isNotEmpty() && !hasApproval) {
+            flow.steps.filter { !it.disabled && it.type == AGENT && unattendedToolNames(it).isNotEmpty() }.forEach {
+                out += warning(
+                    "agent_unattended_tools_from_untrusted_spark",
+                    "\"${it.name}\" may use ${unattendedToolNames(it).joinToString(", ")} without asking, and ${risky.first().name} can be started by someone else. Their text can steer the agent.",
+                    it.id,
+                    fixHint = "Allow fewer tools to run unattended, or narrow the Spark filters.",
+                )
+            }
+        }
         val sms = sparks.firstOrNull { it.type == SparkTypes.SMS }
         if (sms != null) {
             flow.steps.filter { !it.disabled && it.type == SMS_SEND }.forEach {
@@ -386,6 +397,17 @@ class PublishValidator(private val structure: FlowValidator) {
         else -> false
     }
 
+    /** Names of the tools an Agent Step lets run without a person (`allowUnattended` true). */
+    private fun unattendedToolNames(step: StepNode): List<String> {
+        val raw = step.params["tools"]
+        val list = when (raw) {
+            is List<*> -> raw
+            is String -> (com.kaivoflow.core.model.ParamJson.parse(raw) as? com.kaivoflow.core.model.ParamJson.Parsed.Ok)?.value as? List<*>
+            else -> null
+        } ?: return emptyList()
+        return list.filterIsInstance<Map<*, *>>().filter { it["allowUnattended"] == true }.map { it["name"]?.toString() ?: it["step"]?.toString() ?: "a tool" }
+    }
+
     private fun listenerKey(s: StepNode): List<String> = when (s.type) {
         SparkTypes.SMS -> listOf("senderContains", "bodyContains")
         else -> listOf("packageNames", "titleContains", "textContains", "textMatches")
@@ -419,6 +441,7 @@ class PublishValidator(private val structure: FlowValidator) {
         const val MIN_RELIABLE_GEOFENCE_RADIUS_M = 100.0
         const val SMS_SEND = "device.sms"
         const val HTTP = "net.http"
+        const val AGENT = "ai.agent"
 
         private val FREQUENCIES = setOf("minutes", "hourly", "daily", "weekly", "monthly")
         private val TIME_OF_DAY = Regex("^([01]?[0-9]|2[0-3]):[0-5][0-9]$")

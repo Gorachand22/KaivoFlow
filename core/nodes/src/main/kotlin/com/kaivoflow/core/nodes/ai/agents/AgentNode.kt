@@ -101,6 +101,14 @@ class AgentNode(
         } else if (model.keys.any { it.lowercase() in setOf("apikey", "api_key", "key", "token", "secret", "password") }) {
             out += ValidationIssue("agent.key_in_params", "Remove the key from the chat model and pick a credential instead.", IssueSeverity.Blocking, step.id, listOf("chatModel"))
         }
+        val memory = step.params["memory"]?.let { AiSlots.asObject(it) }
+        if (memory != null && usesWindowMemory(memory) && isBlankKey(memory["key"])) {
+            out += ValidationIssue(
+                "agent.memory_key",
+                "Memory needs a key so each chat or sender keeps its own history, for example {{ \$json.chatId }}. Without one, everyone would share one conversation.",
+                IssueSeverity.Blocking, step.id, listOf("memory"),
+            )
+        }
         val tools = step.params["tools"]?.let { AiSlots.asList(it) }
         if (step.params["tools"] != null && tools == null) {
             out += ValidationIssue("agent.tools", "Tools must be a list.", IssueSeverity.Blocking, step.id, listOf("tools"))
@@ -156,13 +164,22 @@ class AgentNode(
                 model = client, tools = registry, policy = ApprovalPolicy(if (interactive) ApprovalHost.Interactive else ApprovalHost.Unattended, if (interactive) approvals else null, unattendedAllow, rateLimit),
                 limits = limits, memory = memory, parser = parser, redactor = redactor, costRates = rates, temperature = slot.temperature,
             )
-            val key = memoryCfg?.get("key")?.let { ctx.resolveText(it, index) }?.takeIf { it.isNotBlank() } ?: "${ctx.flow.id}:${ctx.step.id}"
+            // The key is the only thing that separates one person's history from another's. There is no shared default:
+            // an item whose key comes out empty fails instead of silently reading and writing the history of other items.
+            val key = if (memory == null) "" else memoryKey(ctx, memoryCfg, index) ?: fail("item ${index + 1} has an empty memory key, so it cannot be given its own history. Check the memory key expression.")
             val result = loop.run(row.stringOrNull("system"), task, row.stringOrNull("data"), key)
             result.trace.forEach { ctx.log("agent tool ${it.tool}: ${it.status} ${it.detail}") }
             if (!result.isSuccess) AiSlots.failure(ctx, result.error!!)
             val answer: Any? = if (parser != null) result.structured else result.text
             listOf(item.copy(json = item.json + (outField to answer) + ("_ai" to AiSlots.meta(result, slot))))
         }
+    }
+
+    /** `flow:step:key`: the author's key can never reach another Flow's or another Step's history. */
+    private fun memoryKey(ctx: StepContext, cfg: Map<String, Any?>?, index: Int): String? {
+        val resolved = cfg?.get("key")?.let { ctx.resolveText(it, index) }?.trim().orEmpty()
+            .filter { !it.isISOControl() }.take(MAX_KEY_CHARS)
+        return if (resolved.isEmpty()) null else "${ctx.flow.id}:${ctx.step.id}:$resolved"
     }
 
     /** Returns the tools, the names the author allowed to run unattended, and the per call rate limit. */
@@ -191,5 +208,19 @@ class AgentNode(
             }
         }
         return Triple(tools, allow, limit)
+    }
+
+    private companion object {
+        const val MAX_KEY_CHARS = 200
+
+        fun usesWindowMemory(cfg: Map<String, Any?>) = (cfg["type"]?.toString() ?: "window") == "window"
+
+        /** A key is blank when missing, empty, or an expression object with empty text. */
+        fun isBlankKey(raw: Any?): Boolean = when (raw) {
+            null -> true
+            is String -> raw.isBlank()
+            is Map<*, *> -> raw.size == 1 && raw.containsKey("kx") && (raw["kx"]?.toString()).isNullOrBlank()
+            else -> false
+        }
     }
 }
