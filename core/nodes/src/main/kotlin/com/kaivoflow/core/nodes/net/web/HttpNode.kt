@@ -173,16 +173,7 @@ class HttpNode(private val devices: DeviceGateway = NoopDeviceGateway) : StepExe
                     headers["Authorization"] = "Basic " + java.util.Base64.getEncoder().encodeToString(raw.toByteArray())
                 }
                 "credential" -> {
-                    val credential = ctx.credential()
-                    val token = credential.bearerToken()
-                    if (token.isNotBlank()) {
-                        headers["Authorization"] = if (token.startsWith("Bearer ")) token else "Bearer $token"
-                    }
-                    credential["header"]?.let { name -> credential["value"]?.let { headers[name] = it } }
-                    credential["username"]?.let { user ->
-                        val raw = "$user:${credential["password"].orEmpty()}"
-                        headers["Authorization"] = "Basic " + java.util.Base64.getEncoder().encodeToString(raw.toByteArray())
-                    }
+                    headers.putAll(com.kaivoflow.core.model.CredentialFields.authHeaders(ctx.credential()))
                 }
             }
 

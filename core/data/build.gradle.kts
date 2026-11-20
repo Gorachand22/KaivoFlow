@@ -23,6 +23,7 @@ ksp { arg("room.schemaLocation", "$projectDir/schemas") }
 dependencies {
     api(project(":core:model"))
     api(project(":core:engine"))
+    implementation(project(":core:ai"))
     implementation(project(":core:nodes"))
 
     // api: KaivoDatabase extends RoomDatabase and core:work reads KaivoDatabase.NAME, so consumers need it on their compile classpath.

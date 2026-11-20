@@ -7,6 +7,8 @@ import com.kaivoflow.core.engine.OAuth2TokenManager
 import com.kaivoflow.core.engine.OAuth2TokenStore
 import com.kaivoflow.core.model.CredentialItem
 import com.kaivoflow.core.model.CredentialRef
+import com.kaivoflow.core.model.CredentialRegistry
+import com.kaivoflow.core.model.LocalHostRegistrar
 import com.kaivoflow.core.model.DataTable
 import com.kaivoflow.core.model.DataTableColumn
 import com.kaivoflow.core.model.DataTableRow
@@ -22,6 +24,8 @@ import kotlinx.coroutines.flow.Flow as FlowStream
 import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import java.util.UUID
 
@@ -245,9 +249,16 @@ interface CredentialRepository : CredentialProvider {
 
 class EncryptedCredentialRepository(
     private val credentialDao: CredentialDao,
-    private val cryptoBox: CryptoBox = CryptoBox(),
+    private val cryptoBox: SecretCipher = CryptoBox(),
     private val io: CoroutineDispatcher = Dispatchers.IO,
     private val tokenManager: OAuth2TokenManager? = null,
+    /** Runs the one-time vault clean-ups once, in the background, after construction. Null in tests that do not want them. */
+    private val migrations: CredentialMigrations? = null,
+    private val secrets: SecretValueSource = SecretValueSource.None,
+    private val writeLock: Mutex = Mutex(),
+    /** Saving an Ollama credential allows its (local) host through the network guard. */
+    private val localHosts: LocalHostRegistrar = LocalHostRegistrar.None,
+    private val clock: () -> Long = System::currentTimeMillis,
 ) : CredentialRepository {
 
     override suspend fun resolve(ref: String): Map<String, String> = withContext(io) {
@@ -256,37 +267,42 @@ class EncryptedCredentialRepository(
         tokenManager?.refreshIfNeeded(ref, entity.type, fields) ?: fields
     }
 
-    private fun decrypt(cipherText: String): Map<String, String> {
-        val json = cryptoBox.decrypt(cipherText)
+    private fun decrypt(cipherText: String): Map<String, String> =
+        VaultCodec.decode(cryptoBox, cipherText)
             ?: throw IllegalStateException("This credential could not be unlocked on this device. Please re-enter it.")
-        val map = JsonCodec.fromJsonMap(kotlinx.serialization.json.Json.parseToJsonElement(json)) ?: emptyMap()
-        return map.mapValues { it.value?.toString().orEmpty() }
-    }
 
     init {
         CoroutineScope(io).launch {
-            runCatching {
-                val legacy = credentialDao.all().filter { it.type == "googleSheetsOAuth2" }
-                legacy.forEach { credentialDao.delete(it.id) }
-            }
+            // Not a delete on every start any more (DB-18): the steps are flagged and idempotent.
+            if (migrations != null) runCatching { migrations.runAll() }
+            // Ollama credentials saved before the network guard existed keep working.
+            runCatching { credentialDao.all().filter { CredentialRegistry.canonicalType(it.type) == "ollamaApi" }.forEach { registerLocalHost(it.type, decryptOrNull(it.cipherText)) } }
         }
     }
 
+    private fun decryptOrNull(cipherText: String) = VaultCodec.decode(cryptoBox, cipherText)
+
+    private fun registerLocalHost(type: String, fields: Map<String, String>?) {
+        if (CredentialRegistry.canonicalType(type) != "ollamaApi") return
+        fields?.get("baseUrl")?.takeIf { it.isNotBlank() }?.let { runCatching { localHosts.allowLocalHostFor(it) } }
+    }
+
+    /** Rows the person made. Internal rows (the assistant pointer) never leave the repository through a list. */
+    private fun visible(rows: List<CredentialEntity>) =
+        rows.filter { !CredentialRegistry.isInternal(it.id, it.type) && it.type != CredentialRegistry.LEGACY_GOOGLE_SHEETS_TYPE }
+
     override suspend fun list(): List<CredentialRef> = withContext(io) {
-        credentialDao.all()
-            .filter { it.type != "googleSheetsOAuth2" }
-            .map { CredentialRef(it.id, it.type, it.label) }
+        visible(credentialDao.all()).map { CredentialRef(it.id, it.type, it.label) }
     }
 
     override fun observeRefs(): FlowStream<List<CredentialRef>> =
         credentialDao.observeAll().map { list ->
-            list.filter { it.type != "googleSheetsOAuth2" }
-                .map { CredentialRef(it.id, it.type, it.label) }
+            visible(list).map { CredentialRef(it.id, it.type, it.label) }
         }
 
     override fun observeCredentials(): FlowStream<List<CredentialItem>> =
         credentialDao.observeAll().map { list ->
-            list.filter { it.type != "googleSheetsOAuth2" }.map { entity ->
+            visible(list).map { entity ->
                 CredentialItem(
                     id = entity.id,
                     type = entity.type,
@@ -305,23 +321,28 @@ class EncryptedCredentialRepository(
 
     override suspend fun save(id: String?, type: String, label: String, fields: Map<String, String>): String =
         withContext(io) {
-            val credentialId = id ?: UUID.randomUUID().toString()
-            val payload = JsonCodec.toJson(fields)?.toString() ?: "{}"
-            val cipherText = cryptoBox.encrypt(payload)
-                ?: throw IllegalStateException("This device's secure storage refused to encrypt the credential.")
-            credentialDao.upsert(
-                CredentialEntity(
-                    id = credentialId,
-                    type = type,
-                    label = label,
-                    cipherText = cipherText,
-                    createdAt = System.currentTimeMillis(),
+            writeLock.withLock {
+                val credentialId = id ?: UUID.randomUUID().toString()
+                // One spelling per type: `openai` and `claude` from the assistant become openAiApi and anthropicApi.
+                val type = if (CredentialRegistry.isInternal(credentialId, type)) type else CredentialRegistry.canonicalType(type) ?: type
+                val cipherText = VaultCodec.encode(cryptoBox, fields)
+                    ?: throw IllegalStateException("This device's secure storage refused to encrypt the credential.")
+                val created = credentialDao.byId(credentialId)?.createdAt ?: clock()
+                credentialDao.upsert(
+                    CredentialEntity(id = credentialId, type = type, label = label, cipherText = cipherText, createdAt = created)
                 )
-            )
-            credentialId
+                secrets.invalidate()
+                registerLocalHost(type, fields)
+                credentialId
+            }
         }
 
-    override suspend fun delete(id: String) = withContext(io) { credentialDao.delete(id) }
+    override suspend fun delete(id: String) = withContext(io) {
+        writeLock.withLock {
+            credentialDao.delete(id)
+            secrets.invalidate()
+        }
+    }
 }
 
 /**
@@ -482,8 +503,11 @@ class RoomDataTableRepository(
  */
 class RoomOAuth2TokenStore(
     private val credentialDao: CredentialDao,
-    private val cryptoBox: CryptoBox = CryptoBox(),
+    private val cryptoBox: SecretCipher = CryptoBox(),
     private val io: CoroutineDispatcher = Dispatchers.IO,
+    private val secrets: SecretValueSource = SecretValueSource.None,
+    /** The same lock the credential repository uses, so a refresh and a user Save cannot interleave their read-modify-write. */
+    private val writeLock: Mutex = Mutex(),
 ) : OAuth2TokenStore {
 
     override suspend fun load(credentialId: String): Map<String, String> = withContext(io) {
@@ -494,19 +518,22 @@ class RoomOAuth2TokenStore(
     }
 
     override suspend fun save(credentialId: String, fields: Map<String, String>) = withContext(io) {
-        val payload = JsonCodec.toJson(fields)?.toString() ?: "{}"
-        val cipherText = cryptoBox.encrypt(payload)
-            ?: throw IllegalStateException("This device's secure storage refused to encrypt the refreshed token.")
-        val existing = credentialDao.byId(credentialId)
-        credentialDao.upsert(
-            CredentialEntity(
-                id = credentialId,
-                type = existing?.type ?: "oauth2",
-                label = existing?.label ?: "Connected account",
-                cipherText = cipherText,
-                createdAt = existing?.createdAt ?: System.currentTimeMillis(),
+        writeLock.withLock {
+            val payload = JsonCodec.toJson(fields)?.toString() ?: "{}"
+            val cipherText = cryptoBox.encrypt(payload)
+                ?: throw IllegalStateException("This device's secure storage refused to encrypt the refreshed token.")
+            val existing = credentialDao.byId(credentialId)
+            credentialDao.upsert(
+                CredentialEntity(
+                    id = credentialId,
+                    type = existing?.type ?: "oauth2",
+                    label = existing?.label ?: "Connected account",
+                    cipherText = cipherText,
+                    createdAt = existing?.createdAt ?: System.currentTimeMillis(),
+                )
             )
-        )
+            secrets.invalidate()
+        }
     }
 }
 

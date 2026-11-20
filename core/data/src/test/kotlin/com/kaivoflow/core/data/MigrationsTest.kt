@@ -10,7 +10,7 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class MigrationsTest {
-    private val current = 6
+    private val current = 7
 
     @Test fun migrationsFormAContiguousChainFromOneToCurrent() {
         val sorted = ALL_MIGRATIONS.sortedBy { it.startVersion }
@@ -37,10 +37,16 @@ class MigrationsTest {
         assertTrue(ALL_MIGRATIONS.contains(MIGRATION_4_5))
     }
 
-    @Test fun fiveToSixIsRegisteredAndIsTheLastStep() {
+    @Test fun fiveToSixIsRegistered() {
         assertEquals(5, MIGRATION_5_6.startVersion)
         assertEquals(6, MIGRATION_5_6.endVersion)
-        assertEquals(MIGRATION_5_6, ALL_MIGRATIONS.last())
+        assertTrue(ALL_MIGRATIONS.contains(MIGRATION_5_6))
+    }
+
+    @Test fun sixToSevenIsRegisteredAndIsTheLastStep() {
+        assertEquals(6, MIGRATION_6_7.startVersion)
+        assertEquals(7, MIGRATION_6_7.endVersion)
+        assertEquals(MIGRATION_6_7, ALL_MIGRATIONS.last())
     }
 
     @Test fun schemaSixEntityDefaultsMatchTheMigrationSql() {

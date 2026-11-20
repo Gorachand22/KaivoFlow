@@ -10,6 +10,7 @@ import dagger.hilt.InstallIn
 import dagger.hilt.android.qualifiers.ApplicationContext
 import dagger.hilt.components.SingletonComponent
 import javax.inject.Singleton
+import kotlinx.coroutines.sync.Mutex
 
 @Module
 @InstallIn(SingletonComponent::class)
@@ -35,10 +36,18 @@ object DatabaseModule {
     @Provides fun engineTelemetryDao(db: KaivoDatabase): EngineTelemetryDao = db.engineTelemetryDao()
     @Provides fun stepDataDao(db: KaivoDatabase): StepDataDao = db.stepDataDao()
     @Provides fun stepPinDao(db: KaivoDatabase): StepPinDao = db.stepPinDao()
+    @Provides fun vaultMetaDao(db: KaivoDatabase): VaultMetaDao = db.vaultMetaDao()
+    @Provides fun agentMemoryDao(db: KaivoDatabase): AgentMemoryDao = db.agentMemoryDao()
+    @Provides fun aiUsageDao(db: KaivoDatabase): AiUsageDao = db.aiUsageDao()
+    @Provides fun aiEventDao(db: KaivoDatabase): AiEventDao = db.aiEventDao()
 
     @Provides
     @Singleton
     fun provideCryptoBox(): CryptoBox = CryptoBox()
+
+    @Provides
+    @Singleton
+    fun secretCipher(box: CryptoBox): SecretCipher = box
 }
 
 @Module
@@ -51,10 +60,12 @@ object RepositoryModule {
         RoomFlowRepository(dao, storageDir = context.filesDir)
 
     @Provides @Singleton
-    fun runRepository(dao: RunDao, stepData: StepDataDao): RunRepository = RoomRunRepository(dao, stepData)
+    fun runRepository(dao: RunDao, stepData: StepDataDao, secrets: SecretValueSource): RunRepository =
+        RedactingRunRepository(RoomRunRepository(dao, stepData), secrets)
 
     @Provides @Singleton
-    fun stepDataStore(dao: StepDataDao): com.kaivoflow.core.engine.stepdata.StepDataStore = StepDataStoreImpl(RoomStepDataAccess(dao))
+    fun stepDataStore(dao: StepDataDao, secrets: SecretValueSource): com.kaivoflow.core.engine.stepdata.StepDataStore =
+        RedactingStepDataStore(StepDataStoreImpl(RoomStepDataAccess(dao)), secrets)
 
     @Provides @Singleton
     fun pinStore(
@@ -91,14 +102,47 @@ object RepositoryModule {
     @Provides @Singleton
     fun engineTelemetryRepository(dao: EngineTelemetryDao): EngineTelemetryRepository = RoomEngineTelemetryRepository(dao)
 
+    /** One lock for every writer of the credentials table (user Save, OAuth refresh, one-time migrations). */
     @Provides @Singleton
-    fun oauth2TokenManager(http: HttpGateway, dao: CredentialDao, cryptoBox: CryptoBox): OAuth2TokenManager =
-        OAuth2TokenManager(http, RoomOAuth2TokenStore(dao, cryptoBox))
+    @VaultWriteLock
+    fun vaultWriteLock(): Mutex = Mutex()
+
+    @Provides @Singleton
+    fun secretValues(dao: CredentialDao, cipher: SecretCipher): SecretValueSource = VaultSecretValues(dao, cipher)
+
+    @Provides @Singleton
+    fun oauth2TokenManager(
+        http: HttpGateway, dao: CredentialDao, cipher: SecretCipher, secrets: SecretValueSource, @VaultWriteLock lock: Mutex,
+    ): OAuth2TokenManager = OAuth2TokenManager(http, RoomOAuth2TokenStore(dao, cipher, secrets = secrets, writeLock = lock))
 
     @Provides @Singleton
     fun credentialRepository(
         dao: CredentialDao,
-        cryptoBox: CryptoBox,
+        cipher: SecretCipher,
         tokens: OAuth2TokenManager,
-    ): CredentialRepository = EncryptedCredentialRepository(dao, cryptoBox, tokenManager = tokens)
+        secrets: SecretValueSource,
+        meta: VaultMetaDao,
+        @VaultWriteLock lock: Mutex,
+        localHosts: com.kaivoflow.core.model.LocalHostRegistrar,
+    ): CredentialRepository = EncryptedCredentialRepository(
+        dao, cipher, tokenManager = tokens,
+        migrations = CredentialMigrations(dao, cipher, VaultMetaStore(meta), lock),
+        secrets = secrets, writeLock = lock, localHosts = localHosts,
+    )
+
+    @Provides @Singleton
+    fun aiEventLog(dao: AiEventDao, secrets: SecretValueSource): AiEventLog = RoomAiEventLog(dao, secrets)
+
+    @Provides @Singleton
+    fun usageLedger(dao: AiUsageDao): UsageLedger = RoomUsageLedger(dao)
+
+    @Provides @Singleton
+    fun aiUsageSink(ledger: UsageLedger): AiUsageSink = ledger
+
+    @Provides @Singleton
+    fun agentMemories(dao: AgentMemoryDao, secrets: SecretValueSource): AgentMemoryFactory = AgentMemoryFactory(dao, secrets)
 }
+
+@javax.inject.Qualifier
+@Retention(AnnotationRetention.RUNTIME)
+annotation class VaultWriteLock

@@ -18,10 +18,12 @@ import android.util.Base64
  *
  * This is the "keys stay on your phone" promise the Privacy Centre makes, in code.
  */
-class CryptoBox(private val alias: String = "kaivo.vault.v1") {
+class CryptoBox(private val alias: String = "kaivo.vault.v1") : SecretCipher {
 
     private fun keyStore(): KeyStore = KeyStore.getInstance(ANDROID_KEYSTORE).apply { load(null) }
 
+    /** Synchronized: two threads on a fresh install must not both create the key (the second would orphan the first ciphertext). */
+    @Synchronized
     private fun secretKey(): SecretKey? {
         val store = keyStore()
         (store.getEntry(alias, null) as? KeyStore.SecretKeyEntry)?.let { return it.secretKey }
@@ -39,7 +41,7 @@ class CryptoBox(private val alias: String = "kaivo.vault.v1") {
         return generator.generateKey()
     }
 
-    fun encrypt(plainText: String): String? = runCatching {
+    override fun encrypt(plainText: String): String? = runCatching {
         val cipher = Cipher.getInstance(TRANSFORMATION)
         cipher.init(Cipher.ENCRYPT_MODE, secretKey())
         val iv = cipher.iv
@@ -48,7 +50,7 @@ class CryptoBox(private val alias: String = "kaivo.vault.v1") {
         Base64.encodeToString(byteArrayOf(iv.size.toByte()) + iv + cipherText, Base64.NO_WRAP)
     }.getOrNull()
 
-    fun decrypt(payload: String): String? = runCatching {
+    override fun decrypt(payload: String): String? = runCatching {
         val bytes = Base64.decode(payload, Base64.NO_WRAP)
         val ivLength = bytes.first().toInt()
         val iv = bytes.copyOfRange(1, 1 + ivLength)

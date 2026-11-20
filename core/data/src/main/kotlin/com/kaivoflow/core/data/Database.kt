@@ -277,8 +277,13 @@ interface DataTableDao {
         StepExecutionEntity::class,
         StepPortDataEntity::class,
         StepPinEntity::class,
+        VaultMetaEntity::class,
+        AgentMemoryEntity::class,
+        AiUsageEntity::class,
+        AiUsageRollupEntity::class,
+        AiEventEntity::class,
     ],
-    version = 6,
+    version = 7,
     exportSchema = true,
 )
 abstract class KaivoDatabase : RoomDatabase() {
@@ -295,6 +300,10 @@ abstract class KaivoDatabase : RoomDatabase() {
     abstract fun engineTelemetryDao(): EngineTelemetryDao
     abstract fun stepDataDao(): StepDataDao
     abstract fun stepPinDao(): StepPinDao
+    abstract fun vaultMetaDao(): VaultMetaDao
+    abstract fun agentMemoryDao(): AgentMemoryDao
+    abstract fun aiUsageDao(): AiUsageDao
+    abstract fun aiEventDao(): AiEventDao
 
     companion object {
         const val NAME = "kaivoflow.db"

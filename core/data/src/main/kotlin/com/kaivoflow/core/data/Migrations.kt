@@ -265,5 +265,38 @@ val MIGRATION_5_6: Migration = object : Migration(5, 6) {
     }
 }
 
+/**
+ * Schema 7 (Wave 1, AI data): vault flags, persistent agent memory, the AI usage ledger with its counters, and the
+ * AI event log. One statement per list entry so a test can execute them and compare with the exported 7.json. They
+ * must equal what Room generates for AiEntities.kt (column order, nullability, primary keys, index names).
+ * Additive and idempotent; nothing existing is touched.
+ */
+internal val SCHEMA_7_STATEMENTS: List<String> = listOf(
+    "CREATE TABLE IF NOT EXISTS `vault_meta` (`key` TEXT NOT NULL, `value` TEXT NOT NULL, `updatedAt` INTEGER NOT NULL, PRIMARY KEY(`key`))",
+    "CREATE TABLE IF NOT EXISTS `agent_memory` (`rowKey` TEXT NOT NULL, `scope` TEXT NOT NULL, `payload` TEXT NOT NULL, `messageCount` INTEGER NOT NULL, `bytes` INTEGER NOT NULL, `createdAt` INTEGER NOT NULL, `updatedAt` INTEGER NOT NULL, `lastAccessAt` INTEGER NOT NULL, PRIMARY KEY(`rowKey`))",
+    "CREATE INDEX IF NOT EXISTS `index_agent_memory_scope` ON `agent_memory` (`scope`)",
+    "CREATE INDEX IF NOT EXISTS `index_agent_memory_lastAccessAt` ON `agent_memory` (`lastAccessAt`)",
+    "CREATE TABLE IF NOT EXISTS `ai_usage` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `agentId` TEXT NOT NULL, `flowId` TEXT, `runId` TEXT, `provider` TEXT NOT NULL, `model` TEXT NOT NULL, `tokensIn` INTEGER NOT NULL, `tokensOut` INTEGER NOT NULL, `costMicros` INTEGER NOT NULL, `at` INTEGER NOT NULL)",
+    "CREATE INDEX IF NOT EXISTS `index_ai_usage_at` ON `ai_usage` (`at`)",
+    "CREATE INDEX IF NOT EXISTS `index_ai_usage_agentId_at` ON `ai_usage` (`agentId`, `at`)",
+    "CREATE INDEX IF NOT EXISTS `index_ai_usage_runId` ON `ai_usage` (`runId`)",
+    "CREATE TABLE IF NOT EXISTS `ai_usage_rollup` (`scope` TEXT NOT NULL, `period` TEXT NOT NULL, `calls` INTEGER NOT NULL, `tokensIn` INTEGER NOT NULL, `tokensOut` INTEGER NOT NULL, `costMicros` INTEGER NOT NULL, PRIMARY KEY(`scope`, `period`))",
+    "CREATE INDEX IF NOT EXISTS `index_ai_usage_rollup_period` ON `ai_usage_rollup` (`period`)",
+    "CREATE TABLE IF NOT EXISTS `ai_event_log` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `sessionId` TEXT NOT NULL, `seq` INTEGER NOT NULL, `kind` TEXT NOT NULL, `payload` TEXT NOT NULL, `at` INTEGER NOT NULL)",
+    "CREATE UNIQUE INDEX IF NOT EXISTS `index_ai_event_log_sessionId_seq` ON `ai_event_log` (`sessionId`, `seq`)",
+    "CREATE INDEX IF NOT EXISTS `index_ai_event_log_at` ON `ai_event_log` (`at`)",
+)
+
+internal fun SupportSQLiteDatabase.createAiTablesV7() {
+    SCHEMA_7_STATEMENTS.forEach { execSQL(it) }
+}
+
+/** v6 -> v7: AI data tables. Additive only. */
+val MIGRATION_6_7: Migration = object : Migration(6, 7) {
+    override fun migrate(db: SupportSQLiteDatabase) {
+        db.createAiTablesV7()
+    }
+}
+
 /** Ordered, contiguous list from the oldest known schema to [KaivoDatabase] current version. */
-val ALL_MIGRATIONS: Array<Migration> = arrayOf(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6)
+val ALL_MIGRATIONS: Array<Migration> = arrayOf(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7)

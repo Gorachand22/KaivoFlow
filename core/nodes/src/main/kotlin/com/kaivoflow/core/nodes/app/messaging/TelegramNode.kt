@@ -43,7 +43,7 @@ class TelegramNode : StepExecutor {
     override suspend fun execute(ctx: StepContext): StepResult {
         val params = ctx.params()
         val credential = ctx.credential()
-        val token = credential.bearerToken()
+        val token = com.kaivoflow.core.model.CredentialFields.botToken(credential)
         if (token.isBlank()) throw StepExecutionException(ctx.step.id, ctx.step.name, "the Telegram credential has no bot token")
 
         val sent = ctx.input.mapIndexed { index, item ->

@@ -44,17 +44,7 @@ internal suspend fun connectorHeaders(ctx: StepContext, index: Int): MutableMap<
         "credential" -> {
             val ref = ctx.secret("credential")
             if (ref.isBlank()) throw StepExecutionException(ctx.step.id, ctx.step.name, "no credential selected")
-            val credential = ctx.credentials.resolve(ref)
-            val token = credential.bearerToken()
-            if (token.isNotBlank()) {
-                headers["Authorization"] = if (token.startsWith("Bearer ")) token else "Bearer $token"
-            }
-            credential["header"]?.let { name -> credential["value"]?.let { headers[name] = it } }
-            credential["username"]?.let { user ->
-                val encoded = Base64.getEncoder()
-                    .encodeToString("$user:${credential["password"].orEmpty()}".toByteArray())
-                headers["Authorization"] = "Basic $encoded"
-            }
+            headers.putAll(com.kaivoflow.core.model.CredentialFields.authHeaders(ctx.credentials.resolve(ref)))
         }
     }
     return headers

@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Why cleartext is permitted here (audit I-07, wave 1):
+  Android can only name cleartext exceptions by host name, not by address range, and a local Ollama or a
+  home server is usually reached by a LAN IP the person types. So the platform layer permits cleartext and
+  the real rule lives in the one place all app traffic goes through, core:network (KtorHttpGateway,
+  NetworkGuard): https only for public hosts; http only for hosts the person added to "Allowed local hosts"
+  (loopback and LAN, nothing else); link-local and cloud-metadata addresses never; every redirect hop and
+  every resolved address re-checked. The app has no WebView and no other HTTP client.
+  Only system certificate authorities are trusted (no user-added CAs) for release builds.
+-->
+<network-security-config>
+    <base-config cleartextTrafficPermitted="true">
+        <trust-anchors>
+            <certificates src="system" />
+        </trust-anchors>
+    </base-config>
+</network-security-config>

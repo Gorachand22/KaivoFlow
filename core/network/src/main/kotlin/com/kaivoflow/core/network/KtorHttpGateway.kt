@@ -11,10 +11,12 @@ import io.ktor.client.engine.okhttp.OkHttp
 import io.ktor.client.plugins.HttpTimeout
 import io.ktor.client.plugins.timeout
 import io.ktor.client.plugins.contentnegotiation.ContentNegotiation
+import io.ktor.client.request.HttpRequestBuilder
 import io.ktor.client.request.header
 import io.ktor.client.request.parameter
 import io.ktor.client.request.request
 import io.ktor.client.request.setBody
+import io.ktor.client.statement.HttpResponse
 import io.ktor.client.statement.bodyAsText
 import io.ktor.client.statement.readBytes
 import io.ktor.http.ContentType
@@ -53,49 +55,13 @@ import javax.inject.Singleton
 @Singleton
 class KtorHttpGateway @Inject constructor(
     private val client: HttpClient,
+    private val allowList: HostAllowList,
 ) : HttpGateway {
 
     override suspend fun request(request: HttpRequestSpec): HttpResponseSpec = withContext(Dispatchers.IO) {
         val started = System.currentTimeMillis()
         try {
-            val response = client.request(request.url) {
-                method = HttpMethod.parse(request.method.uppercase())
-                request.query.forEach { (key, value) -> parameter(key, value) }
-                request.headers.forEach { (key, value) -> header(key, value) }
-
-                when (request.method.uppercase()) {
-                    "GET", "HEAD" -> Unit
-                    else -> when (request.bodyKind) {
-                        HttpRequestSpec.BodyKind.Json -> {
-                            contentType(ContentType.Application.Json)
-                            setBody(serialize(request.body))
-                        }
-                        HttpRequestSpec.BodyKind.Form -> {
-                            contentType(ContentType.Application.FormUrlEncoded)
-                            setBody(
-                                request.formFields.entries.joinToString("&") { (k, v) ->
-                                    "${encode(k)}=${encode(v)}"
-                                }
-                            )
-                        }
-                        HttpRequestSpec.BodyKind.Raw -> {
-                            contentType(ContentType.Text.Plain)
-                            setBody(Values.asString(request.body))
-                        }
-                        HttpRequestSpec.BodyKind.Multipart -> {
-                            val upload = request.binaryUpload
-                            if (upload != null) {
-                                val boundary = "kaivo" + java.util.UUID.randomUUID().toString()
-                                    .filter { it.isLetterOrDigit() }
-                                header(HttpHeaders.ContentType, "multipart/form-data; boundary=$boundary")
-                                setBody(buildMultipart(boundary, upload))
-                            }
-                        }
-                        HttpRequestSpec.BodyKind.None -> Unit
-                    }
-                }
-                timeout { requestTimeoutMillis = request.timeoutMs }
-            }
+            val response = sendGuarded(request)
 
             val responseHeaders = response.headers.entries()
                 .associate { it.key.lowercase() to it.value.joinToString(", ") }
@@ -128,13 +94,91 @@ class KtorHttpGateway @Inject constructor(
                     durationMs = System.currentTimeMillis() - started,
                 )
             }
+        } catch (e: KaivoException) {
+            throw e
         } catch (e: UnknownHostException) {
+            blockedCause(e)?.let { throw KaivoException("Blocked: ${it.message}", e) }
             throw KaivoException("No internet connection, or that address does not exist.", e)
         } catch (e: SocketTimeoutException) {
             throw KaivoException("The server took too long to answer (${request.timeoutMs}ms).", e)
         } catch (e: IOException) {
+            blockedCause(e)?.let { throw KaivoException("Blocked: ${it.message}", e) }
             throw KaivoException("The request could not be completed: ${e.message ?: "network error"}", e)
         }
+    }
+
+    private fun blockedCause(e: Throwable): BlockedAddressException? {
+        var c: Throwable? = e
+        var depth = 0
+        while (c != null && depth++ < 8) { if (c is BlockedAddressException) return c; c = c.cause }
+        return null
+    }
+
+    /**
+     * Sends [request] with the network rules applied: the address is checked before connecting (and again at
+     * connect time by [GuardedDns]), redirects are followed by hand only when the request allows them, at most
+     * [RedirectPolicy.DEFAULT_MAX_HOPS] times, and every hop is checked again. Credentials are dropped when a
+     * redirect leaves the origin. With `followRedirects = false` the 3xx answer is returned as it is.
+     */
+    private suspend fun sendGuarded(request: HttpRequestSpec): HttpResponse {
+        var url = request.url
+        var method = request.method.uppercase()
+        var headers: Map<String, String> = request.headers
+        var withBody = true
+        var withQuery = true
+        var hop = 0
+        while (true) {
+            when (val v = NetworkGuard.checkUrl(url, allowList)) {
+                is GuardVerdict.Blocked -> throw KaivoException("Blocked: ${v.reason}.")
+                is GuardVerdict.Allowed -> Unit
+            }
+            val response = client.request(url) { configure(request, method, headers, withQuery, withBody) }
+            if (!request.followRedirects || !RedirectPolicy.isRedirect(response.status.value)) return response
+            when (val d = RedirectPolicy.decide(url, response.status.value, response.headers[HttpHeaders.Location], method, headers, hop, allowList)) {
+                is RedirectDecision.Refuse -> throw KaivoException("The server redirected the request but ${d.reason}.")
+                is RedirectDecision.Follow -> {
+                    url = d.url; method = d.method; headers = d.headers
+                    withBody = withBody && d.keepBody
+                    withQuery = false // the Location address already carries its own query
+                    hop++
+                }
+            }
+        }
+    }
+
+    private fun HttpRequestBuilder.configure(
+        request: HttpRequestSpec, methodName: String, hdrs: Map<String, String>, withQuery: Boolean, withBody: Boolean,
+    ) {
+        method = HttpMethod.parse(methodName)
+        if (withQuery) request.query.forEach { (key, value) -> parameter(key, value) }
+        hdrs.forEach { (key, value) -> header(key, value) }
+        if (withBody) when (methodName) {
+            "GET", "HEAD" -> Unit
+            else -> when (request.bodyKind) {
+                HttpRequestSpec.BodyKind.Json -> {
+                    contentType(ContentType.Application.Json)
+                    setBody(serialize(request.body))
+                }
+                HttpRequestSpec.BodyKind.Form -> {
+                    contentType(ContentType.Application.FormUrlEncoded)
+                    setBody(request.formFields.entries.joinToString("&") { (k, v) -> "${encode(k)}=${encode(v)}" })
+                }
+                HttpRequestSpec.BodyKind.Raw -> {
+                    contentType(ContentType.Text.Plain)
+                    setBody(Values.asString(request.body))
+                }
+                HttpRequestSpec.BodyKind.Multipart -> {
+                    val upload = request.binaryUpload
+                    if (upload != null) {
+                        val boundary = "kaivo" + java.util.UUID.randomUUID().toString().filter { it.isLetterOrDigit() }
+                        header(HttpHeaders.ContentType, "multipart/form-data; boundary=$boundary")
+                        setBody(buildMultipart(boundary, upload))
+                    }
+                }
+                HttpRequestSpec.BodyKind.None -> Unit
+            }
+        }
+        timeout { requestTimeoutMillis = request.timeoutMs }
     }
 
     /**
@@ -217,9 +261,10 @@ class KtorHttpGateway @Inject constructor(
          * One shared client: connection pooling matters on mobile data, and a Flow that runs 50
          * HTTP Steps should not open 50 TLS sessions.
          */
-        fun createClient(): HttpClient = HttpClient(OkHttp) {
+        fun createClient(allowList: HostAllowList): HttpClient = HttpClient(OkHttp) {
             expectSuccess = false
-            followRedirects = true
+            // Redirects are followed by hand in sendGuarded, so every hop passes the network rules.
+            followRedirects = false
             install(ContentNegotiation) {
                 json(Json { ignoreUnknownKeys = true; isLenient = true })
             }
@@ -230,7 +275,11 @@ class KtorHttpGateway @Inject constructor(
             }
             engine {
                 config {
-                    retryOnConnectionFailure(true)
+                    // No automatic retry: a POST must not be sent twice behind the Step's back.
+                    retryOnConnectionFailure(false)
+                    followRedirects(false)
+                    followSslRedirects(false)
+                    dns(GuardedDns(allowList))
                 }
             }
         }

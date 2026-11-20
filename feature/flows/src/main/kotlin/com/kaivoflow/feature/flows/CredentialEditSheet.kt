@@ -118,7 +118,7 @@ fun CredentialEditSheet(
     var isSavedDirty by remember { mutableStateOf(false) }
 
     val typeInfo = remember(credential.type) {
-        CredentialTypeInfo.find(credential.type) ?: CredentialTypeInfo.OPENAI
+        com.kaivoflow.core.model.CredentialRegistry.infoForEditing(credential.type)
     }
     val accentColor = remember(typeInfo) { Color(typeInfo.accentColor) }
 

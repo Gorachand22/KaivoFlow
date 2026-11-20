@@ -1,6 +1,12 @@
 package com.kaivoflow.feature.flows.ai
 
 import android.content.Context
+import com.kaivoflow.core.data.AiEvent
+import com.kaivoflow.core.data.AiEventLog
+import com.kaivoflow.core.data.AtomicFiles
+import com.kaivoflow.core.data.SecretValueSource
+import com.kaivoflow.core.data.SessionLimits
+import com.kaivoflow.core.data.SessionTextCleaner
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
@@ -37,12 +43,22 @@ interface AiSessionRepository {
     suspend fun saveSession(session: AiSession)
     suspend fun deleteSession(id: String)
     suspend fun clearAll()
+
+    /** Adds one redacted, size-capped entry to the durable event log of [sessionId] (for replay). No-op where no log is wired. */
+    suspend fun appendEvent(sessionId: String, kind: String, payload: String) {}
+
+    /** The stored events of [sessionId] after [afterSeq], oldest first. */
+    suspend fun replayEvents(sessionId: String, afterSeq: Int = 0, limit: Int = 500): List<AiEvent> = emptyList()
 }
 
 @Singleton
 class FileAiSessionRepository @Inject constructor(
     @ApplicationContext private val context: Context,
+    private val secrets: SecretValueSource,
+    private val eventLog: AiEventLog,
 ) : AiSessionRepository {
+
+    private val limits = SessionLimits()
 
     private val io: CoroutineDispatcher = Dispatchers.IO
     private val mutex = Mutex()
@@ -66,32 +82,45 @@ class FileAiSessionRepository @Inject constructor(
 
     override suspend fun saveSession(session: AiSession): Unit = withContext(io) {
         mutex.withLock {
-            val updated = session.copy(updatedAt = System.currentTimeMillis())
-            val tempFile = sessionsDir.resolve("${updated.id}.json.tmp")
-            val targetFile = sessionsDir.resolve("${updated.id}.json")
-            try {
-                tempFile.writeText(serializeSession(updated))
-                if (targetFile.exists()) {
-                    targetFile.delete()
-                }
-                tempFile.renameTo(targetFile)
-            } catch (e: Exception) {
-                targetFile.writeText(serializeSession(updated))
-            } finally {
-                if (tempFile.exists()) tempFile.delete()
+            val cleaner = SessionTextCleaner(runCatching { secrets.values() }.getOrDefault(emptyList()), limits)
+            var updated = sanitize(session.copy(updatedAt = System.currentTimeMillis()), cleaner)
+            // Keep the file under the byte cap by dropping the oldest messages; the newest turns matter most.
+            var text = serializeSession(updated)
+            while (text.toByteArray(Charsets.UTF_8).size > limits.maxFileBytes && updated.messages.size > 2) {
+                updated = updated.copy(messages = updated.messages.drop(maxOf(1, updated.messages.size / 10)))
+                text = serializeSession(updated)
             }
+            // Atomic: temp file, fsync, rename. A kill mid-save leaves the previous version of the file intact.
+            AtomicFiles.write(sessionsDir.resolve("${updated.id}.json"), text)
 
             val current = _sessionsFlow.value.toMutableList()
             val index = current.indexOfFirst { it.id == updated.id }
-            if (index >= 0) {
-                current[index] = updated
-            } else {
-                current.add(0, updated)
-            }
+            if (index >= 0) current[index] = updated else current.add(0, updated)
             current.sortByDescending { it.updatedAt }
+            while (current.size > limits.maxSessions) {
+                val oldest = current.removeAt(current.lastIndex)
+                sessionsDir.resolve("${oldest.id}.json").delete()
+            }
             _sessionsFlow.value = current
         }
     }
+
+    private fun sanitize(s: AiSession, c: SessionTextCleaner): AiSession = s.copy(
+        title = c.title(s.title),
+        messages = c.window(s.messages).map { m ->
+            m.copy(
+                text = c.message(m.text),
+                toolCalls = c.toolCalls(m.toolCalls).map { t -> t.copy(description = c.message(t.description)) },
+            )
+        },
+    )
+
+    override suspend fun appendEvent(sessionId: String, kind: String, payload: String) {
+        runCatching { eventLog.append(sessionId, kind, payload) }
+    }
+
+    override suspend fun replayEvents(sessionId: String, afterSeq: Int, limit: Int): List<AiEvent> =
+        runCatching { eventLog.replay(sessionId, afterSeq, limit) }.getOrDefault(emptyList())
 
     override suspend fun deleteSession(id: String): Unit = withContext(io) {
         mutex.withLock {
@@ -99,6 +128,7 @@ class FileAiSessionRepository @Inject constructor(
             sessionsDir.resolve("$id.json.tmp").delete()
             _sessionsFlow.value = _sessionsFlow.value.filterNot { it.id == id }
         }
+        runCatching { eventLog.deleteSession(id) }
     }
 
     override suspend fun clearAll(): Unit = withContext(io) {

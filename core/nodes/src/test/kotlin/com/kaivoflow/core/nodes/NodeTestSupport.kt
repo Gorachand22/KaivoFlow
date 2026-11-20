@@ -91,6 +91,7 @@ fun ctx(
     evaluator: ExpressionEvaluator = TestEvaluator(),
     flowInvoker: FlowInvoker? = null,
     subFlowDepth: Int = 0,
+    credentials: CredentialProvider = TestCredentials(),
 ): StepContext = StepContext(
     step = step,
     flow = flow,
@@ -100,7 +101,7 @@ fun ctx(
     attempt = 1,
     evaluator = evaluator,
     http = http,
-    credentials = TestCredentials(),
+    credentials = credentials,
     clock = { 1_700_000_000_000 },
     timezone = "Asia/Kolkata",
     stepOutputs = stepOutputs,
