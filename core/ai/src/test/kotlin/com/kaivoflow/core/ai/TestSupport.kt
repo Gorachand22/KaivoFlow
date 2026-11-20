@@ -3,6 +3,8 @@ package com.kaivoflow.core.ai
 import com.kaivoflow.core.engine.HttpGateway
 import com.kaivoflow.core.engine.HttpRequestSpec
 import com.kaivoflow.core.engine.HttpResponseSpec
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.flow
 
 /** Replays scripted answers and records every request. Never touches a network. */
 class ScriptedModel(private val steps: MutableList<(ChatRequest) -> ChatResponse>) : ChatModelClient {
@@ -35,3 +37,13 @@ class FakeTool(
     var calls = 0
     override suspend fun execute(arguments: Map<String, Any?>): ToolOutcome { calls++; return body(arguments) }
 }
+
+/** A gateway that also streams: [open] decides the response per request. Never opens a socket. */
+class FakeStreamGateway(var onOpen: (HttpRequestSpec) -> StreamingHttpResponse) : HttpGateway, HttpStreamGateway {
+    val requests = mutableListOf<HttpRequestSpec>()
+    override suspend fun request(request: HttpRequestSpec): HttpResponseSpec { requests += request; return HttpResponseSpec(200, body = emptyMap<String, Any?>()) }
+    override suspend fun open(request: HttpRequestSpec): StreamingHttpResponse { requests += request; return onOpen(request) }
+}
+
+fun linesOf(vararg l: String): Flow<String> = flow { l.forEach { emit(it) } }
+fun sse(vararg data: String): Flow<String> = flow { data.forEach { emit("data: $it"); emit("") } }

@@ -126,8 +126,19 @@ object JsonExtractor {
 }
 
 /** Structured output by JSON Schema, with a bounded repair-retry through the model. */
-class StructuredOutputParser(val schema: Map<String, Any?>, val maxRepairs: Int = 2) {
+class StructuredOutputParser(
+    val schema: Map<String, Any?>,
+    val maxRepairs: Int = 2,
+    /** Optional reader for text that is not JSON (see [ItemListParser]); tried when no JSON value satisfies the schema. */
+    private val textReader: ((String) -> ParseResult)? = null,
+) {
     fun parse(text: String): ParseResult {
+        val json = parseJson(text)
+        if (json is ParseResult.Ok || textReader == null) return json
+        return textReader.invoke(text)
+    }
+
+    private fun parseJson(text: String): ParseResult {
         val values = JsonExtractor.all(text)
         if (values.isEmpty()) return ParseResult.Invalid(listOf("no JSON value was found in the answer"))
         // The first candidate that satisfies the schema wins; otherwise report the first candidate's problems.

@@ -18,7 +18,7 @@ class ProvidersTest {
     )
 
     private fun openAi(http: FakeGateway, base: String = "", provider: ProviderKind = ProviderKind.OpenAiCompatible, k: String? = key, policy: EndpointPolicy = EndpointPolicy()) =
-        ChatModels.create(http, ModelConfig(provider, "gpt-x", base, k?.let { ApiKey(it) }, policy = policy))
+        ChatModels.create(http, ModelConfig(provider, "gpt-x", base, k?.let { ApiKey(it) }, policy = policy, retry = RetryPolicy.None))
 
     @Test fun `openai request shape, key in header only, redirects off`() = runBlocking {
         val http = FakeGateway { HttpResponseSpec(200, body = mapOf(
@@ -35,7 +35,7 @@ class ProvidersTest {
         val msgs = body["messages"] as List<*>
         assertEquals("system", (msgs[0] as Map<*, *>)["role"]); assertEquals("tool", (msgs[3] as Map<*, *>)["role"])
         assertEquals("t1", (msgs[3] as Map<*, *>)["tool_call_id"])
-        assertEquals(256, body["max_tokens"]); assertTrue(body.containsKey("tools"))
+        assertEquals(256, body["max_completion_tokens"]); assertFalse(body.containsKey("max_tokens")); assertTrue(body.containsKey("tools"))
         assertEquals(ToolCall("a1", "lookup", mapOf("q" to "cats")), r.toolCalls.single())
         assertEquals(Usage(12, 3), r.usage); assertEquals(FinishReason.ToolCalls, r.finish)
     }
@@ -55,10 +55,14 @@ class ProvidersTest {
     }
 
     @Test fun `ollama needs no key, a remote openai server does`() = runBlocking {
-        val http = FakeGateway { HttpResponseSpec(200, body = mapOf("choices" to listOf(mapOf("message" to mapOf("content" to "ok"))))) }
+        val http = FakeGateway { HttpResponseSpec(200, body = mapOf("message" to mapOf("role" to "assistant", "content" to "ok"), "done" to true, "done_reason" to "stop", "prompt_eval_count" to 5, "eval_count" to 2)) }
         val ollama = openAi(http, "http://localhost:11434/v1", ProviderKind.Ollama, k = null, policy = EndpointPolicy(allowLoopback = true))
-        assertEquals("ok", ollama.complete(ChatRequest(null, listOf(ChatMessage.user("x")))).text)
-        assertFalse(http.requests.single().headers.containsKey("Authorization"))
+        val r = ollama.complete(ChatRequest(null, listOf(ChatMessage.user("x")), temperature = 0.3, maxOutputTokens = 64))
+        assertEquals("ok", r.text); assertEquals(Usage(5, 2), r.usage)
+        val req = http.requests.single()
+        assertEquals("http://localhost:11434/api/chat", req.url)
+        assertFalse(req.headers.containsKey("Authorization"))
+        assertEquals(false, (req.body as Map<*, *>)["stream"]); assertEquals(64, ((req.body as Map<*, *>)["options"] as Map<*, *>)["num_predict"])
         val e = runCatching { openAi(http, k = null).complete(ChatRequest(null, listOf(ChatMessage.user("x")))) }.exceptionOrNull() as ModelException
         assertEquals(ModelErrorKind.Auth, e.kind)
     }
@@ -74,7 +78,7 @@ class ProvidersTest {
         val http = FakeGateway { HttpResponseSpec(200, body = mapOf(
             "content" to listOf(mapOf("type" to "text", "text" to "thinking aloud"), mapOf("type" to "tool_use", "id" to "tu1", "name" to "lookup", "input" to mapOf("q" to "dogs"))),
             "stop_reason" to "tool_use", "usage" to mapOf("input_tokens" to 20, "output_tokens" to 5))) }
-        val c = ChatModels.create(http, ModelConfig(ProviderKind.Anthropic, "claude-x", apiKey = ApiKey(key)))
+        val c = ChatModels.create(http, ModelConfig(ProviderKind.Anthropic, "claude-sonnet-4-20250514", apiKey = ApiKey(key), retry = RetryPolicy.None))
         val r = c.complete(ChatRequest("sys", convo + ChatMessage.tool(ToolCall("t2", "lookup"), "second", isError = true), listOf(tool), 1.7, 300, jsonMode = true))
         val req = http.requests.single()
         assertEquals("https://api.anthropic.com/v1/messages", req.url)
@@ -94,7 +98,7 @@ class ProvidersTest {
         val http = FakeGateway { HttpResponseSpec(200, body = mapOf(
             "candidates" to listOf(mapOf("finishReason" to "STOP", "content" to mapOf("parts" to listOf(mapOf("functionCall" to mapOf("name" to "lookup", "args" to mapOf("q" to "z"))))))),
             "usageMetadata" to mapOf("promptTokenCount" to 7, "candidatesTokenCount" to 2))) }
-        val c = ChatModels.create(http, ModelConfig(ProviderKind.Gemini, "gemini-2.0-flash", apiKey = ApiKey(key)))
+        val c = ChatModels.create(http, ModelConfig(ProviderKind.Gemini, "gemini-2.0-flash", apiKey = ApiKey(key), retry = RetryPolicy.None))
         val r = c.complete(ChatRequest("sys", convo, listOf(tool), 0.3, 128, jsonMode = false))
         val req = http.requests.single()
         assertEquals("https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent", req.url)

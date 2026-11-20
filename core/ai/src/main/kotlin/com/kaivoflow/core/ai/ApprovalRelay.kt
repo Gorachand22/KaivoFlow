@@ -50,8 +50,9 @@ class ApprovalRelay : ApprovalCallback {
     }
 
     /** The person's answer to the open question. Ignored when nothing is open. */
-    fun respond(approved: Boolean, reason: String = "the person said no") {
-        answer?.complete(if (approved) ApprovalDecision.Approved else ApprovalDecision.Denied(reason))
+    fun respond(approved: Boolean, reason: String = "the person said no", feedback: String? = null) {
+        val note = feedback?.trim()?.takeIf { it.isNotEmpty() }?.take(1_000)
+        answer?.complete(if (approved) ApprovalDecision.Approved else ApprovalDecision.Denied(reason, note))
     }
 
     override suspend fun approve(request: ApprovalRequest): ApprovalDecision {

@@ -44,7 +44,15 @@ All code is pure Kotlin, JVM tested, Android free. Depends on `:core:engine` (wh
 
 | File | What it holds |
 |---|---|
-| `Messages.kt` | `ChatMessage`, `ToolCall`, `Usage`, `ChatRequest/Response`, `ChatModelClient`, `ModelException` |
+| `Messages.kt` | `ChatMessage`, `ToolCall` (with opaque `providerData`), `Usage`, `ToolChoice`, `ChatRequest/Response`, `ChatModelClient` (`complete` and `stream`), `ModelException` and its error kinds |
+| `ModelErrors.kt` | error taxonomy, n8n-style retry rules, `RetryPolicy` |
+| `ModelCapabilities.kt` | what each model accepts (token parameter, temperature, tool choice, head-room) |
+| `Streaming.kt` | `StreamEvent`, `HttpStreamGateway` (transport seam), SSE reader, per-provider stream accumulators |
+| `FallbackModelClient.kt` | model chain, never on cancellation |
+| `ToolContract.kt` | lenient tool arguments, stable tool error text |
+| `FinalAnswer.kt` | structured output through a hidden tool, item list parser |
+| `AgentEvents.kt` | `AgentEvent`, the typed progress events of a run |
+| `Pricing.kt` | `PriceTable`, `TokenEstimator`, `UsageLedger`, `RunBudget` |
 | `Providers.kt` | `ModelConfig`, `ChatModels.create`, OpenAI-compatible (also Ollama), Anthropic and Gemini adapters |
 | `EndpointPolicy.kt` | base URL guard: scheme, private and loopback and link-local ranges, IP obfuscation, optional resolver |
 | `Safety.kt` | `ApiKey` (never prints), `Redactor`, `UntrustedData` fence |
@@ -63,4 +71,4 @@ Flow Steps (in `:core:nodes`, `ai/`): `ai.agent`, `ai.chat_model`, `ai.basic_cha
 - The Ktor gateway in `:core:network` hard-codes redirect following; the adapters send `followRedirects = false` and
   also refuse any 3xx answer, but a gateway that follows redirects itself would follow before the adapter sees it.
 - DNS rebinding is only caught when the host app passes a `HostResolver`.
-- Persistence for memory, the approval UI and streaming are not here yet.
+- Persistence for memory and the approval UI are not here. Streaming is here, but incremental delivery needs a gateway that implements `HttpStreamGateway` (see `docs/ai-study/WAVE1_STATUS_A.md`).

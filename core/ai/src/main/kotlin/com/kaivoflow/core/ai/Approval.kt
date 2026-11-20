@@ -42,7 +42,11 @@ data class ApprovalRequest(
 
 sealed interface ApprovalDecision {
     data object Approved : ApprovalDecision
-    data class Denied(val reason: String) : ApprovalDecision
+    /**
+     * [feedback] is what the person typed when they declined (their own words, shown to the model so it can adjust).
+     * It is null for refusals that come from a rule of the policy.
+     */
+    data class Denied(val reason: String, val feedback: String? = null) : ApprovalDecision
 }
 
 /** Implemented by the chat sheet and by the notification approval path alike. */
@@ -73,7 +77,11 @@ class ApprovalPolicy(
         ToolRisk.WriteDraft, ToolRisk.WritePersist, ToolRisk.Destructive -> host == ApprovalHost.Interactive
     }
 
-    suspend fun decide(tool: AgentTool, arguments: Map<String, Any?>): ApprovalDecision {
+    /**
+     * [onRequest] is called with the card just before a person is asked, so the caller can show it and stop the
+     * wall clock while the person thinks. It is not called for decisions the policy makes alone.
+     */
+    suspend fun decide(tool: AgentTool, arguments: Map<String, Any?>, onRequest: (suspend (ApprovalRequest) -> Unit)? = null): ApprovalDecision {
         if (!isOffered(tool)) return ApprovalDecision.Denied("${tool.name} is not available here")
         if (tool.risk == ToolRisk.Read || (tool.risk == ToolRisk.WriteDraft && host == ApprovalHost.Interactive)) return ApprovalDecision.Approved
         if (host == ApprovalHost.Unattended) {
@@ -94,6 +102,7 @@ class ApprovalPolicy(
             requiresTypedConfirmation = tool.risk == ToolRisk.Destructive,
         )
         return try {
+            onRequest?.invoke(request)
             cb.approve(request)
         } catch (e: CancellationException) {
             throw e

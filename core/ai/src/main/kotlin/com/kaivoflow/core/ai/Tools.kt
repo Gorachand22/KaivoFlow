@@ -12,7 +12,11 @@ import com.kaivoflow.core.model.StepNode
 import kotlinx.collections.immutable.toImmutableMap
 import kotlinx.coroutines.CancellationException
 
-data class ToolOutcome(val text: String, val isError: Boolean = false)
+/**
+ * [httpStatus] and [errorBody] are for failures that came from an HTTP answer: the loop puts the status first and
+ * appends the body, redacted and capped, in the stable shape of [ToolErrors].
+ */
+data class ToolOutcome(val text: String, val isError: Boolean = false, val httpStatus: Int? = null, val errorBody: String? = null)
 
 /** One capability offered to the model. Implementations must be safe to call with any model-chosen arguments. */
 interface AgentTool {
@@ -155,9 +159,11 @@ class StepTool(
         } catch (e: CancellationException) {
             throw e
         } catch (e: StepExecutionException) {
-            ToolOutcome(redactor.redact(e.message ?: "the step failed"), isError = true)
+            val m = redactor.redact(e.message ?: "the step failed")
+            ToolOutcome(m, isError = true, httpStatus = ToolErrors.statusIn(m))
         } catch (e: Throwable) {
-            ToolOutcome("the step failed: ${redactor.redact(e.message ?: e::class.java.simpleName).take(200)}", isError = true)
+            val m = "the step failed: ${redactor.redact(e.message ?: e::class.java.simpleName).take(200)}"
+            ToolOutcome(m, isError = true, httpStatus = ToolErrors.statusIn(m))
         }
     }
 }
