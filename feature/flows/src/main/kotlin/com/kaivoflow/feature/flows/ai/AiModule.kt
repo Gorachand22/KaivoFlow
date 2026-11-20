@@ -3,6 +3,8 @@ package com.kaivoflow.feature.flows.ai
 import com.kaivoflow.core.ai.ApprovalRelay
 import com.kaivoflow.core.ai.ChatModels
 import com.kaivoflow.core.ai.flowedit.AssistantCatalog
+import com.kaivoflow.core.data.AiUsageSink
+import com.kaivoflow.core.data.UsageRecord
 import com.kaivoflow.core.engine.HttpGateway
 import com.kaivoflow.core.nodes.CatalogAliases
 import com.kaivoflow.core.nodes.NodeCatalog
@@ -31,4 +33,12 @@ object AiModule {
     @Provides
     @Singleton
     fun chatClients(http: HttpGateway): ChatClientProvider = ChatClientProvider { config -> ChatModels.create(http, config) }
+
+    /** Each model call of the assistant goes to the usage ledger as agent "assistant". */
+    @Provides
+    @Singleton
+    fun assistantUsage(sink: AiUsageSink): AssistantUsageRecorder =
+        AssistantUsageRecorder { provider, model, tokensIn, tokensOut, costMicros, at, runId, flowId ->
+            sink.record(UsageRecord("assistant", provider, model, tokensIn, tokensOut, costMicros, at, flowId, runId))
+        }
 }

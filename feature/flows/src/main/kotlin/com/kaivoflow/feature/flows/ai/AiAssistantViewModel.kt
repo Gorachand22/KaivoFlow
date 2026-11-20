@@ -13,8 +13,13 @@ import com.kaivoflow.core.engine.HttpGateway
 import com.kaivoflow.core.model.CredentialItem
 import com.kaivoflow.core.model.Flow
 import dagger.hilt.android.lifecycle.HiltViewModel
-import kotlinx.coroutines.delay
-import kotlinx.coroutines.isActive
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.cancelAndJoin
+import kotlinx.coroutines.flow.conflate
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -56,6 +61,8 @@ data class AiAssistantUiState(
  */
 data class AppliedRevision(val messageId: String, val flowId: String, val before: Flow?, val after: Flow)
 
+private const val SNAPSHOT_EVERY_MS = 2_000L
+
 @HiltViewModel
 class AiAssistantViewModel @Inject constructor(
     private val flowRepository: FlowRepository,
@@ -79,7 +86,14 @@ class AiAssistantViewModel @Inject constructor(
     @Volatile
     private var isConfigLoaded = false
 
+    /** The running turn, so Stop (and leaving the session) can cancel the model stream and the tool run. */
+    private var turnJob: Job? = null
+
+    @Volatile
+    private var stopRequested = false
+
     init {
+        recoverInterruptedTurns()
         observeCredentials()
         loadProviderConfig()
         observeSavedSessions()
@@ -167,7 +181,45 @@ class AiAssistantViewModel @Inject constructor(
         _uiState.update { it.copy(showHistorySheet = show) }
     }
 
+    /** Runs [block] once no turn is running: a running one is stopped first, so it can never write into another chat. */
+    private fun afterTurnStops(block: () -> Unit) {
+        val running = turnJob?.takeIf { it.isActive }
+        if (running == null) { block(); return }
+        stopRequested = true
+        viewModelScope.launch {
+            running.cancelAndJoin()
+            block()
+        }
+    }
+
+    /** Stop button: cancels the model stream and any running tool; the text so far stays and the turn is marked Stopped. */
+    fun stopGeneration() {
+        val running = turnJob?.takeIf { it.isActive } ?: return
+        stopRequested = true
+        running.cancel()
+    }
+
+    /**
+     * A turn whose process died was saved as Running. At the next start it is marked Interrupted (its partial text
+     * stays) and the event log gets the missing end entry.
+     */
+    private fun recoverInterruptedTurns() {
+        viewModelScope.launch {
+            val sessions = runCatching { aiSessionRepository.observeSessions().first() }.getOrDefault(emptyList())
+            sessions.filter { s -> s.messages.any { it.status == TurnStatus.Running } }.forEach { s ->
+                runCatching {
+                    aiSessionRepository.saveSession(s.copy(messages = s.messages.map(AssistantTurnReducer::markInterrupted)))
+                    aiSessionRepository.appendEvent(s.id, "turn_ended", TurnJson.obj("status" to "interrupted", "detail" to "found unfinished at the next start"))
+                }
+            }
+        }
+    }
+
     fun loadSession(session: AiSession) {
+        afterTurnStops { loadSessionNow(session) }
+    }
+
+    private fun loadSessionNow(session: AiSession) {
         viewModelScope.launch {
             val flow = session.flowId?.let { flowRepository.flow(it) }
             _uiState.update {
@@ -184,6 +236,10 @@ class AiAssistantViewModel @Inject constructor(
     }
 
     fun newSession() {
+        afterTurnStops { newSessionNow() }
+    }
+
+    private fun newSessionNow() {
         val newId = UUID.randomUUID().toString()
         _uiState.update {
             it.copy(
@@ -446,7 +502,7 @@ class AiAssistantViewModel @Inject constructor(
     }
 
     fun clearChat() {
-        initSession(flowId)
+        afterTurnStops { initSession(flowId) }
     }
 
     private fun initSession(targetFlowId: String?) {
@@ -478,21 +534,10 @@ class AiAssistantViewModel @Inject constructor(
         )
 
         val streamingAssistantId = UUID.randomUUID().toString()
-        val initialAssistantMessage = AiChatMessage(
-            id = streamingAssistantId,
-            sender = MessageSender.Assistant,
-            text = "",
-            thought = AiThoughtTrace(
-                durationSec = 0,
-                steps = emptyList(),
-                reasoningText = null,
-                isActive = true,
-                currentActivity = "Starting agent...",
-            ),
-            isStreaming = true,
-        )
+        val initialAssistantMessage = AssistantTurnReducer.live(AssistantTurnReducer.start(System.currentTimeMillis()), streamingAssistantId, System.currentTimeMillis())
 
         val updatedMessages = _uiState.value.messages + userMessage + initialAssistantMessage
+        val sessionId = _uiState.value.activeSessionId
         _uiState.update {
             it.copy(
                 messages = updatedMessages,
@@ -500,79 +545,46 @@ class AiAssistantViewModel @Inject constructor(
                 attachedContextSnippet = null,
             )
         }
+        stopRequested = false
 
-        viewModelScope.launch {
-            saveCurrentSessionSnapshot()
+        fun replace(message: AiChatMessage) {
+            _uiState.update { state -> state.copy(messages = state.messages.map { if (it.id == streamingAssistantId) message else it }) }
+        }
 
-            val startTime = System.currentTimeMillis()
-            val tickerJob = launch {
-                while (isActive) {
-                    delay(1000L)
-                    val elapsed = ((System.currentTimeMillis() - startTime) / 1000).toInt()
-                    _uiState.update { state ->
-                        val msgs = state.messages.map { msg ->
-                            if (msg.id == streamingAssistantId && msg.thought != null) {
-                                msg.copy(thought = msg.thought.copy(durationSec = elapsed))
-                            } else msg
-                        }
-                        state.copy(messages = msgs)
-                    }
-                }
-            }
-
+        turnJob = viewModelScope.launch {
+            var latest: AiChatMessage = initialAssistantMessage
+            var lastSavedAt = 0L
             try {
+                saveCurrentSessionSnapshot()
                 val base = _uiState.value.currentFlow
-                val activitySteps = mutableListOf<AiActivityStep>()
 
                 agent.executeTurnStream(
                     prompt = fullPrompt,
                     currentFlow = base,
                     config = _uiState.value.providerConfig,
                     chatHistory = updatedMessages.dropLast(1),
-                ).collect { event ->
+                    messageId = streamingAssistantId,
+                    journal = { kind, payload -> aiSessionRepository.appendEvent(sessionId, kind, payload) },
+                ).conflate().collect { event ->
                     when (event) {
-                        is AgentStreamEvent.Status -> {
-                            _uiState.update { state ->
-                                val msgs = state.messages.map { msg ->
-                                    if (msg.id == streamingAssistantId && msg.thought != null) {
-                                        msg.copy(thought = msg.thought.copy(currentActivity = event.message))
-                                    } else msg
-                                }
-                                state.copy(messages = msgs)
-                            }
-                        }
-                        is AgentStreamEvent.ActivityStepAdded -> {
-                            activitySteps.add(event.step)
-                            _uiState.update { state ->
-                                val msgs = state.messages.map { msg ->
-                                    if (msg.id == streamingAssistantId && msg.thought != null) {
-                                        msg.copy(thought = msg.thought.copy(steps = activitySteps.toList()))
-                                    } else msg
-                                }
-                                state.copy(messages = msgs)
-                            }
-                        }
-                        is AgentStreamEvent.TextChunk -> {
-                            _uiState.update { state ->
-                                val msgs = state.messages.map { msg ->
-                                    if (msg.id == streamingAssistantId) {
-                                        msg.copy(text = msg.text + event.textDelta)
-                                    } else msg
-                                }
-                                state.copy(messages = msgs)
+                        is AgentStreamEvent.Progress -> {
+                            latest = event.message
+                            replace(event.message)
+                            // The partial answer is saved now and then, so a dead process leaves it behind (marked Interrupted next start).
+                            val now = System.currentTimeMillis()
+                            if (now - lastSavedAt >= SNAPSHOT_EVERY_MS) {
+                                lastSavedAt = now
+                                saveCurrentSessionSnapshot()
                             }
                         }
                         is AgentStreamEvent.Finished -> {
-                            tickerJob.cancel()
                             val response = event.finalMessage.let {
                                 if (it.flowProposal != null) it.copy(baseUpdatedAt = base?.updatedAt) else it
                             }
+                            latest = response
                             _uiState.update { state ->
-                                val msgs = state.messages.map { msg ->
-                                    if (msg.id == streamingAssistantId) response else msg
-                                }
                                 state.copy(
-                                    messages = msgs,
+                                    messages = state.messages.map { if (it.id == streamingAssistantId) response else it },
                                     isGenerating = false,
                                     activeProposedFlow = response.flowProposal,
                                 )
@@ -580,13 +592,10 @@ class AiAssistantViewModel @Inject constructor(
                             saveCurrentSessionSnapshot()
                         }
                         is AgentStreamEvent.Error -> {
-                            tickerJob.cancel()
+                            latest = event.errorMessage
                             _uiState.update { state ->
-                                val msgs = state.messages.map { msg ->
-                                    if (msg.id == streamingAssistantId) event.errorMessage else msg
-                                }
                                 state.copy(
-                                    messages = msgs,
+                                    messages = state.messages.map { if (it.id == streamingAssistantId) event.errorMessage else it },
                                     isGenerating = false,
                                 )
                             }
@@ -594,22 +603,29 @@ class AiAssistantViewModel @Inject constructor(
                         }
                     }
                 }
-            } catch (e: Exception) {
-                tickerJob.cancel()
-                _uiState.update { state ->
-                    val msgs = state.messages.map { msg ->
-                        if (msg.id == streamingAssistantId) {
-                            AiChatMessage(
-                                sender = MessageSender.Assistant,
-                                text = "⚠️ Assistant interrupted: ${e.message ?: "Unknown error"}",
-                            )
-                        } else msg
+            } catch (e: CancellationException) {
+                // Stop (or the screen going away): keep what was shown, mark how it ended, and write that down even though we are cancelled.
+                withContext(NonCancellable) {
+                    val status = if (stopRequested) TurnStatus.Stopped else TurnStatus.Interrupted
+                    if (latest.status == TurnStatus.Running) {
+                        val ended = AssistantTurnReducer.markCut(latest, status)
+                        latest = ended
+                        replace(ended)
                     }
-                    state.copy(messages = msgs, isGenerating = false)
+                    _uiState.update { it.copy(isGenerating = false) }
+                    runCatching { aiSessionRepository.appendEvent(sessionId, "turn_ended", TurnJson.obj("status" to status.name.lowercase())) }
+                    saveCurrentSessionSnapshot()
+                }
+                throw e
+            } catch (e: Exception) {
+                val failed = AssistantTurnReducer.markCut(latest, TurnStatus.Failed).copy(
+                    text = (latest.text.takeIf { it.isNotBlank() }?.let { "$it\n\n" }.orEmpty()) + "⚠️ Assistant interrupted: ${e.message ?: "Unknown error"}",
+                )
+                _uiState.update { state ->
+                    state.copy(messages = state.messages.map { if (it.id == streamingAssistantId) failed else it }, isGenerating = false)
                 }
                 saveCurrentSessionSnapshot()
             } finally {
-                tickerJob.cancel()
                 _uiState.update { it.copy(isGenerating = false) }
             }
         }

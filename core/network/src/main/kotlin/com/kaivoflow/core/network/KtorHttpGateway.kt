@@ -1,5 +1,7 @@
 package com.kaivoflow.core.network
 
+import com.kaivoflow.core.ai.HttpStreamGateway
+import com.kaivoflow.core.ai.StreamingHttpResponse
 import com.kaivoflow.core.engine.BinaryUploadSpec
 import com.kaivoflow.core.engine.HttpGateway
 import com.kaivoflow.core.engine.HttpRequestSpec
@@ -14,9 +16,11 @@ import io.ktor.client.plugins.contentnegotiation.ContentNegotiation
 import io.ktor.client.request.HttpRequestBuilder
 import io.ktor.client.request.header
 import io.ktor.client.request.parameter
+import io.ktor.client.request.prepareRequest
 import io.ktor.client.request.request
 import io.ktor.client.request.setBody
 import io.ktor.client.statement.HttpResponse
+import io.ktor.client.statement.bodyAsChannel
 import io.ktor.client.statement.bodyAsText
 import io.ktor.client.statement.readBytes
 import io.ktor.http.ContentType
@@ -24,8 +28,18 @@ import io.ktor.http.HttpHeaders
 import io.ktor.http.HttpMethod
 import io.ktor.http.contentType
 import io.ktor.serialization.kotlinx.json.json
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.flow.onCompletion
+import kotlinx.coroutines.flow.receiveAsFlow
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeout
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonNull
@@ -56,7 +70,10 @@ import javax.inject.Singleton
 class KtorHttpGateway @Inject constructor(
     private val client: HttpClient,
     private val allowList: HostAllowList,
-) : HttpGateway {
+) : HttpGateway, HttpStreamGateway {
+
+    /** Owns the readers of open streams; a reader ends when its collector stops, fails or the body ends. */
+    private val streamScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
     override suspend fun request(request: HttpRequestSpec): HttpResponseSpec = withContext(Dispatchers.IO) {
         val started = System.currentTimeMillis()
@@ -107,6 +124,118 @@ class KtorHttpGateway @Inject constructor(
         }
     }
 
+
+    /**
+     * Opens a streamed response (server-sent events or newline-delimited JSON). The status and headers are returned
+     * as soon as they arrive; [StreamingHttpResponse.lines] then delivers each line of the body the moment it is
+     * complete. The same rules as [request] apply: the address is checked before connecting and again by
+     * [GuardedDns], redirects are followed by hand (only when the request allows it) with every hop checked and
+     * credentials dropped when the origin changes, and nothing is retried. Keys travel in headers only and nothing
+     * here is logged. Collecting [StreamingHttpResponse.lines] reads the body, and stopping the collector (or
+     * cancelling the caller) closes the connection. A silent server ends the stream with an error after
+     * [HttpRequestSpec.timeoutMs]; a body that is not read for that long is dropped as well.
+     */
+    override suspend fun open(request: HttpRequestSpec): StreamingHttpResponse {
+        val head = CompletableDeferred<Pair<Int, Map<String, String>>>()
+        val lines = Channel<String>(STREAM_BUFFER_LINES)
+        val reader = streamScope.launch {
+            try {
+                withTimeout(MAX_STREAM_MS) {
+                    executeStreaming(request) { response ->
+                        val status = response.status.value
+                        head.complete(status to response.headers.entries().associate { it.key.lowercase() to it.value.joinToString(", ") })
+                        val channel = response.bodyAsChannel()
+                        // An error body is only read for its message; a success body is read to its end.
+                        var budget = if (status in 200..299) Long.MAX_VALUE else MAX_ERROR_BODY_BYTES
+                        readStreamLines(read = { b, o, l -> channel.readAvailable(b, o, l) }) { line ->
+                            budget -= line.length + 1
+                            if (budget < 0) throw StreamEnd
+                            val sent = withTimeoutOrNull(request.timeoutMs) { lines.send(line) }
+                            if (sent == null) throw IOException("The stream was not read in time.")
+                        }
+                    }
+                }
+                lines.close()
+            } catch (e: StreamEnd) {
+                lines.close()
+            } catch (e: kotlinx.coroutines.TimeoutCancellationException) {
+                // The overall cap (a timeout is a CancellationException, but here the caller did not cancel).
+                val failure = streamFailure(e, request)
+                if (!head.completeExceptionally(failure)) lines.close(failure) else lines.close()
+            } catch (e: CancellationException) {
+                head.cancel(e)
+                lines.close(e)
+                throw e
+            } catch (e: Throwable) {
+                val failure = streamFailure(e, request)
+                if (!head.completeExceptionally(failure)) lines.close(failure) else lines.close()
+            }
+        }
+        val (status, headers) = try {
+            head.await()
+        } catch (e: CancellationException) {
+            reader.cancel()
+            throw e
+        }
+        return StreamingHttpResponse(status, headers, lines.receiveAsFlow().onCompletion { reader.cancel() })
+    }
+
+    /** Ends a body read on purpose (error body cap); not an error. */
+    private object StreamEnd : RuntimeException() {
+        override fun fillInStackTrace(): Throwable = this
+    }
+
+    /** Same translation as [request], for failures that happen while a stream is opened or read. */
+    private fun streamFailure(e: Throwable, request: HttpRequestSpec): KaivoException = when {
+        e is KaivoException -> e
+        blockedCause(e) != null -> KaivoException("Blocked: ${blockedCause(e)?.message}", e)
+        e is UnknownHostException -> KaivoException("No internet connection, or that address does not exist.", e)
+        e is kotlinx.coroutines.TimeoutCancellationException -> KaivoException("The stream ran longer than ${MAX_STREAM_MS / 60_000} minutes and was stopped.", e)
+        e is SocketTimeoutException ->
+            KaivoException("The server stopped sending data (${request.timeoutMs}ms without anything).", e)
+        e is IOException -> KaivoException("The stream could not be completed: ${e.message ?: "network error"}", e)
+        else -> KaivoException("The stream failed: ${e::class.java.simpleName}", e)
+    }
+
+    /**
+     * The redirect loop of [sendGuarded] for a body that is read while it is open: the final response is handed to
+     * [onFinal] and the connection is closed when it returns.
+     */
+    private suspend fun executeStreaming(request: HttpRequestSpec, onFinal: suspend (HttpResponse) -> Unit) {
+        var url = request.url
+        var method = request.method.uppercase()
+        var headers: Map<String, String> = request.headers
+        var withBody = true
+        var withQuery = true
+        var hop = 0
+        while (true) {
+            when (val v = NetworkGuard.checkUrl(url, allowList)) {
+                is GuardVerdict.Blocked -> throw KaivoException("Blocked: ${v.reason}.")
+                is GuardVerdict.Allowed -> Unit
+            }
+            var next: RedirectDecision.Follow? = null
+            val sendBody = withBody
+            val sendQuery = withQuery
+            val m = method
+            val h = headers
+            client.prepareRequest(url) { configure(request, m, h, sendQuery, sendBody, streaming = true) }.execute { response ->
+                if (!request.followRedirects || !RedirectPolicy.isRedirect(response.status.value)) {
+                    onFinal(response)
+                } else {
+                    when (val d = RedirectPolicy.decide(url, response.status.value, response.headers[HttpHeaders.Location], m, h, hop, allowList)) {
+                        is RedirectDecision.Refuse -> throw KaivoException("The server redirected the request but ${d.reason}.")
+                        is RedirectDecision.Follow -> next = d
+                    }
+                }
+            }
+            val d = next ?: return
+            url = d.url; method = d.method; headers = d.headers
+            withBody = withBody && d.keepBody
+            withQuery = false
+            hop++
+        }
+    }
+
     private fun blockedCause(e: Throwable): BlockedAddressException? {
         var c: Throwable? = e
         var depth = 0
@@ -148,6 +277,7 @@ class KtorHttpGateway @Inject constructor(
 
     private fun HttpRequestBuilder.configure(
         request: HttpRequestSpec, methodName: String, hdrs: Map<String, String>, withQuery: Boolean, withBody: Boolean,
+        streaming: Boolean = false,
     ) {
         method = HttpMethod.parse(methodName)
         if (withQuery) request.query.forEach { (key, value) -> parameter(key, value) }
@@ -178,7 +308,18 @@ class KtorHttpGateway @Inject constructor(
                 HttpRequestSpec.BodyKind.None -> Unit
             }
         }
-        timeout { requestTimeoutMillis = request.timeoutMs }
+        if (streaming) {
+            // A stream may last longer than any fixed request limit; what must not happen is silence. The request's
+            // timeout is therefore the longest the server may send nothing (connect and read), and the total is
+            // capped by MAX_STREAM_MS in open().
+            timeout {
+                requestTimeoutMillis = Long.MAX_VALUE
+                connectTimeoutMillis = request.timeoutMs
+                socketTimeoutMillis = request.timeoutMs
+            }
+        } else {
+            timeout { requestTimeoutMillis = request.timeoutMs }
+        }
     }
 
     /**
@@ -256,6 +397,15 @@ class KtorHttpGateway @Inject constructor(
     companion object {
         /** A phone should never buffer an unbounded download into memory. */
         const val MAX_BINARY_BYTES = 25L * 1024 * 1024
+
+        /** No model stream may run longer than this, whatever it keeps sending. */
+        const val MAX_STREAM_MS = 15L * 60 * 1000
+
+        /** An error body is read only for its message. */
+        const val MAX_ERROR_BODY_BYTES = 64L * 1024
+
+        /** Lines read ahead of the collector; beyond this the reader waits, so memory stays bounded. */
+        const val STREAM_BUFFER_LINES = 256
 
         /**
          * One shared client: connection pooling matters on mobile data, and a Flow that runs 50

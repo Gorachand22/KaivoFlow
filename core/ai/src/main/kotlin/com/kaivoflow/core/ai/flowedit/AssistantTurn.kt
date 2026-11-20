@@ -1,5 +1,6 @@
 package com.kaivoflow.core.ai.flowedit
 
+import com.kaivoflow.core.ai.AgentEvent
 import com.kaivoflow.core.ai.AgentLimits
 import com.kaivoflow.core.ai.AgentLoop
 import com.kaivoflow.core.ai.AgentOutcome
@@ -43,8 +44,16 @@ class AssistantTurn(
     private val newId: () -> String = { java.util.UUID.randomUUID().toString() },
     private val clock: () -> Long = System::currentTimeMillis,
 ) {
-    /** [history] is the earlier conversation as plain text turns, oldest first. */
-    suspend fun run(prompt: String, base: Flow?, history: List<ChatMessage>): AssistantResult {
+    /**
+     * [history] is the earlier conversation as plain text turns, oldest first. [onEvent] receives the loop's real events
+     * (a self-correction round is a second run, so it can see `RunStarted` and `Done` more than once).
+     */
+    suspend fun run(
+        prompt: String,
+        base: Flow?,
+        history: List<ChatMessage>,
+        onEvent: (suspend (AgentEvent) -> Unit)? = null,
+    ): AssistantResult {
         val intent = AiTriageClassifier.classify(prompt)
         if (intent == PromptIntent.Greeting && base == null && history.isEmpty()) {
             return AssistantResult(
@@ -82,7 +91,7 @@ class AssistantTurn(
             AssistantPrompt.instructions(catalog)
         }
 
-        var result = loop.run(instructions, prompt, AssistantPrompt.flowContext(base, redactor), key)
+        var result = loop.run(instructions, prompt, AssistantPrompt.flowContext(base, redactor), key, onEvent)
 
         // Self-Healing Validation Loop:
         // If the draft was modified but has schema/validation errors, give the LLM structured feedback to self-heal
@@ -94,7 +103,7 @@ class AssistantTurn(
                 val feedback = "Self-Correction Required: The proposed workflow draft has validation errors:\n" +
                     errors.joinToString("\n") { "- $it" } +
                     "\nPlease use your edit tools (update_step_params, connect_steps, add_step) to resolve these errors."
-                result = loop.run(instructions, feedback, AssistantPrompt.flowContext(draft.flow, redactor), key)
+                result = loop.run(instructions, feedback, AssistantPrompt.flowContext(draft.flow, redactor), key, onEvent)
                 errors = FlowProposalValidator.validate(draft.flow, base, catalog)
             }
         }

@@ -357,9 +357,9 @@ class AgentLoop(
 
     private suspend fun runTool(state: State, rawCall: ToolCall, offered: List<AgentTool>): ToolRun {
         val started = System.nanoTime()
-        suspend fun record(tool: AgentTool?, status: ToolStatus, detail: String, callId: String = rawCall.id) {
+        suspend fun record(tool: AgentTool?, status: ToolStatus, detail: String, callId: String = rawCall.id, output: String = "") {
             state.trace += ToolTrace(state.iterations, rawCall.name, tool?.risk, status, redactor.redact(detail).take(200))
-            state.emit(AgentEvent.ToolFinished(callId, rawCall.name, status, redactor.redact(detail).take(200), (System.nanoTime() - started) / 1_000_000))
+            state.emit(AgentEvent.ToolFinished(callId, rawCall.name, status, redactor.redact(detail).take(200), (System.nanoTime() - started) / 1_000_000, redactor.redact(output).take(4_000)))
         }
         if (rawCall.argumentsError != null && rawCall.rawArguments == null) {
             record(null, ToolStatus.BadArguments, rawCall.argumentsError)
@@ -406,7 +406,7 @@ class AgentLoop(
         var text = if (outcome.isError) ToolErrors.format(outcome.text, outcome.httpStatus ?: ToolErrors.statusIn(outcome.text), outcome.errorBody, redactor) else redactor.redact(outcome.text)
         if (text.length > limits.maxToolResultChars) text = text.take(limits.maxToolResultChars) + "…[truncated]"
         val status = if (outcome.isError) ToolStatus.ToolError else ToolStatus.Ok
-        record(tool, status, if (outcome.isError) text else "ok, ${text.length} chars")
+        record(tool, status, if (outcome.isError) text else "ok, ${text.length} chars", output = text)
         return ToolRun(text, status, wrap = true)
     }
 

@@ -30,7 +30,15 @@ sealed interface AgentEvent {
     data class ApprovalResolved(val toolName: String, val approved: Boolean, val feedback: String?, val waitedMs: Long) : AgentEvent
 
     data class ToolRunning(val id: String, val name: String, val risk: ToolRisk) : AgentEvent
-    data class ToolFinished(val id: String, val name: String, val status: ToolStatus, val preview: String, val durationMs: Long) : AgentEvent
+    data class ToolFinished(
+        val id: String,
+        val name: String,
+        val status: ToolStatus,
+        val preview: String,
+        val durationMs: Long,
+        /** What the tool returned (or the error text), redacted and cut to 4,000 characters; empty when it never ran. */
+        val output: String = "",
+    ) : AgentEvent
 
     /** A model call ended. [usage] is this call's own; [model] the id that answered. */
     data class StepFinished(val iteration: Int, val finish: FinishReason, val usage: Usage, val model: String?) : AgentEvent

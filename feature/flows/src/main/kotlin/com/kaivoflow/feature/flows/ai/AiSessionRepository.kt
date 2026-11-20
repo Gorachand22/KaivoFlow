@@ -168,6 +168,7 @@ class FileAiSessionRepository @Inject constructor(
             mObj.put("sender", msg.sender.name)
             mObj.put("text", msg.text)
             mObj.put("timestamp", msg.timestamp)
+            if (msg.status != TurnStatus.Completed) mObj.put("status", msg.status.name)
 
             if (msg.toolCalls.isNotEmpty()) {
                 val toolsArr = JSONArray()
@@ -245,6 +246,7 @@ class FileAiSessionRepository @Inject constructor(
                         text = text,
                         toolCalls = tools,
                         timestamp = timestamp,
+                        status = runCatching { TurnStatus.valueOf(mObj.optString("status", TurnStatus.Completed.name)) }.getOrDefault(TurnStatus.Completed),
                     )
                 )
             }

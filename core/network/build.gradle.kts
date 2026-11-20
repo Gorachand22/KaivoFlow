@@ -20,6 +20,8 @@ kotlin { jvmToolchain(21) }
 
 dependencies {
     api(project(":core:engine"))
+    // HttpStreamGateway (the streaming seam) is declared next to the model clients.
+    implementation(project(":core:ai"))
 
     implementation(libs.ktor.client.core)
     implementation(libs.ktor.client.okhttp)
