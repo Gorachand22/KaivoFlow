@@ -152,6 +152,8 @@ fun AiAssistantScreen(
                     onOpenActionMenu = { viewModel.toggleActionMenuSheet(true) },
                     attachedSnippet = state.attachedContextSnippet,
                     onClearAttachedSnippet = { viewModel.clearAttachedContext() },
+                    isGenerating = state.isGenerating,
+                    onStop = { viewModel.stopGeneration() },
                 )
             } else if (isChatEmpty) {
                 // ---------------- Clean Floating Hero State (Screenshot 2) ----------------
@@ -221,6 +223,8 @@ fun AiAssistantScreen(
                     onOpenActionMenu = { viewModel.toggleActionMenuSheet(true) },
                     attachedSnippet = state.attachedContextSnippet,
                     onClearAttachedSnippet = { viewModel.clearAttachedContext() },
+                    isGenerating = state.isGenerating,
+                    onStop = { viewModel.stopGeneration() },
                 )
             }
         }
@@ -1000,6 +1004,8 @@ private fun DockedBottomInputBar(
     onOpenActionMenu: () -> Unit = {},
     attachedSnippet: String? = null,
     onClearAttachedSnippet: () -> Unit = {},
+    isGenerating: Boolean = false,
+    onStop: () -> Unit = {},
 ) {
     val colors = KaivoTheme.colors
     Card(
@@ -1137,14 +1143,14 @@ private fun DockedBottomInputBar(
                     modifier = Modifier
                         .size(32.dp)
                         .clip(CircleShape)
-                        .background(if (canSend) colors.royalGold else Color(0xFF2C2C34))
-                        .clickable(enabled = canSend) { onSend() },
+                        .background(if (canSend || isGenerating) colors.royalGold else Color(0xFF2C2C34))
+                        .clickable(enabled = canSend || isGenerating) { if (isGenerating) onStop() else onSend() },
                     contentAlignment = Alignment.Center,
                 ) {
                     Icon(
-                        KaivoIcons.icon("forward"),
-                        contentDescription = "Send",
-                        tint = if (canSend) Color.Black else colors.inkSecondary,
+                        KaivoIcons.icon(if (isGenerating) "stop" else "forward"),
+                        contentDescription = if (isGenerating) "Stop" else "Send",
+                        tint = if (canSend || isGenerating) Color.Black else colors.inkSecondary,
                         modifier = Modifier.size(16.dp),
                     )
                 }
